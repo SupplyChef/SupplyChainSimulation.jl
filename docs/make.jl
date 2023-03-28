@@ -7,7 +7,7 @@ makedocs(
     sitename = "SupplyChainSimulation",
     format = Documenter.HTML(),
     modules = [SupplyChainSimulation],
-    pages = []
+    pages = [index.md]
 )
 
 deploydocs(;

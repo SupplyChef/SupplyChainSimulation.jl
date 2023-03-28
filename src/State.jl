@@ -9,7 +9,7 @@ struct State
 
     demand::Dict{Tuple{Customer, Product}, Array{Int64, 1}}
 
-    policies::Dict{Tuple{Lane, Product}, InventoryOrderingPolicy}
+    policies::Dict{Tuple{Transport, Product}, InventoryOrderingPolicy}
 
     historical_on_hand::Array{Dict{Storage, Dict{Product, Int64}}, 1}
     historical_orders::Array{Order, 1}

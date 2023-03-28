@@ -1,5 +1,6 @@
 module SupplyChainSimulation
 
+export Route
 export Lane
 export Storage
 export Customer
@@ -148,6 +149,7 @@ end
 function place_orders(state, network, location, product, time)
     orders = Order[]
     for trip in get_inbound_trips(network, location, time)
+        #println(state.policies)
         policy = state.policies[(trip.route, product)]
         quantity = get_order(policy, state, network, location, trip.route, product, time)
         if quantity > 0

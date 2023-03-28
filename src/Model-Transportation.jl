@@ -1,6 +1,11 @@
+using UUIDs
+
+import Base.isequal
+
+
 abstract type Transport end
 
-struct Lane
+struct Lane <: Transport
     origin
     destination
 
@@ -8,7 +13,7 @@ struct Lane
 
     lead_time
 
-    function Lane(;origin=origin, destination=destination, unit_cost=unit_cost)
+    function Lane(;origin, destination, unit_cost=0)
         return new(origin, destination, unit_cost, 0)
     end
 end
@@ -20,7 +25,8 @@ struct Truck
     unit_cost
 end
 
-struct Route
+struct Route <: Transport
+    id
     truck::Truck
 
     origin
@@ -30,10 +36,13 @@ struct Route
 
     lead_times::Dict{L2, Int64} where L2 <: Location
 
-    function Route(;origin=origin, destinations=destinations, fixed_cost=fixed_cost, unit_cost=unit_cost)
-        return new(Truck(0, fixed_cost, units_cost), origin, destinations, departures, 0)
+    function Route(;origin, destinations, fixed_cost=0, unit_cost=0)
+        return new(UUIDs.uuid1(), Truck(0, fixed_cost, unit_cost), origin, destinations, [], Dict(d => 0 for d in destinations))
     end
 end
+
+Base.hash(r::Route, h::UInt) = hash(r.id, h)
+Base.isequal(r1::Route, r2::Route) = isequal(r1.id, r2.id)
 
 struct Trip
     route
@@ -67,4 +76,8 @@ end
 
 function get_trips(lanes::Array{Lane, 1}, horizon)
     return [Trip(l, t) for l in lanes for t in 1:horizon]
+end
+
+function get_trips(routes, horizon)
+    return [Trip(r, t) for r in routes for t in 1:horizon]
 end

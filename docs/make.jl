@@ -6,7 +6,7 @@ using SupplyChainSimulation
 makedocs(
     sitename = "SupplyChainSimulation",
     format = Documenter.HTML(),
-    modules = [SupplyChainOptimization],
+    modules = [SupplyChainSimulation],
     pages = []
 )
 

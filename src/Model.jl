@@ -15,14 +15,14 @@ abstract type Product end
 struct Single <: Product
     holding_costs
 
-    function Single()
-        return new(0.0)
+    function Single(holding_costs=0.0)
+        return new(holding_costs)
     end
 end
 
 struct Bundle <: Product
     holding_costs
-    
+
     composition::Dict{P, Float64} where P <: Product
 end
 

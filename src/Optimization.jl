@@ -3,7 +3,7 @@ function minimizer(results::BlackBoxOptim.OptimizationResults)
     return best_candidate(results)
 end
 
-function optimize!(network::Network, horizon::Int64, initial_states, policies, x)
+function minimize!(network::Network, horizon::Int64, initial_states, policies, x; cost_function=s->get_total_lost_sales(s) + 0.001 * get_total_orders(s))
     i = 1
     for policy in policies
         set_parameter!(policy, x[i:i+get_parameter_count(policy)-1])
@@ -18,7 +18,7 @@ function optimize!(network::Network, horizon::Int64, initial_states, policies, x
         #println(final_state)
 
         #println("$x $(get_total_lost_sales(final_state)) $(get_total_orders(final_state))")
-        value += get_total_lost_sales(final_state) + 0.001 * get_total_orders(final_state)
+        value += cost_function(final_state)
     end
     return value
 end
@@ -30,7 +30,7 @@ function optimize!(network::Network, horizon::Int64, initial_states...)
 
     parameter_count = sum(get_parameter_count(policy) for policy in policies)
     x0 = zeros(Float64, parameter_count)
-    res = bboptimize(x -> optimize!(network, horizon, initial_states, policies, x), x0; 
+    res = bboptimize(x -> minimize!(network, horizon, initial_states, policies, x), x0; 
                 SearchRange=(-0.0, 50.0), NumDimensions=parameter_count, Method = :de_rand_1_bin)
 
     best = minimizer(res)

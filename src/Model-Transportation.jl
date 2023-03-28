@@ -21,7 +21,7 @@ struct Truck
 end
 
 struct Route
-    truck
+    truck::Truck
 
     origin
     destinations::Array{L1, 1} where L1 <: Location
@@ -29,6 +29,10 @@ struct Route
     departures
 
     lead_times::Dict{L2, Int64} where L2 <: Location
+
+    function Route(;origin=origin, destinations=destinations, fixed_cost=fixed_cost, unit_cost=unit_cost)
+        return new(Truck(0, fixed_cost, units_cost), origin, destinations, departures, 0)
+    end
 end
 
 struct Trip

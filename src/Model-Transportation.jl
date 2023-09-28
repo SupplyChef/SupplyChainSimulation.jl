@@ -13,8 +13,8 @@ struct Lane <: Transport
 
     lead_time
 
-    function Lane(;origin, destination, unit_cost=0)
-        return new(origin, destination, unit_cost, 0)
+    function Lane(;origin, destination, unit_cost=0, lead_time=0)
+        return new(origin, destination, unit_cost, lead_time)
     end
 end
 
@@ -56,6 +56,14 @@ end
 
 function get_destinations(lane::Lane)
     return [lane.destination]
+end
+
+function is_destination(location, route::Route)
+    return location ∈ get_destinations(route)
+end
+
+function is_destination(location, lane::Lane)
+    return location == lane.destination
 end
 
 function get_leadtime(route::Route, destination)

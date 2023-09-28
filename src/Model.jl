@@ -72,7 +72,7 @@ struct Network
 end
 
 function get_inbound_trips(network, location, time)
-    return collect(filter(trip -> location ∈ get_destinations(trip.route) && trip.departure == time, network.trips))
+    return collect(filter(trip -> trip.departure == time && is_destination(location, trip.route), network.trips))
 end
 
 """
@@ -94,9 +94,9 @@ function create_graph(network)
         i += 1
     end
 
-    for trip in network.trips
-        for destination in get_destinations(trip.route)
-            Graphs.add_edge!(graph, mapping[trip.route.origin], mapping[destination])
+    for route in unique(map(trip -> trip.route, network.trips))
+        for destination in get_destinations(route)
+            Graphs.add_edge!(graph, mapping[route.origin], mapping[destination])
         end
     end
 

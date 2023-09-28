@@ -16,6 +16,7 @@ export State
 
 export OnHandUptoOrderingPolicy
 export NetUptoOrderingPolicy
+export NetSSOrderingPolicy
 
 export set_parameter!
 export get_sorted_locations
@@ -73,6 +74,9 @@ end
 
 # Send inventory (detailed)
 function send_inventory!(state, network, trip::Trip, destination, product, quantity, time)
+    if time + get_leadtime(trip.route, destination) > length(state.in_transit_inventory[destination][product])
+        return
+    end
     state.in_transit_inventory[destination][product][time + get_leadtime(trip.route, destination)] += quantity
     #println("Sent at $time, $(trip.route.origin), $destination, $product, $quantity")
 end
@@ -131,7 +135,7 @@ end
 function place_orders(state, network, location::Customer, product, time)
     quantity = state.demand[(location, product)][time]
     if quantity > 0
-        trip = collect(filter(t -> location ∈ get_destinations(t.route) && t.departure >= time, network.trips))[1]
+        trip = collect(filter(t -> is_destination(location, t.route) && t.departure >= time, network.trips))[1]
         order = Order(location, trip, OrderLine[], time)
         push!(order.lines, OrderLine(order, product, quantity))
         

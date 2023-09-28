@@ -37,9 +37,9 @@ end
 function get_inbound_orders(state, location, product, time)
     reduce(+,
         map(ol -> ol.quantity, 
-            filter(ol -> location ∈ get_destinations(ol.order.trip.route) && 
-                         ol.product == product && 
-                         ol.order.due_date >= time, 
+            filter(ol -> ol.product == product && 
+                         ol.order.due_date >= time &&
+                         is_destination(location, ol.order.trip.route), 
                          vcat([state.pending_order_lines[l] for l in keys(state.pending_order_lines)]...)
             )
         ),

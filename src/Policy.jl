@@ -13,7 +13,7 @@ function set_parameter!(policy::OnHandUptoOrderingPolicy, values)
     policy.upto = Int(round(values[1]))
 end
 
-function get_order(policy::OnHandUptoOrderingPolicy, state, network, location, lane, product, time)
+function get_order(policy::OnHandUptoOrderingPolicy, state, env, location, lane, product, time)
     return max(0, policy.upto - state.on_hand_inventory[location][product])
 end
 
@@ -32,7 +32,7 @@ function set_parameter!(policy::NetUptoOrderingPolicy, values)
     policy.upto = Int(round(values[1]))
 end
 
-function get_order(policy::NetUptoOrderingPolicy, state, network, location, lane, product, time)
+function get_order(policy::NetUptoOrderingPolicy, state, env, location, lane, product, time)
     return max(0, policy.upto - get_net_inventory(state, location, product, time))
 end
 
@@ -51,7 +51,7 @@ function set_parameter!(policy::FixedOrderingPolicy, values)
     policy.orders = values
 end
 
-function get_order(policy::FixedOrderingPolicy, state, network, lane, product, time)
+function get_order(policy::FixedOrderingPolicy, state, env, lane, product, time)
     return policy.orders[time]
 end
 
@@ -72,11 +72,45 @@ function set_parameter!(policy::NetSSOrderingPolicy, values)
     policy.S = Int(round(values[2]))
 end
 
-function get_order(policy::NetSSOrderingPolicy, state, network, location, lane, product, time)
+function get_order(policy::NetSSOrderingPolicy, state, env, location, lane, product, time)
     net_inventory = get_net_inventory(state, location, product, time)
     if net_inventory >= policy.s
         return 0
     else
         return max(0, policy.S - net_inventory)
     end
+end
+
+mutable struct CoverageOrderingPolicy <: InventoryOrderingPolicy
+    cover
+end
+
+function get_parameter_count(policy::CoverageOrderingPolicy)
+    return 1
+end
+
+function set_parameter!(policy::CoverageOrderingPolicy, values)
+    policy.cover = values[1]
+end
+
+function get_order(policy::CoverageOrderingPolicy, state, env, location, lane, product, time)
+    net_inventory = get_net_inventory(state, location, product, time)
+    mean_demand = get_mean_demand(env, location, product, time)
+
+    coverage = 0
+    cover = policy.cover
+    t = time
+    while cover > 0
+        if cover >= 1
+            coverage = coverage + mean_demand[min(t, end)]
+            cover = cover - 1
+            t = t + 1
+        else
+            coverage = coverage + cover * mean_demand[min(t, end)]
+            cover = 0
+        end
+    end
+    order = max(0, Int(ceil(coverage - net_inventory)))
+    #println("cover $(policy.cover); mean demand $mean_demand; coverage $coverage; net inventory $net_inventory; order $order; time $time")
+    return order
 end

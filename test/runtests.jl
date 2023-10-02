@@ -8,7 +8,7 @@ using Test
         storage = Storage("s")
         l = Lane(; origin = storage, destination = customer, unit_cost = 0)
 
-        product = Single()
+        product = Single("product")
 
         network = Network([], [storage], [customer], get_trips(l, 1), Product[product])
 
@@ -20,7 +20,7 @@ using Test
         storage = Storage("s")
         l = Lane(; origin = customer, destination = storage, unit_cost = 0)
 
-        product = Single()
+        product = Single("product")
 
         network = Network([], [storage], [customer], get_trips(l, 1), [product])
 
@@ -35,11 +35,26 @@ using Test
         l = Lane(; origin = storage, destination = customer, unit_cost = 0)
         l2 = Lane(; origin = storage2, destination = storage, unit_cost = 0)
 
-        product = Single()
+        product = Single("product")
 
         network = Network([], [storage, storage2], [customer], get_trips([l, l2], 1), [product])
 
         get_sorted_locations(network) == [storage2, storage, customer]
+    end
+
+    @test begin
+        customer = Customer("c")
+        storage = Storage("s")
+        storage2 = Storage("s2")
+        
+        l = Lane(; origin = storage, destination = customer, unit_cost = 0)
+        l2 = Lane(; origin = storage2, destination = storage, unit_cost = 0)
+
+        product = Single("product")
+
+        network = Network([], [storage, storage2], [customer], get_trips([l, l2], 1), [product])
+
+        get_downstream_customers(network, storage) == [customer] && get_downstream_customers(network, storage2) == [customer]
     end
 end
 
@@ -49,7 +64,7 @@ end
         storage = Storage("s")
         l = Lane(; origin = storage, destination = customer, unit_cost = 0)
 
-        product = Single()
+        product = Single("product")
 
         network = Network([], [storage], [customer], get_trips([l], 1), [product])
 
@@ -71,7 +86,7 @@ end
         l = Lane(; origin = storage, destination = customer, unit_cost = 0)
         l2 = Lane(; origin = storage2, destination = storage, unit_cost = 0)
 
-        product = Single()
+        product = Single("product")
 
         o = Order(l, [(product, 5)], 1)
         o2 = Order(l2, [(product, 15)], 1)
@@ -98,7 +113,7 @@ end
         storage = Storage("s")
         l = Lane(; origin = storage, destination = customer, unit_cost = 0)
 
-        p = Single()
+        p = Single("product")
 
         network = Network([], [storage], [customer], get_trips([l], 2), [p])
 
@@ -120,7 +135,7 @@ end
         storage = Storage("s")
         l = Lane(; origin = storage, destination = customer, unit_cost = 0)
 
-        p = Single()
+        p = Single("product")
 
         network = Network([], [storage], [customer], get_trips([l], 2), [p])
 

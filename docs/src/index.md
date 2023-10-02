@@ -1,6 +1,7 @@
-SupplyChainSimulation is a package to model and simulate supply chains.
+SupplyChainSimulation is a package to model and simulate supply chains. 
 
 The simulation is built around a loop that keeps track of orders and inventory movements:
+
 - receive_inventory
 - place_orders
 - receive_orders
@@ -13,4 +14,9 @@ From the Julia REPL, type `]` to enter the Pkg REPL mode and run
 
 ```
 pkg> add SupplyChainSimulation
+```
+
+```@autodocs
+Modules = [SupplyChainSimulation]
+Order   = [:function, :type]
 ```

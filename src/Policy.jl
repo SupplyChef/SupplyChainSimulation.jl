@@ -1,4 +1,26 @@
 """
+Orders a given quantity specific to each time period.
+"""
+mutable struct QuantityOrderingPolicy <: InventoryOrderingPolicy
+    orders
+end
+
+function get_parameter_count(policy::QuantityOrderingPolicy)
+    return length(policy.orders)
+end
+
+function set_parameter!(policy::QuantityOrderingPolicy, values)
+    policy.orders = Int.(round.(values))
+end
+
+function get_order(policy::QuantityOrderingPolicy, state, env, location, lane, product, time)
+    #println(policy.orders)
+    order = max(0, policy.orders[time])
+    #println(order)
+    return order
+end
+
+"""
 Orders up to a given number based on the number of units on hand; no matter what is on order.
 """
 mutable struct OnHandUptoOrderingPolicy <: InventoryOrderingPolicy
@@ -74,6 +96,7 @@ end
 
 function get_order(policy::NetSSOrderingPolicy, state, env, location, lane, product, time)
     net_inventory = get_net_inventory(state, location, product, time)
+    #println("net inventory @ $time: $net_inventory")
     if net_inventory >= policy.s
         return 0
     else

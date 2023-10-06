@@ -1,7 +1,9 @@
+abstract type Product end
+
 abstract type Location end
 
 struct Supplier <: Location
-    name
+    name::String
 end
 
 Base.:(==)(x::Supplier, y::Supplier) = x.name == y.name 
@@ -9,7 +11,13 @@ Base.hash(x::Supplier, h::UInt64) = hash(x.name, h)
 Base.show(io::IO, x::Supplier) = print(io, x.name)
 
 struct Storage <: Location 
-    name
+    name::String
+
+    holding_costs::Dict{Product, Float64}
+
+    function Storage(name::String, holding_costs=Dict{Product, Float64}())
+        return new(name, holding_costs)
+    end
 end
 
 Base.:(==)(x::Storage, y::Storage) = x.name == y.name 
@@ -17,21 +25,18 @@ Base.hash(x::Storage, h::UInt64) = hash(x.name, h)
 Base.show(io::IO, x::Storage) = print(io, x.name)
 
 struct Customer <: Location 
-    name
+    name::String
 end
 
 Base.:(==)(x::Customer, y::Customer) = x.name == y.name 
 Base.hash(x::Customer, h::UInt64) = hash(x.name, h)
 Base.show(io::IO, x::Customer) = print(io, x.name)
 
-abstract type Product end
-
 struct Single <: Product
-    name
-    holding_costs
+    name::String
 
-    function Single(name, holding_costs=0.0)
-        return new(name, holding_costs)
+    function Single(name)
+        return new(name)
     end
 end
 
@@ -40,32 +45,35 @@ Base.hash(x::Product, h::UInt64) = hash(x.name, h)
 Base.show(io::IO, x::Product) = print(io, x.name)
 
 struct Bundle <: Product
-    name
-    holding_costs
-
+    name::String
     composition::Dict{P, Float64} where P <: Product
-end
-
-struct OrderLine
-    order
-    product
-    quantity
 end
 
 include("Model-Transportation.jl")
 
+mutable struct OrderLine
+    order
+    trip::Union{Missing, Trip} # how (filled when shipping)
+    product::Product
+    quantity
+
+    function OrderLine(order, product, quantity)
+        return new(order, missing, product, quantity)
+    end
+end
+
 struct Order
-    destination # where 
-    trip # how
-    lines::Array{OrderLine, 1} # what 
+    origin # from
+    destination # to 
+    lines::Set{OrderLine} # what 
     due_date::Int64 # when
 
-    function Order(destination, trip::Trip, lines::Array{OrderLine, 1}, due_date::Int64)
-        return new(destination, trip, lines, due_date)
+    function Order(origin::Location, destination::Location, lines::Set{OrderLine}, due_date::Int64)
+        return new(origin, destination, lines, due_date)
     end
 
-    function Order(destination, trip::Trip, lines::Array{Tuple{P, Int64}, 1}, due_date::Int64) where P <: Product
-        order = new(destination, trip, OrderLine[], due_date)
+    function Order(origin::Location, destination::Location, lines::Array{Tuple{P, Int64}, 1}, due_date::Int64) where P <: Product
+        order = new(origin, destination, Set{OrderLine}(), due_date)
         for (product, quantity) in lines
             push!(order.lines, OrderLine(order, product, quantity))
         end
@@ -73,7 +81,7 @@ struct Order
     end
 
     function Order(lane::Lane, lines::Array{Tuple{P, Int64}, 1}, due_date::Int64) where P <: Product
-        order = new(lane.destination, Trip(lane, 1), OrderLine[], due_date)
+        order = new(lane.origin, lane.destination, Set{OrderLine}(), due_date)
         for (product, quantity) in lines
             push!(order.lines, OrderLine(order, product, quantity))
         end

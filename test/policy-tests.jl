@@ -2,8 +2,10 @@ using Distributions
 
 @testset "Policies" begin
     @test begin
+        p = Single("product")
+
         customer = Customer("c")
-        storage = Storage("s")
+        storage = Storage("s", Dict(p => 1.0))
         storage2 = Storage("s2")
 
         horizon = 20
@@ -11,8 +13,6 @@ using Distributions
         l = Lane(; origin = storage, destination = customer, unit_cost = 0)
         l2 = Lane(; origin = storage2, destination = storage, unit_cost = 0)
 
-        p = Single("product", 1.0)
-
         policy = OnHandUptoOrderingPolicy(0)
         policy2 = OnHandUptoOrderingPolicy(0)
 
@@ -23,7 +23,7 @@ using Distributions
                                 in_transit_inventory = Dict(storage => Dict(p => repeat([0], horizon)), 
                                                             storage2 => Dict(p => repeat([0], horizon)), 
                                                             customer => Dict(p => repeat([0], horizon))), 
-                                pending_order_lines = Dict(storage => OrderLine[], storage2 => OrderLine[]),
+                                pending_outbound_order_lines = Dict(storage => Set{OrderLine}(), storage2 => Set{OrderLine}()),
                                 demand = Dict((customer, p) => repeat([10], horizon)),
                                 policies = Dict((l, p) => policy, (l2, p) => policy2))
 
@@ -36,7 +36,7 @@ using Distributions
         println("lost sales: $(get_total_lost_sales(final_state))")
         println("sales: $(get_total_sales(final_state))")
         println("demand: $(get_total_demand(final_state))")
-        println("holding costs: $(get_holding_costs(final_state))")
+        println("holding costs: $(get_total_holding_costs(final_state))")
 
         set_parameter!(policy, [0])
         set_parameter!(policy2, [20])
@@ -47,13 +47,15 @@ using Distributions
         println("lost sales: $(get_total_lost_sales(final_state))")
         println("sales: $(get_total_sales(final_state))")
         println("demand: $(get_total_demand(final_state))")
-        println("holding costs: $(get_holding_costs(final_state))")
+        println("holding costs: $(get_total_holding_costs(final_state))")
         true
     end
 
     @test begin
+        p = Single("product")
+
         customer = Customer("c")
-        storage = Storage("s")
+        storage = Storage("s", Dict(p => 1.0))
         storage2 = Storage("s2")
 
         horizon = 20
@@ -61,8 +63,6 @@ using Distributions
         l = Lane(; origin = storage, destination = customer, unit_cost = 0)
         l2 = Route(; origin = storage2, destinations = [storage], unit_cost = 0)
 
-        p = Single("product", 1.0)
-
         policy = OnHandUptoOrderingPolicy(0)
         policy2 = OnHandUptoOrderingPolicy(0)
 
@@ -73,7 +73,7 @@ using Distributions
                                 in_transit_inventory = Dict(storage => Dict(p => repeat([0], horizon)), 
                                                             storage2 => Dict(p => repeat([0], horizon)), 
                                                             customer => Dict(p => repeat([0], horizon))), 
-                                pending_order_lines = Dict(storage => OrderLine[], storage2 => OrderLine[]),
+                                pending_outbound_order_lines = Dict(storage => Set{OrderLine}(), storage2 => Set{OrderLine}()),
                                 demand = Dict((customer, p) => repeat([10], horizon)),
                                 policies = Dict((l, p) => policy, (l2, p) => policy2))
 
@@ -86,7 +86,7 @@ using Distributions
         println("lost sales: $(get_total_lost_sales(final_state))")
         println("sales: $(get_total_sales(final_state))")
         println("demand: $(get_total_demand(final_state))")
-        println("holding costs: $(get_holding_costs(final_state))")
+        println("holding costs: $(get_total_holding_costs(final_state))")
 
         set_parameter!(policy, [0])
         set_parameter!(policy2, [20])
@@ -97,7 +97,7 @@ using Distributions
         println("lost sales: $(get_total_lost_sales(final_state))")
         println("sales: $(get_total_sales(final_state))")
         println("demand: $(get_total_demand(final_state))")
-        println("holding costs: $(get_holding_costs(final_state))")
+        println("holding costs: $(get_total_holding_costs(final_state))")
         true
     end
 
@@ -122,7 +122,7 @@ using Distributions
                                 in_transit_inventory = Dict(storage => Dict(p => repeat([0], horizon)), 
                                                             storage2 => Dict(p => repeat([0], horizon)), 
                                                             customer => Dict(p => repeat([0], horizon))), 
-                                pending_order_lines = Dict(storage => OrderLine[], storage2 => OrderLine[]),
+                                pending_outbound_order_lines = Dict(storage => Set{OrderLine}(), storage2 => Set{OrderLine}()),
                                 demand = Dict((customer, p) => repeat([10], horizon)),
                                 policies = Dict((l2, p) => policy2))
 
@@ -171,7 +171,7 @@ using Distributions
                                                             storage2 => Dict(p => repeat([0], horizon)), 
                                                             customer1 => Dict(p => repeat([0], horizon)), 
                                                             customer2 => Dict(p => repeat([0], horizon))), 
-                                pending_order_lines = Dict(storage => OrderLine[], storage2 => OrderLine[]),
+                                pending_outbound_order_lines = Dict(storage => Set{OrderLine}(), storage2 => Set{OrderLine}()),
                                 demand = Dict((customer1, p) => repeat([10], horizon), (customer2, p) => repeat([10], horizon)),
                                 policies = Dict((l2, p) => policy2))
 
@@ -230,11 +230,11 @@ using Distributions
                                                         storage2 => Dict(p => repeat([0], horizon)), 
                                                         customer1 => Dict(p => repeat([0], horizon)), 
                                                         customer2 => Dict(p => repeat([0], horizon))), 
-                                pending_order_lines = Dict(
-                                                        supplier => OrderLine[],
-                                                        storage => OrderLine[], 
-                                                        storage1 => OrderLine[], 
-                                                        storage2 => OrderLine[]),
+                                pending_outbound_order_lines = Dict(
+                                                        supplier => Set{OrderLine}(),
+                                                        storage => Set{OrderLine}(), 
+                                                        storage1 => Set{OrderLine}(), 
+                                                        storage2 => Set{OrderLine}()),
                                 demand = Dict(
                                             (customer1, p) => repeat([10], horizon), 
                                             (customer2, p) => repeat([10], horizon)),
@@ -259,214 +259,45 @@ using Distributions
         true
     end
 
-    @test begin
+    @test begin #quantity policy
+        p = Single("product")
+    
         customer = Customer("c")
-        storage = Storage("s")
+        storage = Storage("s", Dict(p => 1.0))
         storage2 = Storage("s2")
-
-        horizon = 20
-        
-        l = Lane(; origin = storage, destination = customer, unit_cost = 0)
-        l2 = Lane(; origin = storage2, destination = storage, unit_cost = 0)
-
-        p = Single("product", 1.0)
-
-        policy = OnHandUptoOrderingPolicy(0)
-        policy2 = NetSSOrderingPolicy(0, 0)
-
-        network = Network([], [storage, storage2], [customer], get_trips([l, l2], horizon), [p])
-
-        initial_state = State(; on_hand_inventory = Dict(storage => Dict(p => 0), 
-                                                         storage2 => Dict(p => 20 * horizon)), 
-                                in_transit_inventory = Dict(storage => Dict(p => repeat([0], horizon)), 
-                                                            storage2 => Dict(p => repeat([0], horizon)), 
-                                                            customer => Dict(p => repeat([0], horizon))), 
-                                pending_order_lines = Dict(storage => OrderLine[], storage2 => OrderLine[]),
-                                demand = Dict((customer, p) => repeat([10], horizon)),
-                                policies = Dict((l, p) => policy, (l2, p) => policy2))
-
-        optimize!(network, horizon, initial_state)
-
-        println(policy)
-        println(policy2)
-
-        final_state = simulate(network, horizon, initial_state)
-
-        println("lost sales: $(get_total_lost_sales(final_state))")
-        println("sales: $(get_total_sales(final_state))")
-        println("demand: $(get_total_demand(final_state))")
-        println("holding costs: $(get_holding_costs(final_state))")
-        true
-    end
-
-    @test begin #sS policy
-        customer = Customer("c")
-        storage = Storage("s")
-        storage2 = Storage("s2")
-
+    
         horizon = 20
         
         l = Lane(; origin = storage, destination = customer, unit_cost = 0)
         l2 = Lane(; origin = storage2, destination = storage, unit_cost = 0, lead_time = 2)
-
-        p = Single("product", 1.0)
-
-        policy = OnHandUptoOrderingPolicy(0)
-        policy2 = NetSSOrderingPolicy(0, 0)
-
+    
+        p = Single("product")
+    
+        policy2 = QuantityOrderingPolicy(zeros(horizon))
+    
         network = Network([], [storage, storage2], [customer], get_trips([l, l2], horizon), [p])
-
-        initial_state = State(; on_hand_inventory = Dict(storage => Dict(p => 0), 
-                                                         storage2 => Dict(p => 20 * horizon)), 
-                                in_transit_inventory = Dict(storage => Dict(p => repeat([0], horizon)), 
-                                                            storage2 => Dict(p => repeat([0], horizon)), 
-                                                            customer => Dict(p => repeat([0], horizon))), 
-                                pending_order_lines = Dict(storage => OrderLine[], storage2 => OrderLine[]),
-                                demand = Dict((customer, p) => repeat([10], horizon)),
-                                policies = Dict((l, p) => policy, (l2, p) => policy2))
-
-        optimize!(network, horizon, initial_state)
-
-        println(policy)
-        println(policy2)
-
-        final_state = simulate(network, horizon, initial_state)
-
-        println("lost sales: $(get_total_lost_sales(final_state))")
-        println("sales: $(get_total_sales(final_state))")
-        println("demand: $(get_total_demand(final_state))")
-        println("holding costs: $(get_holding_costs(final_state))")
-        true
-    end
-
-    @test begin #sS policy
-        customer = Customer("c")
-        storage = Storage("s")
-        storage2 = Storage("s2")
-
-        horizon = 20
-        
-        l = Lane(; origin = storage, destination = customer, unit_cost = 0)
-        l2 = Lane(; origin = storage2, destination = storage, unit_cost = 0, lead_time = 2)
-
-        p = Single("product", 1.0)
-
-        policy = OnHandUptoOrderingPolicy(0)
-        policy2 = NetSSOrderingPolicy(0, 0)
-
-        network = Network([], [storage, storage2], [customer], get_trips([l, l2], horizon), [p])
-
+    
         demand = Poisson(10)
-
+    
         initial_states = [State(; on_hand_inventory = Dict(storage => Dict(p => 0), 
                                                          storage2 => Dict(p => 20 * horizon)), 
                                 in_transit_inventory = Dict(storage => Dict(p => repeat([0], horizon)), 
                                                             storage2 => Dict(p => repeat([0], horizon)), 
                                                             customer => Dict(p => repeat([0], horizon))), 
-                                pending_order_lines = Dict(storage => OrderLine[], storage2 => OrderLine[]),
+                                pending_outbound_order_lines = Dict(storage => Set{OrderLine}(), storage2 => Set{OrderLine}()),
                                 demand = Dict((customer, p) => rand(demand, horizon)),
-                                policies = Dict((l, p) => policy, (l2, p) => policy2)) for i in 1:10]
-
+                                policies = Dict((l2, p) => policy2)) for i in 1:10]
+    
         optimize!(network, horizon, initial_states...)
-
-        println(policy)
+    
         println(policy2)
-
+    
         final_state = simulate(network, horizon, initial_states[1])
-
+    
         println("lost sales: $(get_total_lost_sales(final_state))")
         println("sales: $(get_total_sales(final_state))")
         println("demand: $(get_total_demand(final_state))")
-        println("holding costs: $(get_holding_costs(final_state))")
-        true
-    end
-
-    @test begin #cover policy
-        customer = Customer("c")
-        storage = Storage("s")
-        storage2 = Storage("s2")
-
-        horizon = 20
-        
-        l = Lane(; origin = storage, destination = customer, unit_cost = 0)
-        l2 = Lane(; origin = storage2, destination = storage, unit_cost = 0, lead_time = 2)
-
-        p = Single("product", 1.0)
-
-        policy = OnHandUptoOrderingPolicy(0)
-        policy2 = CoverageOrderingPolicy(0)
-
-        network = Network([], [storage, storage2], [customer], get_trips([l, l2], horizon), [p])
-
-        demand = Poisson(10)
-
-        initial_states = [State(; on_hand_inventory = Dict(storage => Dict(p => 0), 
-                                                         storage2 => Dict(p => 20 * horizon)), 
-                                in_transit_inventory = Dict(storage => Dict(p => repeat([0], horizon)), 
-                                                            storage2 => Dict(p => repeat([0], horizon)), 
-                                                            customer => Dict(p => repeat([0], horizon))), 
-                                pending_order_lines = Dict(storage => OrderLine[], storage2 => OrderLine[]),
-                                demand = Dict((customer, p) => rand(demand, horizon)),
-                                policies = Dict((l, p) => policy, (l2, p) => policy2)) for i in 1:10]
-
-        optimize!(network, horizon, initial_states...)
-
-        println(policy)
-        println(policy2)
-
-        final_state = simulate(network, horizon, initial_states[1])
-
-        println("lost sales: $(get_total_lost_sales(final_state))")
-        println("sales: $(get_total_sales(final_state))")
-        println("demand: $(get_total_demand(final_state))")
-        println("holding costs: $(get_holding_costs(final_state))")
-        true
-    end
-
-    @test begin #cover policy
-        store_count = 100
-
-        customers = [Customer("c$i") for i in 1:store_count]
-        storage = Storage("s")
-        storage2 = Storage("s2")
-
-        horizon = 20
-        
-        lanes = [Lane(; origin = storage, destination = customers[i], unit_cost = 0) for i in 1:store_count]
-        l0 = Lane(; origin = storage2, destination = storage, unit_cost = 0, lead_time = 2)
-
-        p = Single("product", 1.0)
-
-        policy = OnHandUptoOrderingPolicy(0)
-        policy2 = CoverageOrderingPolicy(0)
-        policies = Dict((l0, p) => policy2)
-        println(policies)
-
-        network = Network([], [storage, storage2], customers, get_trips(vcat(lanes, [l0]), horizon), [p])
-
-        demand = Poisson(10)
-
-        initial_states = [State(; on_hand_inventory = Dict(storage => Dict(p => 0), 
-                                                         storage2 => Dict(p => 200000 * horizon)), 
-                                in_transit_inventory = Dict(vcat([storage => Dict(p => repeat([0], horizon)), 
-                                                            storage2 => Dict(p => repeat([0], horizon))], 
-                                                            [customers[i] => Dict(p => repeat([0], horizon)) for i in 1:store_count])), 
-                                pending_order_lines = Dict(storage => OrderLine[], storage2 => OrderLine[]),
-                                demand = Dict([(customers[i], p) => rand(demand, horizon) for i in 1:store_count]...),
-                                policies = policies) for j in 1:10]
-
-        #println(network)
-        optimize!(network, horizon, initial_states...; cost_function=s->get_total_lost_sales(s) + 0.00001 * get_total_orders(s))
-
-        println(policy)
-        println(policy2)
-
-        final_state = simulate(network, horizon, initial_states[1])
-
-        println("demand: $(get_total_demand(final_state))")
-        println("lost sales: $(get_total_lost_sales(final_state))")
-        println("sales: $(get_total_sales(final_state))")
-        println("holding costs: $(get_holding_costs(final_state))")
+        println("holding costs: $(get_total_holding_costs(final_state))")
         true
     end
 end

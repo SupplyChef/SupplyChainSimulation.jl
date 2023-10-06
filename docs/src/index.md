@@ -9,12 +9,18 @@ The simulation is built around a loop that keeps track of orders and inventory m
 
 Each step can be customized by applying different policies. The policies can also be optimized to improve the supply chain performance.
 
+## Installation
+
 SupplyChainSimulation can be installed using the Julia package manager.
 From the Julia REPL, type `]` to enter the Pkg REPL mode and run
 
 ```
 pkg> add SupplyChainSimulation
 ```
+
+## Getting Started
+
+## API
 
 ```@autodocs
 Modules = [SupplyChainSimulation]

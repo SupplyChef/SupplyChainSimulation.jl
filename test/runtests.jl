@@ -69,8 +69,7 @@ end
         network = Network([], [storage], [customer], get_trips([l], 1), [product])
 
         initial_state = State(; on_hand_inventory = Dict(storage => Dict(product => 0)), 
-                                in_transit_inventory = Dict(storage => Dict(product => [10, 0]), customer => Dict(product => [0, 0])), 
-                                pending_order_lines = Dict(storage => OrderLine[]),
+                                in_transit_inventory = Dict(storage => Dict(product => [10, 0]), customer => Dict(product => [0, 0])),
                                 demand = Dict((customer, product) => [0, 0]),
                                 policies = Dict((l, product) => OnHandUptoOrderingPolicy(0)))
 
@@ -95,7 +94,7 @@ end
 
         initial_state = State(; on_hand_inventory = Dict(storage => Dict(product => 0)), 
                                 in_transit_inventory = Dict(storage => Dict(product => [10, 0]), storage2 => Dict(product => [100, 0]), customer => Dict(product => [0, 0])), 
-                                pending_order_lines = Dict(storage => o.lines, storage2 => o2.lines),
+                                pending_outbound_order_lines = Dict(storage => o.lines, storage2 => o2.lines),
                                 demand = Dict((customer, product) => [0, 0]),
                                 policies = Dict((l, product) => OnHandUptoOrderingPolicy(0)))
 
@@ -118,8 +117,7 @@ end
         network = Network([], [storage], [customer], get_trips([l], 2), [p])
 
         initial_state = State(; on_hand_inventory = Dict(storage => Dict(p => 0)), 
-                                in_transit_inventory = Dict(storage => Dict(p => [10, 0]), customer => Dict(p => [0, 0])), 
-                                pending_order_lines = Dict(storage => OrderLine[]),
+                                in_transit_inventory = Dict(storage => Dict(p => [10, 0]), customer => Dict(p => [0, 0])),
                                 demand = Dict((customer, p) => [0, 0]),
                                 policies = Dict((l, p) => OnHandUptoOrderingPolicy(0)))
 
@@ -127,7 +125,7 @@ end
 
         final_state.on_hand_inventory[storage][p] == 10 && 
         length(final_state.historical_orders) == 0 && 
-        length(final_state.historical_lines_filled) == 0
+        length(collect(Base.Iterators.flatten(final_state.historical_filled_order_lines))) == 0
     end
 
     @test begin
@@ -140,18 +138,17 @@ end
         network = Network([], [storage], [customer], get_trips([l], 2), [p])
 
         initial_state = State(; on_hand_inventory = Dict(storage => Dict(p => 10)), 
-                                in_transit_inventory = Dict(storage => Dict(p => [10, 0]), customer => Dict(p => [0, 0])), 
-                                pending_order_lines = Dict(storage => OrderLine[]),
+                                in_transit_inventory = Dict(storage => Dict(p => [10, 0]), customer => Dict(p => [0, 0])),
                                 demand = Dict((customer, p) => [10, 10]),
                                 policies = Dict((l, p) => OnHandUptoOrderingPolicy(0)))
 
         final_state = simulate(network, 2, initial_state)
 
-        println(get_holding_costs(final_state))
+        println(get_total_holding_costs(final_state))
 
         final_state.on_hand_inventory[storage][p] == 0 && 
         length(final_state.historical_orders) == 2 && 
-        length(final_state.historical_lines_filled) == 2
+        length(collect(Base.Iterators.flatten(final_state.historical_filled_order_lines))) == 2
     end
 
     @test begin
@@ -163,3 +160,5 @@ end
 end
 
 include("policy-tests.jl")
+include("policy-cover-tests.jl")
+include("policy-ss-test.jl")

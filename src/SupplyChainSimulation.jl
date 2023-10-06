@@ -18,25 +18,30 @@ export OnHandUptoOrderingPolicy
 export NetUptoOrderingPolicy
 export NetSSOrderingPolicy
 export CoverageOrderingPolicy
+export QuantityOrderingPolicy
 
 export set_parameter!
 export get_sorted_locations
 export get_downstream_customers
-export get_total_demand
-export get_total_sales
-export get_total_lost_sales
 export simulate
 export optimize!
 export get_inbound_orders
 export get_outbound_orders
 export get_net_inventory
 export get_holding_costs
-export get_transportation_costs
+export get_fixed_transportation_costs
 export get_total_orders
+export get_total_transportation_costs
+export get_total_demand
+export get_total_sales
+export get_total_lost_sales
+export get_total_holding_costs
 
 export get_trips
 
 export eoq_quantity
+
+export plot_inventory
 
 using Graphs
 using Optim
@@ -49,8 +54,8 @@ include("Policy.jl")
 
 include("Optimization.jl")
 include("Reporting.jl")
-
 include("Simulation.jl")
+include("Visualization.jl")
 
 # EOQ
 """

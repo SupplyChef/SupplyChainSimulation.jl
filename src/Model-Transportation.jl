@@ -13,16 +13,21 @@ struct Lane <: Transport
 
     lead_time
 
-    function Lane(;origin, destination, unit_cost=0, lead_time=0)
-        return new(origin, destination, unit_cost, lead_time)
+    can_ship
+
+    function Lane(;origin, destination, unit_cost=0, lead_time=0, can_ship::Array{Bool, 1}=Bool[])
+        return new(origin, destination, unit_cost, lead_time, can_ship)
     end
 end
+
+Base.:(==)(x::Lane, y::Lane) = x.origin == y.origin &&  x.destination == y.destination
+Base.hash(x::Lane, h::UInt64) = hash(x.origin, hash(x.destination, h))
+Base.show(io::IO, x::Lane) = print(io, "$(x.origin) $(x.destination)")
 
 struct Truck
     capacities
     
     fixed_cost
-    unit_cost
 end
 
 struct Route <: Transport
@@ -36,8 +41,10 @@ struct Route <: Transport
 
     lead_times::Dict{L2, Int64} where L2 <: Location
 
+    unit_cost
+
     function Route(;origin, destinations, fixed_cost=0, unit_cost=0)
-        return new(UUIDs.uuid1(), Truck(0, fixed_cost, unit_cost), origin, destinations, [], Dict(d => 0 for d in destinations))
+        return new(UUIDs.uuid1(), Truck(0, fixed_cost), origin, destinations, [], Dict(d => 0 for d in destinations), unit_cost)
     end
 end
 

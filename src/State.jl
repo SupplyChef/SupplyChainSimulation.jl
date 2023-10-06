@@ -1,11 +1,28 @@
+import Base.push!
+import Base.delete!
+
 abstract type InventoryOrderingPolicy end
+
+struct OrderLineTracker
+    pending_outbound_order_lines::Dict{L2, Set{OrderLine}} where L2 <: Location
+    pending_inbound_order_lines::Dict{L3, Set{OrderLine}} where L3 <: Location
+    
+    function OrderLineTracker(pending_outbound_order_lines)
+        olt = new(Dict{Location, Set{OrderLine}}(), Dict{Location, Set{OrderLine}}())
+        for order_line in collect(Base.Iterators.flatten(values(pending_outbound_order_lines)))
+            push!(olt, order_line)
+        end
+        return olt
+    end
+end
 
 struct State
     on_hand_inventory::Dict{Storage, Dict{Product, Int64}}
 
     in_transit_inventory::Dict{L1, Dict{P1, Array{Int64, 1}}} where L1 <: Location where P1 <: Product
 
-    pending_order_lines::Dict{L2, Array{OrderLine, 1}} where L2 <: Location
+    order_line_tracker::OrderLineTracker
+    filled_order_lines::Set{OrderLine}
 
     demand::Dict{Tuple{Customer, Product}, Array{Int64, 1}}
 
@@ -14,15 +31,84 @@ struct State
     historical_on_hand::Array{Dict{Storage, Dict{Product, Int64}}, 1}
     historical_orders::Array{Order, 1}
     historical_transportation::Dict{Trip, Array{OrderLine, 1}}
-    historical_lines_filled::Array{OrderLine, 1}
+    historical_filled_order_lines::Array{Set{OrderLine}}
 
-    function State(;on_hand_inventory, in_transit_inventory, pending_order_lines, demand, policies)
-        return new(on_hand_inventory, in_transit_inventory, pending_order_lines, demand, policies, [], Order[], Dict{Trip, Array{OrderLine, 1}}(), OrderLine[])
+    function State(;on_hand_inventory, 
+                    in_transit_inventory=Dict{Location, Dict{Product, Array{Int64, 1}}}(), 
+                    pending_outbound_order_lines=OrderLine[], 
+                    demand, 
+                    policies)
+        return new(on_hand_inventory, 
+                   in_transit_inventory, 
+                   OrderLineTracker(pending_outbound_order_lines), 
+                   Set{OrderLine}(), 
+                   demand, 
+                   policies, 
+                   [], Order[], Dict{Trip, Array{OrderLine, 1}}(), [])
     end
 end
 
+function push!(olt::OrderLineTracker, order_line::OrderLine)
+    if !haskey(olt.pending_outbound_order_lines, order_line.order.origin) 
+        olt.pending_outbound_order_lines[order_line.order.origin] = Set{OrderLine}()
+    end
+    if !haskey(olt.pending_inbound_order_lines, order_line.order.destination) 
+        olt.pending_inbound_order_lines[order_line.order.destination] = Set{OrderLine}()
+    end
+
+    Base.push!(olt.pending_outbound_order_lines[order_line.order.origin], order_line)
+    Base.push!(olt.pending_inbound_order_lines[order_line.order.destination], order_line)
+end
+
+function add_order_line!(state::State, order_line::OrderLine)
+    olt = state.order_line_tracker
+    push!(olt, order_line)
+end
+
+function delete_order_line!(state::State, order_line::OrderLine)
+    olt = state.order_line_tracker
+    Base.delete!(olt.pending_outbound_order_lines[order_line.order.origin], order_line)
+    Base.delete!(olt.pending_inbound_order_lines[order_line.order.destination], order_line)
+end
+
+function delete_order_lines!(state::State, order_lines::Set{OrderLine})
+    for order_line in order_lines
+        delete_order_line!(state, order_line)
+    end
+end
+
+function add_in_transit_inventory!(state, to, product, time, quantity)
+    if !haskey(state.in_transit_inventory, to)
+        state.in_transit_inventory[to] = Dict{Product, Array{Float64, 1}}()
+    end
+    if !haskey(state.in_transit_inventory[to], product)
+        state.in_transit_inventory[to][product] = zeros(get_horizon(state))
+    end
+    state.in_transit_inventory[to][product][time] += quantity
+end
+
+function delete_in_transit_inventory!(state, to, product, time, quantity)
+    state.in_transit_inventory[to][product][time] -= quantity
+end
+
+function get_in_transit_inventory(state, to, product, time)
+    if !haskey(state.in_transit_inventory, to)
+        return 0
+    end
+    if !haskey(state.in_transit_inventory[to], product)
+        return 0
+    end
+    return state.in_transit_inventory[to][product][time]
+end
+
+function get_horizon(state)
+    return maximum(length.(values(state.demand)))
+end
+
 function snapshot_state!(state, time)
-    push!(state.historical_on_hand, copy(state.on_hand_inventory))
+    push!(state.historical_on_hand, deepcopy(state.on_hand_inventory))
+    push!(state.historical_filled_order_lines, copy(state.filled_order_lines))
+    empty!(state.filled_order_lines)
     #println("On hand at $time, $(state.on_hand_inventory)")
 end
 
@@ -38,9 +124,8 @@ function get_inbound_orders(state, location, product, time)
     reduce(+,
         map(ol -> ol.quantity, 
             filter(ol -> ol.product == product && 
-                         ol.order.due_date >= time &&
-                         is_destination(location, ol.order.trip.route), 
-                         vcat([state.pending_order_lines[l] for l in keys(state.pending_order_lines)]...)
+                         ol.order.due_date >= time, 
+                         collect(get(state.order_line_tracker.pending_inbound_order_lines, location, OrderLine[]))
             )
         ),
         init = 0.0
@@ -52,7 +137,7 @@ function get_outbound_orders(state, location, product, time)
         map(ol -> ol.quantity, 
             filter(ol -> ol.product == product && 
                          ol.order.due_date >= time, 
-                         state.pending_order_lines[location]
+                         collect(get(state.order_line_tracker.pending_outbound_order_lines, location, OrderLine[]))
             )
         ),
         init = 0.0
@@ -66,18 +151,6 @@ function get_used_trucks(state)
     return [trip.truck for trip in keys(state.historical_transportation)]
 end
 
-function get_transportation_costs(state)
+function get_fixed_transportation_costs(state)
     return sum(t.fixed_cost for t in get_used_trucks(state))
-end
-
-function get_holding_costs(state)
-    holding_costs = 0
-    for historical_on_hand in state.historical_on_hand
-        for location in keys(historical_on_hand)
-            for product in keys(historical_on_hand[location])
-                holding_costs += historical_on_hand[location][product] * product.holding_costs
-            end
-        end
-    end
-    return holding_costs
 end

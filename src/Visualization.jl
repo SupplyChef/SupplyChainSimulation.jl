@@ -21,7 +21,7 @@ function plot_inventory_onhand(states::Array{State, 1}, location::Location, prod
                    opacity=0.2) for state in states], layout)
 end
 
-function plot_inventory_onhand(state::State, locations::Array{Location, 1}, product)
+function plot_inventory_onhand(state::State, locations::Array{L, 1}, product) where L <: Location
     #historical_on_hand::Array{Dict{Storage, Dict{Product, Int64}}, 1}
     layout = Layout(title="Inventory on hand",
                    xaxis_title="Period",
@@ -67,7 +67,7 @@ function plot_inventory_movement(state, product)
 
     for i in 1:length(state.historical_on_hand)-1
         for location in keys(state.historical_on_hand[i])
-            if get(state.historical_on_hand[i][location], product, 0) > 0
+            if true #get(state.historical_on_hand[i][location], product, 0) > 0
                 source = "$(location.name)@$i"
                 if !haskey(mapping, source)
                     mapping[source] = index
@@ -84,7 +84,7 @@ function plot_inventory_movement(state, product)
 
                 push!(sources, mapping[source])
                 push!(targets, mapping[destination])
-                push!(values, state.historical_on_hand[i][location][product])
+                push!(values, state.historical_on_hand[i][location][product] + 0.01)
             end
         end
     end

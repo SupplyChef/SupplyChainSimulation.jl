@@ -77,7 +77,7 @@ function delete_order_lines!(state::State, order_lines::Set{OrderLine})
     end
 end
 
-function add_in_transit_inventory!(state, to, product, time, quantity)
+function add_in_transit_inventory!(state::State, to::Location, product::Product, time::Int64, quantity::Int64)
     if !haskey(state.in_transit_inventory, to)
         state.in_transit_inventory[to] = Dict{Product, Array{Float64, 1}}()
     end
@@ -87,11 +87,11 @@ function add_in_transit_inventory!(state, to, product, time, quantity)
     state.in_transit_inventory[to][product][time] += quantity
 end
 
-function delete_in_transit_inventory!(state, to, product, time, quantity)
+function delete_in_transit_inventory!(state::State, to::Location, product::Product, time::Int64, quantity::Int64)
     state.in_transit_inventory[to][product][time] -= quantity
 end
 
-function get_in_transit_inventory(state, to, product, time)
+function get_in_transit_inventory(state::State, to::Location, product::Product, time::Int64)::Int64
     if !haskey(state.in_transit_inventory, to)
         return 0
     end
@@ -105,22 +105,22 @@ function get_horizon(state)
     return maximum(length.(values(state.demand)))
 end
 
-function snapshot_state!(state, time)
-    push!(state.historical_on_hand, deepcopy(state.on_hand_inventory))
+function snapshot_state!(state::State, time)
+    push!(state.historical_on_hand, Dict(k => deepcopy(v) for (k, v) in state.on_hand_inventory))
     push!(state.historical_filled_order_lines, copy(state.filled_order_lines))
     empty!(state.filled_order_lines)
     #println("On hand at $time, $(state.on_hand_inventory)")
 end
 
-function get_net_inventory(state, location, product, time)
+function get_net_inventory(state::State, location::Location, product::Product, time::Int64)
     # on-hand + in-transit + on-order from suppliers - on-order from supplied
     return state.on_hand_inventory[location][product] +
-            sum(state.in_transit_inventory[location][product][time:end]) +
+            sum(get_in_transit_inventory(state, location, product, t) for t in time:get_horizon(state)) +
             get_inbound_orders(state, location, product, time) -
             get_outbound_orders(state, location, product, time)
 end
 
-function get_inbound_orders(state, location, product, time)
+function get_inbound_orders(state::State, location::Location, product::Product, time::Int64)::Int64
     reduce(+,
         map(ol -> ol.quantity, 
             filter(ol -> ol.product == product && 
@@ -128,11 +128,11 @@ function get_inbound_orders(state, location, product, time)
                          collect(get(state.order_line_tracker.pending_inbound_order_lines, location, OrderLine[]))
             )
         ),
-        init = 0.0
+        init = 0
     )
 end
 
-function get_outbound_orders(state, location, product, time)
+function get_outbound_orders(state::State, location::Location, product::Product, time::Int64)::Int64
     reduce(+,
         map(ol -> ol.quantity, 
             filter(ol -> ol.product == product && 
@@ -140,7 +140,7 @@ function get_outbound_orders(state, location, product, time)
                          collect(get(state.order_line_tracker.pending_outbound_order_lines, location, OrderLine[]))
             )
         ),
-        init = 0.0
+        init = 0
     )
 end
 

@@ -2,14 +2,19 @@
 Orders a given quantity specific to each time period.
 """
 mutable struct QuantityOrderingPolicy <: InventoryOrderingPolicy
-    orders
+    orders::Array{Int64, 1}
 end
 
+"""
+    get_parameter_count(policy::QuantityOrderingPolicy)
+
+    Gets the number of parameters for the policy.
+"""
 function get_parameter_count(policy::QuantityOrderingPolicy)
     return length(policy.orders)
 end
 
-function set_parameter!(policy::QuantityOrderingPolicy, values)
+function set_parameter!(policy::QuantityOrderingPolicy, values::Array{Float64, 1})
     policy.orders = Int.(round.(values))
 end
 
@@ -24,18 +29,24 @@ end
 Orders up to a given number based on the number of units on hand; no matter what is on order.
 """
 mutable struct OnHandUptoOrderingPolicy <: InventoryOrderingPolicy
-    upto
+    upto::Int64
 end
 
+
+"""
+    get_parameter_count(policy::OnHandUptoOrderingPolicy)
+
+    Gets the number of parameters for the policy.
+"""
 function get_parameter_count(policy::OnHandUptoOrderingPolicy)
     return 1
 end
 
-function set_parameter!(policy::OnHandUptoOrderingPolicy, values)
+function set_parameter!(policy::OnHandUptoOrderingPolicy, values::Array{Float64, 1})
     policy.upto = Int(round(values[1]))
 end
 
-function get_order(policy::OnHandUptoOrderingPolicy, state, env, location, lane, product, time)
+function get_order(policy::OnHandUptoOrderingPolicy, state::State, env, location, lane, product, time)
     return max(0, policy.upto - state.on_hand_inventory[location][product])
 end
 
@@ -43,58 +54,50 @@ end
 Orders up to a given number based on the net number of units (on hand + in transit + on order - on backlog).
 """
 mutable struct NetUptoOrderingPolicy <: InventoryOrderingPolicy
-    upto
+    upto::Int64
 end
 
+
+"""
+    get_parameter_count(policy::NetUptoOrderingPolicy)
+
+    Gets the number of parameters for the policy.
+"""
 function get_parameter_count(policy::NetUptoOrderingPolicy)
     return 1
 end
 
-function set_parameter!(policy::NetUptoOrderingPolicy, values)
+function set_parameter!(policy::NetUptoOrderingPolicy, values::Array{Float64, 1})
     policy.upto = Int(round(values[1]))
 end
 
-function get_order(policy::NetUptoOrderingPolicy, state, env, location, lane, product, time)
+function get_order(policy::NetUptoOrderingPolicy, state::State, env, location, lane, product, time)
     return max(0, policy.upto - get_net_inventory(state, location, product, time))
-end
-
-"""
-Orders the same amount; no matter the scenario.
-"""
-mutable struct FixedOrderingPolicy <: InventoryOrderingPolicy
-    orders
-end
-
-function get_parameter_count(policy::FixedOrderingPolicy)
-    return length(policy.orders)
-end
-
-function set_parameter!(policy::FixedOrderingPolicy, values)
-    policy.orders = values
-end
-
-function get_order(policy::FixedOrderingPolicy, state, env, lane, product, time)
-    return policy.orders[time]
 end
 
 """
 Orders up to a given number based on the net number of units (on hand + in transit + on order - on backlog) if the net inventory is below a threshold.
 """
 mutable struct NetSSOrderingPolicy <: InventoryOrderingPolicy
-    s
-    S
+    s::Int64
+    S::Int64
 end
 
+"""
+    get_parameter_count(policy::NetSSOrderingPolicy)
+
+    Gets the number of parameters for the policy.
+"""
 function get_parameter_count(policy::NetSSOrderingPolicy)
     return 2
 end
 
-function set_parameter!(policy::NetSSOrderingPolicy, values)
+function set_parameter!(policy::NetSSOrderingPolicy, values::Array{Float64, 1})
     policy.s = Int(round(values[1]))
     policy.S = Int(round(values[2]))
 end
 
-function get_order(policy::NetSSOrderingPolicy, state, env, location, lane, product, time)
+function get_order(policy::NetSSOrderingPolicy, state::State, env, location, lane, product, time)
     net_inventory = get_net_inventory(state, location, product, time)
     #println("net inventory @ $time: $net_inventory")
     if net_inventory >= policy.s
@@ -105,18 +108,24 @@ function get_order(policy::NetSSOrderingPolicy, state, env, location, lane, prod
 end
 
 mutable struct CoverageOrderingPolicy <: InventoryOrderingPolicy
-    cover
+    cover::Float64
 end
 
+
+"""
+    get_parameter_count(policy::CoverageOrderingPolicy)
+
+    Gets the number of parameters for the policy.
+"""
 function get_parameter_count(policy::CoverageOrderingPolicy)
     return 1
 end
 
-function set_parameter!(policy::CoverageOrderingPolicy, values)
+function set_parameter!(policy::CoverageOrderingPolicy, values::Array{Float64, 1})
     policy.cover = values[1]
 end
 
-function get_order(policy::CoverageOrderingPolicy, state, env, location, lane, product, time)
+function get_order(policy::CoverageOrderingPolicy, state::State, env, location, lane, product, time)
     net_inventory = get_net_inventory(state, location, product, time)
     mean_demand = get_mean_demand(env, location, product, time)
 

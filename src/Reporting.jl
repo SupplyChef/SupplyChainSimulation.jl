@@ -1,3 +1,8 @@
+"""
+    get_total_demand(state)
+
+    Gets the total demand (in unit) for the state.
+"""
 function get_total_demand(state)
     demand = 0.0
     for o in filter(o -> isa(o.destination, Customer), state.historical_orders)
@@ -8,6 +13,11 @@ function get_total_demand(state)
     return demand
 end
 
+"""
+    get_total_sales(state)
+
+    Gets the total sales (in unit) for the state.
+"""
 function get_total_sales(state)
     sales = 0
     for ol in filter(ol -> isa(ol.order.destination, Customer), collect(Base.Iterators.flatten(state.historical_filled_order_lines)))
@@ -16,6 +26,11 @@ function get_total_sales(state)
     return sales
 end
 
+"""
+    get_total_lost_sales(state)
+
+    Gets the total lost sales (in unit) for the state.
+"""
 function get_total_lost_sales(state)
     return get_total_demand(state) - get_total_sales(state)
 end
@@ -46,6 +61,11 @@ function get_total_transportation_costs(state)
     return transportation_costs
 end
 
+"""
+    get_total_holding_costs(state)
+
+    Gets the total holding costs for the state.
+"""
 function get_total_holding_costs(state)
     holding_costs = 0
     for historical_on_hand in state.historical_on_hand

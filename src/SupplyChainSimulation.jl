@@ -14,6 +14,7 @@ export OrderLine
 
 export State
 
+export InventoryOrderingPolicy
 export OnHandUptoOrderingPolicy
 export NetUptoOrderingPolicy
 export NetSSOrderingPolicy
@@ -21,15 +22,17 @@ export CoverageOrderingPolicy
 export QuantityOrderingPolicy
 
 export set_parameter!
-export get_sorted_locations
 export get_downstream_customers
 export simulate
 export optimize!
+
+export get_sorted_locations
 export get_inbound_orders
 export get_outbound_orders
 export get_net_inventory
 export get_holding_costs
 export get_fixed_transportation_costs
+
 export get_total_orders
 export get_total_transportation_costs
 export get_total_demand
@@ -41,7 +44,8 @@ export get_trips
 
 export eoq_quantity
 
-export plot_inventory
+export plot_inventory_movement
+export plot_inventory_onhand
 
 using Graphs
 using Optim

@@ -39,7 +39,7 @@ end
 
 # Send inventory
 function send_inventory!(state::State, env::Env, location::Supplier, product::Product, time::Int)
-    order_lines = sort(collect(filter(ol -> ol.product == product, state.order_line_tracker.pending_outbound_order_lines[location])), by=ol -> ol.order.due_date)
+    order_lines = sort(collect(filter(ol -> ol.product == product, get(state.order_line_tracker.pending_outbound_order_lines, location, OrderLine[]))), by=ol -> ol.order.due_date)
     
     for order_line in order_lines
         if order_line.order.due_date < time
@@ -145,13 +145,18 @@ function place_orders(state::State, env::Env, location, product::Product, time::
 end
 
 # Receive orders
+"""
+    receive_orders!(state::State, env::Env, orders)
+
+    Receives the orders that have been placed.
+"""
 function receive_orders!(state::State, env::Env, orders)
     for order in orders
         receive_order!(state, env, order)
     end
 end
 
-function receive_order!(state, env, order)
+function receive_order!(state::State, env::Env, order::Order)
     for order_line in order.lines
         add_order_line!(state, order_line)
     end

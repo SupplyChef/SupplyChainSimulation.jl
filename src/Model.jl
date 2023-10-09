@@ -100,7 +100,7 @@ struct Network
 end
 
 function get_inbound_trips(env, location, time)
-    return collect(filter(trip -> trip.departure == time && is_destination(location, trip.route), env.supplying_trips[location]))
+    return filter(trip -> trip.departure == time, env.supplying_trips[location])
 end
 
 """

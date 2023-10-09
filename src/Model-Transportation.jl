@@ -6,14 +6,14 @@ import Base.isequal
 abstract type Transport end
 
 struct Lane <: Transport
-    origin
-    destination
+    origin::Union{Supplier, Storage, Customer}
+    destination::Union{Supplier, Storage, Customer}
 
-    unit_cost
+    unit_cost::Float64
 
-    lead_time
+    lead_time::Int64
 
-    can_ship
+    can_ship::Array{Bool, 1}
 
     function Lane(;origin, destination, unit_cost=0, lead_time=0, can_ship::Array{Bool, 1}=Bool[])
         return new(origin, destination, unit_cost, lead_time, can_ship)
@@ -51,10 +51,13 @@ end
 Base.hash(r::Route, h::UInt) = hash(r.id, h)
 Base.isequal(r1::Route, r2::Route) = isequal(r1.id, r2.id)
 
+"""
+A trip is the basis of transportation in the simulation. It follows a route with a given departure time.
+"""
 struct Trip
     route
 
-    departure
+    departure::Int64
 end
 
 function get_destinations(route::Route)

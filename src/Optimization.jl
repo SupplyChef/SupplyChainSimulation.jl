@@ -38,11 +38,13 @@ function optimize!(network::Network, horizon::Int64, initial_states...; cost_fun
     parameter_count = sum(get_parameter_count(policy) for policy in policies)
     println(parameter_count)
     x0 = zeros(Float64, parameter_count)
-    res = bboptimize(x -> minimize!(env, horizon, collect(initial_states), policies, x; cost_function=cost_function), x0; 
-                SearchRange=(-0.0, 5000.0), 
-                NumDimensions=parameter_count, 
-                MaxFuncEvals = 10000,
-                Method=:generating_set_search)
+    res = bboptimize(x -> minimize!(env, horizon, collect(initial_states), policies, x; cost_function=cost_function), 
+                     x0, 
+                    Dict(:MaxFuncEvals => 3000,
+                         :MaxStepsWithoutProgress => 100, 
+                         :SearchRange => (-0.0, 5000.0), 
+                         :NumDimensions => parameter_count, 
+                         :Method => :generating_set_search))
 
     best = minimizer(res)
     i = 1

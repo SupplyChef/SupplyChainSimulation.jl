@@ -4,10 +4,10 @@ using Memoize
 Contains information about the environment of the simulation, including the network configuration.
 """
 struct Env 
-    network
+    network::Network
     initial_states
-
-    supplying_trips
+    
+    supplying_trips::Dict{Location, Array{Trip, 1}}
 
     function Env(network, initial_states)
         return new(network, initial_states, Dict(location => get_inbound_trips(network, location) for location in get_locations(network)))

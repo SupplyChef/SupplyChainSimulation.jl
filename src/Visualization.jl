@@ -34,6 +34,18 @@ function plot_inventory_onhand(state::State, locations::Array{L, 1}, product) wh
         layout)
 end
 
+function plot_pending_outbound_order_lines(state::State, locations::Array{L, 1}, product) where L <: Location
+    layout = Layout(title="Pending outbound order lines",
+                   xaxis_title="Period",
+                   yaxis_title="Unit")
+
+    plot([scatter(;x=1:length(state.historical_pending_outbound_order_lines), 
+                  y=[sum(ol -> (ol.product == product && ol.order.due_date >= time) ? ol.quantity : 0, get(historical_pending_outbound_order_lines, location, OrderLine[]); init=0) for (time, historical_pending_outbound_order_lines) in enumerate(state.historical_pending_outbound_order_lines)],
+                  name=location.name,
+                  mode="lines") for location in locations],
+        layout)
+end
+
 function plot_inventory_movement(state, product)
     labels = []
     sources = []

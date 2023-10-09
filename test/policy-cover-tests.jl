@@ -11,7 +11,7 @@
     l2 = Lane(; origin = storage2, destination = storage, unit_cost = 0, lead_time = 2)
 
     policy = OnHandUptoOrderingPolicy(0)
-    policy2 = CoverageOrderingPolicy(0)
+    policy2 = ForwardCoverageOrderingPolicy(0)
 
     network = Network([], [storage, storage2], [customer], get_trips([l, l2], horizon), [p])
 
@@ -55,7 +55,7 @@ end
     l0 = Lane(; origin = storage2, destination = storage, unit_cost = 0, lead_time = 2)
 
     policy = OnHandUptoOrderingPolicy(0)
-    policy2 = CoverageOrderingPolicy(0)
+    policy2 = ForwardCoverageOrderingPolicy(0)
     policies = Dict((l0, p) => policy2)
     println(policies)
 

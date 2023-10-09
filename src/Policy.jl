@@ -107,25 +107,28 @@ function get_order(policy::NetSSOrderingPolicy, state::State, env, location, lan
     end
 end
 
-mutable struct CoverageOrderingPolicy <: InventoryOrderingPolicy
+"""
+Orders inventory to cover the coming periods based on the mean forecasted demand.
+"""
+mutable struct ForwardCoverageOrderingPolicy <: InventoryOrderingPolicy
     cover::Float64
 end
 
 
 """
-    get_parameter_count(policy::CoverageOrderingPolicy)
+    get_parameter_count(policy::ForwardCoverageOrderingPolicy)
 
     Gets the number of parameters for the policy.
 """
-function get_parameter_count(policy::CoverageOrderingPolicy)
+function get_parameter_count(policy::ForwardCoverageOrderingPolicy)
     return 1
 end
 
-function set_parameter!(policy::CoverageOrderingPolicy, values::Array{Float64, 1})
+function set_parameter!(policy::ForwardCoverageOrderingPolicy, values::Array{Float64, 1})
     policy.cover = values[1]
 end
 
-function get_order(policy::CoverageOrderingPolicy, state::State, env, location, lane, product, time)
+function get_order(policy::ForwardCoverageOrderingPolicy, state::State, env, location, lane, product, time)
     net_inventory = get_net_inventory(state, location, product, time)
     mean_demand = get_mean_demand(env, location, product, time)
 

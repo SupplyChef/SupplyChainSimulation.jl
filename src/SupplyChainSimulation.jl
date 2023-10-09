@@ -18,7 +18,7 @@ export InventoryOrderingPolicy
 export OnHandUptoOrderingPolicy
 export NetUptoOrderingPolicy
 export NetSSOrderingPolicy
-export CoverageOrderingPolicy
+export ForwardCoverageOrderingPolicy
 export QuantityOrderingPolicy
 
 export set_parameter!
@@ -46,6 +46,7 @@ export eoq_quantity
 
 export plot_inventory_movement
 export plot_inventory_onhand
+export plot_pending_outbound_order_lines
 
 using Graphs
 using Optim

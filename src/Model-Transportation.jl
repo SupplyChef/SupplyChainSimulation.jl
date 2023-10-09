@@ -86,11 +86,11 @@ function get_trips(route::Route, horizon)
 end
 
 function get_trips(lane::Lane, horizon)
-    return [Trip(lane, t) for t in 1:horizon]
+    return [Trip(lane, t) for t in 1:horizon if (isempty(lane.can_ship) || lane.can_ship[t])]
 end
 
 function get_trips(lanes::Array{Lane, 1}, horizon)
-    return [Trip(l, t) for l in lanes for t in 1:horizon]
+    return [Trip(l, t) for l in lanes for t in 1:horizon if (isempty(l.can_ship) || l.can_ship[t])]
 end
 
 function get_trips(routes, horizon)

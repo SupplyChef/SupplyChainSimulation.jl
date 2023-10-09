@@ -167,6 +167,11 @@ function simulate(network::Network, horizon::Int64, initial_state::State)
     return simulate(Env(network, [initial_state]), horizon, initial_state)
 end
 
+"""
+    simulate(env::Env, horizon::Int64, initial_state::State)
+
+    Simulates the supply chain for horizon steps, starting from the initial state.
+"""
 function simulate(env::Env, horizon::Int64, initial_state::State)
     state = deepcopy(initial_state)
     snapshot_state!(state, 0)

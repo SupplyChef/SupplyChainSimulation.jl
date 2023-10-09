@@ -55,7 +55,7 @@ mutable struct OrderLine
     order
     trip::Union{Missing, Trip} # how (filled when shipping)
     product::Product
-    quantity
+    quantity::Int64
 
     function OrderLine(order, product, quantity)
         return new(order, missing, product, quantity)

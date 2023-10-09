@@ -16,6 +16,9 @@ struct OrderLineTracker
     end
 end
 
+"""
+Contains information about the current state of the simulation, including inventory positions and pending orders.
+"""
 struct State
     on_hand_inventory::Dict{Storage, Dict{Product, Int64}}
 
@@ -32,6 +35,7 @@ struct State
     historical_orders::Array{Order, 1}
     historical_transportation::Dict{Trip, Array{OrderLine, 1}}
     historical_filled_order_lines::Array{Set{OrderLine}}
+    historical_pending_outbound_order_lines::Array{Dict{Location, Set{OrderLine}}}
 
     function State(;on_hand_inventory, 
                     in_transit_inventory=Dict{Location, Dict{Product, Array{Int64, 1}}}(), 
@@ -44,7 +48,11 @@ struct State
                    Set{OrderLine}(), 
                    demand, 
                    policies, 
-                   [], Order[], Dict{Trip, Array{OrderLine, 1}}(), [])
+                   [], 
+                   Order[],
+                   Dict{Trip, Array{OrderLine, 1}}(), 
+                   [],
+                   [])
     end
 end
 
@@ -109,6 +117,7 @@ function snapshot_state!(state::State, time)
     push!(state.historical_on_hand, Dict(k => deepcopy(v) for (k, v) in state.on_hand_inventory))
     push!(state.historical_filled_order_lines, copy(state.filled_order_lines))
     empty!(state.filled_order_lines)
+    push!(state.historical_pending_outbound_order_lines, Dict(k => copy(v) for (k, v) in state.order_line_tracker.pending_inbound_order_lines))
     #println("On hand at $time, $(state.on_hand_inventory)")
 end
 
@@ -121,25 +130,15 @@ function get_net_inventory(state::State, location::Location, product::Product, t
 end
 
 function get_inbound_orders(state::State, location::Location, product::Product, time::Int64)::Int64
-    reduce(+,
-        map(ol -> ol.quantity, 
-            filter(ol -> ol.product == product && 
-                         ol.order.due_date >= time, 
-                         collect(get(state.order_line_tracker.pending_inbound_order_lines, location, OrderLine[]))
-            )
-        ),
+    sum(ol -> (ol.product == product && ol.order.due_date >= time) ? ol.quantity : 0, 
+        get(state.order_line_tracker.pending_inbound_order_lines, location, OrderLine[]);
         init = 0
     )
 end
 
 function get_outbound_orders(state::State, location::Location, product::Product, time::Int64)::Int64
-    reduce(+,
-        map(ol -> ol.quantity, 
-            filter(ol -> ol.product == product && 
-                         ol.order.due_date >= time, 
-                         collect(get(state.order_line_tracker.pending_outbound_order_lines, location, OrderLine[]))
-            )
-        ),
+    sum(ol -> (ol.product == product && ol.order.due_date >= time) ? ol.quantity : 0, 
+        get(state.order_line_tracker.pending_outbound_order_lines, location, OrderLine[]);
         init = 0
     )
 end

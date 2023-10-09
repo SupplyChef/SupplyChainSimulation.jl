@@ -1,3 +1,5 @@
+# SupplyChainSimulation	
+
 SupplyChainSimulation is a package to model and simulate supply chains.
 
 The simulation is built around a loop that keeps track of orders and inventory movements:
@@ -19,16 +21,18 @@ pkg> add SupplyChainSimulation
 ```
 
 ## Getting Started
-The first step to use SupplyChainSimulation is to define the supply chain. This is done by specifying the supply chain network, including product, suppliers, storage locations, and customers. 
+
+The first step to use SupplyChainSimulation is to define the supply chain. This is done by specifying the supply chain network, including product, suppliers, storage locations, and customers.
 
 In the example below we define a network with one product, one supplier, one storage location, and one customer.
+
 ```julia
 horizon = 20
-        
+  
 product = Single("product")
 
 supplier = Supplier("supplier")
-storage = Storage("storage", Dict(p => 1.0))
+storage = Storage("storage", Dict(product => 1.0))
 customer = Customer("customer")
 
 l1 = Lane(; origin = storage, destination = customer)
@@ -42,9 +46,9 @@ The second step is to define the starting state. The initial state represents th
 ```julia
 policy = OnHandUptoOrderingPolicy(0)
 
-initial_states = [State(; on_hand_inventory = Dict(storage => Dict(p => 0)), 
-                        demand = Dict((customer, p) => rand(Poisson(10), horizon)),
-                        policies = Dict((l2, p) => policy)) for i in 1:10]
+initial_states = [State(; on_hand_inventory = Dict(storage => Dict(product => 0)), 
+                        demand = Dict((customer, product) => rand(Poisson(10), horizon)),
+                        policies = Dict((l2, product) => policy)) for i in 1:10]
 ```
 
 The third step is to run the simulation or the optimization (depending on whether you already know the policies you want to use or whether you want to find the best policies). In our example we will search the best policy by running the optimizer.
@@ -65,15 +69,29 @@ The resulting plot is shown below.
 
 ![example inventory on hand](example_inventory_on_hand.png)
 
+## Policies
+
+The package comes with several policies predefined, including:
+
+- QuantityOrderingPolicy: Orders a given quantity specific to each time period. The quantity ordered is the same across scenarios and irrespective of the current inventory position.
+- OnHandUptoOrderingPolicy: Orders up to a given number based on the number of units on hand; no matter what is on order.
+- NetUptoOrderingPolicy: Orders up to a given number based on the net number of units (on hand + in transit + on order - on backlog).
+- NetSSOrderingPolicy: Orders up to a given number based on the net number of units (on hand + in transit + on order - on backlog) if the net inventory is below a threshold.
+
 ## Creating a new policy
+
 Creating a new policy is easy and can be done in two steps:
+
 1. Create a new struct to represent your policy. This struct can hold the data you need to compute the orders. For example, let's say that we want to create a policy that orders always the same amount. We will create the following strut
+
 ```julia
 mutable struct SameOrderPolicy <: InventoryOrderingPolicy
     order::Int64
 end
 ```
+
 2. Implement the following functions:
+
 ```julia
 function get_parameter_count(policy::SameOrderPolicy)
     return 1 # indicates how many parameters the policy has so that the optimizer can optimize the policy.
@@ -87,11 +105,12 @@ function get_order(policy::SameOrderPolicy, state, env, location, lane, product,
     return policy.order # returns the order when running the policy during a simulation
 end
 ```
+
 Once the policy is defined it can be used either as part of a simulation run where the order is defined by you, or as part of an optimization run where the optimizer will find the best order to minimize the cost function.
 
 ## API
 
 ```@autodocs
 Modules = [SupplyChainSimulation]
-Order   = [:function, :type]
+Order   = [:type, :function]
 ```

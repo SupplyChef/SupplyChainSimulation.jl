@@ -1,5 +1,8 @@
 using Memoize
 
+"""
+Contains information about the environment of the simulation, including the network configuration.
+"""
 struct Env 
     network
     initial_states

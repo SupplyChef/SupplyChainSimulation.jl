@@ -111,7 +111,7 @@ function place_orders(state::State, env::Env, location::Customer, product::Produ
     quantity = state.demand[(location, product)][time]
     if quantity > 0
         trip = first(filter(t -> t.departure >= time, env.supplying_trips[location]))
-        order = Order(trip.route.origin, location, Set{OrderLine}(), time) # customers orders are due immediately
+        order = Order(time, trip.route.origin, location, Set{OrderLine}(), time) # customers orders are due immediately
         push!(order.lines, OrderLine(order, product, quantity))
         
         orders = [order]
@@ -132,7 +132,7 @@ function place_orders(state::State, env::Env, location, product::Product, time::
         policy = state.policies[(trip.route, product)]
         quantity = get_order(policy, state, env, location, trip.route, product, time) 
         if quantity > 0
-            order = Order(trip.route.origin, location, Set{OrderLine}(), typemax(Int64)) # internal orders are backlogged
+            order = Order(time, trip.route.origin, location, Set{OrderLine}(), typemax(Int64)) # internal orders are backlogged
             push!(order.lines, OrderLine(order, product, quantity))
             
             push!(orders, order)

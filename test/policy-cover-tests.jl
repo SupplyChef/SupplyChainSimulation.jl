@@ -2,7 +2,7 @@
     p = Single("product")
 
     customer = Customer("c")
-    storage = Storage("s", Dict(p => 1.0))
+    storage = Storage("s", Dict(p => 0.1))
     storage2 = Storage("s2")
 
     horizon = 20
@@ -46,7 +46,7 @@ end
     p = Single("product")
 
     customers = [Customer("c$i") for i in 1:store_count]
-    storage = Storage("s", Dict(p => 1.0))
+    storage = Storage("s", Dict(p => 0.1))
     storage2 = Storage("s2")
 
     horizon = 20

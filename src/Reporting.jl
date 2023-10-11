@@ -53,10 +53,32 @@ function get_total_orders(state)
     return orders
 end
 
-function get_total_transportation_costs(state)
+"""
+    get_total_trip_unit_costs(state)
+
+    Gets the total transportation unit costs.
+"""
+function get_total_trip_unit_costs(state)
     transportation_costs = 0
     for (trip, order_lines) in state.historical_transportation
         transportation_costs += trip.route.unit_cost * sum(order_line.quantity for order_line in order_lines)
+    end
+    return transportation_costs
+end
+
+"""
+    get_total_trip_fixed_costs(state)
+
+    Gets the total transportation fixed costs.
+"""
+function get_total_trip_fixed_costs(state)
+    transportation_costs = 0
+    seen = Set{Trip}() 
+    for (trip, order_lines) in state.historical_transportation
+        if trip ∉ seen
+            transportation_costs += get_fixed_cost(trip.route)
+        end
+        push!(seen, trip)
     end
     return transportation_costs
 end

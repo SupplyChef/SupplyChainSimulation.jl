@@ -99,6 +99,11 @@ function delete_in_transit_inventory!(state::State, to::Location, product::Produ
     state.in_transit_inventory[to][product][time] -= quantity
 end
 
+"""
+    get_in_transit_inventory(state::State, to::Location, product::Product, time::Int64)::Int64
+
+    Gets the number of units of a product in transit to a location at a given time.
+"""
 function get_in_transit_inventory(state::State, to::Location, product::Product, time::Int64)::Int64
     if !haskey(state.in_transit_inventory, to)
         return 0
@@ -109,7 +114,22 @@ function get_in_transit_inventory(state::State, to::Location, product::Product, 
     return state.in_transit_inventory[to][product][time]
 end
 
-function get_horizon(state)
+function get_in_transit_inventories(state::State, to::Location, product::Product)::Array{Int64, 1}
+    if !haskey(state.in_transit_inventory, to)
+        return [0]
+    end
+    if !haskey(state.in_transit_inventory[to], product)
+        return [0]
+    end
+    return state.in_transit_inventory[to][product]
+end
+
+"""
+    get_horizon(state::State)
+
+    Gets the number of steps in the simulation.
+"""
+function get_horizon(state::State)
     return maximum(length.(values(state.demand)))
 end
 
@@ -124,11 +144,16 @@ end
 function get_net_inventory(state::State, location::Location, product::Product, time::Int64)
     # on-hand + in-transit + on-order from suppliers - on-order from supplied
     return state.on_hand_inventory[location][product] +
-            sum(get_in_transit_inventory(state, location, product, t) for t in time:get_horizon(state)) +
+            sum(get_in_transit_inventories(state, location, product)[time:end]; init=0) +
             get_inbound_orders(state, location, product, time) -
             get_outbound_orders(state, location, product, time)
 end
 
+"""
+    get_inbound_orders(state::State, location::Location, product::Product, time::Int64)::Int64
+
+    Gets the number of units of a product on order to a location (but not yet shipped there) at a given time.
+"""
 function get_inbound_orders(state::State, location::Location, product::Product, time::Int64)::Int64
     sum(ol -> (ol.product == product && ol.order.due_date >= time) ? ol.quantity : 0, 
         get(state.order_line_tracker.pending_inbound_order_lines, location, OrderLine[]);
@@ -136,6 +161,11 @@ function get_inbound_orders(state::State, location::Location, product::Product, 
     )
 end
 
+"""
+    get_outbound_orders(state::State, location::Location, product::Product, time::Int64)::Int64
+
+    Gets the number of units of a product on order at a location (and not yet shipped out) at a given time.
+"""
 function get_outbound_orders(state::State, location::Location, product::Product, time::Int64)::Int64
     sum(ol -> (ol.product == product && ol.order.due_date >= time) ? ol.quantity : 0, 
         get(state.order_line_tracker.pending_outbound_order_lines, location, OrderLine[]);
@@ -143,13 +173,24 @@ function get_outbound_orders(state::State, location::Location, product::Product,
     )
 end
 
+function get_past_inbound_orders(state::State, location::Location, product::Product, time::Int64, step_back::Int64)::Array{Union{Missing, Int64}, 1}
+    past_orders = zeros(Union{Missing, Int64}, step_back)
+    for t in 1:step_back
+        if time - t < 1
+            past_orders[t] = missing
+        else
+            orders = filter(o -> o.creation_time == time - t && o.origin == location, state.historical_orders)
+            order_lines = collect(Base.Iterators.flatten(map(o -> o.lines, orders)))
+            order_lines = filter(ol -> ol.product == product, order_lines)
+            past_orders[t] = sum(ol -> ol.quantity, order_lines; init=0)
+        end
+    end
+    past_orders
+end
+
 function get_net_network_inventory(state, location, product)
 end
 
 function get_used_trucks(state)
     return [trip.truck for trip in keys(state.historical_transportation)]
-end
-
-function get_fixed_transportation_costs(state)
-    return sum(t.fixed_cost for t in get_used_trucks(state))
 end

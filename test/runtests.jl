@@ -1,5 +1,6 @@
 using SupplyChainSimulation
 
+using Distributions
 using Test
 
 @testset "Network" begin
@@ -10,7 +11,7 @@ using Test
 
         product = Single("product")
 
-        network = Network([], [storage], [customer], get_trips(l, 1), Product[product])
+        network = Network([], [storage], [customer], get_trips(l, 1), Single[product])
 
         get_sorted_locations(network) == [storage, customer]
     end
@@ -87,8 +88,8 @@ end
 
         product = Single("product")
 
-        o = Order(l, [(product, 5)], 1)
-        o2 = Order(l2, [(product, 15)], 1)
+        o = Order(0, l, [(product, 5)], 1)
+        o2 = Order(0, l2, [(product, 15)], 1)
 
         network = Network([], [storage, storage2], [customer], get_trips([l, l2], 1), [product])
 
@@ -159,6 +160,48 @@ end
     end
 end
 
+@testset "Newsvendor" begin
+    @test begin 
+        horizon = 1
+
+        product = Single("product")
+
+        supplier = Supplier("supplier")
+        storage = Storage("storage", Dict(product => 1.0))
+        customer = Customer("customer")
+        
+        l1 = Lane(; origin = storage, destination = customer)
+        l2 = Lane(; origin = supplier, destination = storage)
+
+        network = Network([supplier], [storage], [customer], get_trips([l1, l2], horizon), [product])
+
+        policy = OnHandUptoOrderingPolicy(0)
+
+        initial_states = [State(; on_hand_inventory = Dict(storage => Dict(product => 0)), 
+                                demand = Dict((customer, product) => rand(Poisson(10), horizon)),
+                                policies = Dict((l2, product) => policy)) for i in 1:10]
+
+        optimize!(network, horizon, initial_states...)
+
+        println(policy)
+
+        final_states = [simulate(network, horizon, initial_state) for initial_state in initial_states]
+
+        println("lost sales: $(get_total_lost_sales(final_states[1]))")
+        println("sales: $(get_total_sales(final_states[1]))")
+        println("demand: $(get_total_demand(final_states[1]))")
+        println("holding costs: $(get_total_holding_costs(final_states[1]))")
+        true
+    end
+end
+
+@testset "EOQ" begin
+    @test begin 
+        true
+    end
+end
+
 include("policy-tests.jl")
 include("policy-cover-tests.jl")
-include("policy-ss-test.jl")
+include("policy-ss-tests.jl")
+include("policy-beergame-tests.jl")

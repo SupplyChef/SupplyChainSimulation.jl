@@ -19,6 +19,7 @@ export OnHandUptoOrderingPolicy
 export NetUptoOrderingPolicy
 export NetSSOrderingPolicy
 export ForwardCoverageOrderingPolicy
+export BackwardCoverageOrderingPolicy
 export QuantityOrderingPolicy
 
 export set_parameter!
@@ -31,10 +32,10 @@ export get_inbound_orders
 export get_outbound_orders
 export get_net_inventory
 export get_holding_costs
-export get_fixed_transportation_costs
 
 export get_total_orders
-export get_total_transportation_costs
+export get_total_trip_unit_costs
+export get_total_trip_fixed_costs
 export get_total_demand
 export get_total_sales
 export get_total_lost_sales

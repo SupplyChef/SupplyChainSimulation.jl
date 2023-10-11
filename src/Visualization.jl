@@ -1,5 +1,10 @@
 using PlotlyJS
 
+"""
+    plot_inventory_onhand(state::State, location::Location, product)
+
+    Plots the inventory on hand of a product at a location over time.
+"""
 function plot_inventory_onhand(state::State, location::Location, product)
     #historical_on_hand::Array{Dict{Storage, Dict{Product, Int64}}, 1}
     layout = Layout(title="Inventory on hand",
@@ -9,6 +14,11 @@ function plot_inventory_onhand(state::State, location::Location, product)
     plot(1:length(state.historical_on_hand), [historical_on_hand[location][product] for historical_on_hand in state.historical_on_hand], layout)
 end
 
+"""
+    plot_inventory_onhand(state::Array{State, 1}, location::Location, product)
+
+    Plots the inventory on hand of a product at a location over time for multiple scenarios.
+"""
 function plot_inventory_onhand(states::Array{State, 1}, location::Location, product)
     #historical_on_hand::Array{Dict{Storage, Dict{Product, Int64}}, 1}
     layout = Layout(title="Inventory on hand",
@@ -21,6 +31,11 @@ function plot_inventory_onhand(states::Array{State, 1}, location::Location, prod
                    opacity=0.2) for state in states], layout)
 end
 
+"""
+    plot_inventory_onhand(state::State, locations::::Array{L, 1}, product) where L <: Location
+
+    Plots the inventory on hand of a product over time for multiple locations.
+"""
 function plot_inventory_onhand(state::State, locations::Array{L, 1}, product) where L <: Location
     #historical_on_hand::Array{Dict{Storage, Dict{Product, Int64}}, 1}
     layout = Layout(title="Inventory on hand",
@@ -46,6 +61,23 @@ function plot_pending_outbound_order_lines(state::State, locations::Array{L, 1},
         layout)
 end
 
+function plot_orders(state::State, locations::Array{L, 1}, product) where L <: Location
+    layout = Layout(title="Orders",
+                   xaxis_title="Period",
+                   yaxis_title="Unit")
+
+    plot([scatter(;x=1:get_horizon(state), 
+                  y=[get_past_inbound_orders(state, location, product, t + 1, 1)[1] for t in 1:get_horizon(state)],
+                  name=location.name,
+                  mode="lines") for location in locations],
+        layout)
+end
+
+"""
+    plot_inventory_movement(state, product)
+
+    Plots the inventory movement of a product through the supply chain through time.
+"""
 function plot_inventory_movement(state, product)
     labels = []
     sources = []

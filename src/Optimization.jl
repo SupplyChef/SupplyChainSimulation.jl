@@ -28,7 +28,7 @@ end
 
     Optimizes the inventory policies in the network by simulating the inventory movement starting from the initial states and costing the results with the cost function.
 """
-function optimize!(network::Network, horizon::Int64, initial_states...; cost_function=s->get_total_lost_sales(s) + 0.01 * get_total_holding_costs(s) + 0.001 * get_total_orders(s))
+function optimize!(network::Network, horizon::Int64, initial_states...; cost_function=s->get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s))
     env = Env(network, initial_states)
 
     initial_state = initial_states[1]

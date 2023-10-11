@@ -9,14 +9,15 @@ struct Lane <: Transport
     origin::Union{Supplier, Storage, Customer}
     destination::Union{Supplier, Storage, Customer}
 
+    fixed_cost::Float64
     unit_cost::Float64
 
     lead_time::Int64
 
     can_ship::Array{Bool, 1}
 
-    function Lane(;origin, destination, unit_cost=0, lead_time=0, can_ship::Array{Bool, 1}=Bool[])
-        return new(origin, destination, unit_cost, lead_time, can_ship)
+    function Lane(;origin, destination, fixed_cost=0, unit_cost=0, lead_time=0, can_ship::Array{Bool, 1}=Bool[])
+        return new(origin, destination, fixed_cost, unit_cost, lead_time, can_ship)
     end
 end
 
@@ -98,4 +99,12 @@ end
 
 function get_trips(routes, horizon)
     return [Trip(r, t) for r in routes for t in 1:horizon]
+end
+
+function get_fixed_cost(lane::Lane)
+    return lane.fixed_cost
+end
+
+function get_fixed_cost(route::Route)
+    return route.truck.fixed_cost
 end

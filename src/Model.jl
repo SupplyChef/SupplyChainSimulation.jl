@@ -63,25 +63,26 @@ mutable struct OrderLine
 end
 
 struct Order
+    creation_time::Int64
     origin # from
     destination # to 
     lines::Set{OrderLine} # what 
     due_date::Int64 # when
 
-    function Order(origin::Location, destination::Location, lines::Set{OrderLine}, due_date::Int64)
-        return new(origin, destination, lines, due_date)
+    function Order(creation_time::Int64, origin::Location, destination::Location, lines::Set{OrderLine}, due_date::Int64)
+        return new(creation_time, origin, destination, lines, due_date)
     end
 
-    function Order(origin::Location, destination::Location, lines::Array{Tuple{P, Int64}, 1}, due_date::Int64) where P <: Product
-        order = new(origin, destination, Set{OrderLine}(), due_date)
+    function Order(creation_time::Int64, origin::Location, destination::Location, lines::Array{Tuple{P, Int64}, 1}, due_date::Int64) where P <: Product
+        order = new(creation_time, origin, destination, Set{OrderLine}(), due_date)
         for (product, quantity) in lines
             push!(order.lines, OrderLine(order, product, quantity))
         end
         return order
     end
 
-    function Order(lane::Lane, lines::Array{Tuple{P, Int64}, 1}, due_date::Int64) where P <: Product
-        order = new(lane.origin, lane.destination, Set{OrderLine}(), due_date)
+    function Order(creation_time::Int64, lane::Lane, lines::Array{Tuple{P, Int64}, 1}, due_date::Int64) where P <: Product
+        order = new(creation_time, lane.origin, lane.destination, Set{OrderLine}(), due_date)
         for (product, quantity) in lines
             push!(order.lines, OrderLine(order, product, quantity))
         end

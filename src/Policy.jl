@@ -114,7 +114,6 @@ mutable struct ForwardCoverageOrderingPolicy <: InventoryOrderingPolicy
     cover::Float64
 end
 
-
 """
     get_parameter_count(policy::ForwardCoverageOrderingPolicy)
 
@@ -147,5 +146,50 @@ function get_order(policy::ForwardCoverageOrderingPolicy, state::State, env, loc
     end
     order = max(0, Int(ceil(coverage - net_inventory)))
     #println("cover $(policy.cover); mean demand $mean_demand; coverage $coverage; net inventory $net_inventory; order $order; time $time")
+    return order
+end
+
+"""
+Orders inventory to cover the coming periods based on past demand.
+"""
+mutable struct BackwardCoverageOrderingPolicy <: InventoryOrderingPolicy
+    cover::Array{Float64}
+end
+
+"""
+    get_parameter_count(policy::BackwardCoverageOrderingPolicy)
+
+    Gets the number of parameters for the policy.
+"""
+function get_parameter_count(policy::BackwardCoverageOrderingPolicy)
+    return length(policy.cover)
+end
+
+function set_parameter!(policy::BackwardCoverageOrderingPolicy, values::Array{Float64, 1})
+    policy.cover = values
+end
+
+function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env, location, lane, product, time)
+    net_inventory = get_net_inventory(state, location, product, time)
+    
+    past_orders = get_past_inbound_orders(state, location, product, time, length(policy.cover))
+
+    weights = 0
+    coverage = 0
+    for i in 1:length(policy.cover) - 1
+        if !ismissing(past_orders[i])
+            coverage += policy.cover[i] * past_orders[i]
+            weights += policy.cover[i]
+        end
+    end
+
+    if weights != 0
+        coverage = coverage / (weights / sum(policy.cover))
+    end
+
+    coverage = coverage + policy.cover[end]
+
+    #println(coverage)
+    order = max(0, Int(ceil(coverage - net_inventory)))
     return order
 end

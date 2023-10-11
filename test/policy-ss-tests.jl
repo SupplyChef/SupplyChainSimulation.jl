@@ -1,8 +1,8 @@
-@test begin
+@test begin #sS policy
     p = Single("product")
 
     customer = Customer("c")
-    storage = Storage("s", Dict(p => 1.0))
+    storage = Storage("s", Dict(p => 0.1))
     storage2 = Storage("s2")
 
     horizon = 20
@@ -37,7 +37,7 @@ end
     p = Single("product")
 
     customer = Customer("c")
-    storage = Storage("s", Dict(p => 1.0))
+    storage = Storage("s", Dict(p => 0.1))
     storage2 = Storage("s2")
 
     horizon = 20
@@ -64,14 +64,15 @@ end
     println("sales: $(get_total_sales(final_state))")
     println("demand: $(get_total_demand(final_state))")
     println("holding costs: $(get_total_holding_costs(final_state))")
-    true
+
+    get_total_lost_sales(final_state) == 20 &&  get_total_sales(final_state) == 10 * horizon - 20 && get_total_demand(final_state) == 10 * horizon
 end
 
 @test begin #sS policy
     p = Single("product")
 
     customer = Customer("c")
-    storage = Storage("s", Dict(p => 1.0))
+    storage = Storage("s", Dict(p => 0.1))
     storage2 = Storage("s2")
 
     horizon = 20

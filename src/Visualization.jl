@@ -5,7 +5,7 @@ using PlotlyJS
 
     Plots the inventory on hand of a product at a location over time.
 """
-function plot_inventory_onhand(state::State, location::Location, product)
+function plot_inventory_onhand(state::State, location::Location, product::Product)
     #historical_on_hand::Array{Dict{Storage, Dict{Product, Int64}}, 1}
     layout = Layout(title="Inventory on hand",
                    xaxis_title="Period",
@@ -19,7 +19,7 @@ end
 
     Plots the inventory on hand of a product at a location over time for multiple scenarios.
 """
-function plot_inventory_onhand(states::Array{State, 1}, location::Location, product)
+function plot_inventory_onhand(states::Array{State, 1}, location::Location, product::Product)
     #historical_on_hand::Array{Dict{Storage, Dict{Product, Int64}}, 1}
     layout = Layout(title="Inventory on hand",
                    xaxis_title="Period",
@@ -36,7 +36,7 @@ end
 
     Plots the inventory on hand of a product over time for multiple locations.
 """
-function plot_inventory_onhand(state::State, locations::Array{L, 1}, product) where L <: Location
+function plot_inventory_onhand(state::State, locations::Array{L, 1}, product::Product) where L <: Location
     #historical_on_hand::Array{Dict{Storage, Dict{Product, Int64}}, 1}
     layout = Layout(title="Inventory on hand",
                    xaxis_title="Period",
@@ -49,7 +49,7 @@ function plot_inventory_onhand(state::State, locations::Array{L, 1}, product) wh
         layout)
 end
 
-function plot_pending_outbound_order_lines(state::State, locations::Array{L, 1}, product) where L <: Location
+function plot_pending_outbound_order_lines(state::State, locations::Array{L, 1}, product::Product) where L <: Location
     layout = Layout(title="Pending outbound order lines",
                    xaxis_title="Period",
                    yaxis_title="Unit")
@@ -61,7 +61,7 @@ function plot_pending_outbound_order_lines(state::State, locations::Array{L, 1},
         layout)
 end
 
-function plot_orders(state::State, locations::Array{L, 1}, product) where L <: Location
+function plot_orders(state::State, locations::Array{L, 1}, product::Product) where L <: Location
     layout = Layout(title="Orders",
                    xaxis_title="Period",
                    yaxis_title="Unit")
@@ -78,7 +78,7 @@ end
 
     Plots the inventory movement of a product through the supply chain through time.
 """
-function plot_inventory_movement(state, product)
+function plot_inventory_movement(state::State, product::Product)
     labels = []
     sources = []
     targets = []

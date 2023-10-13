@@ -85,19 +85,19 @@ function get_leadtime(lane::Lane, destination)
     return lane.lead_time
 end
 
-function get_trips(route::Route, horizon)
+function get_trips(route::Route, horizon::Int64)
     return [Trip(route, t) for t in 1:horizon]
 end
 
-function get_trips(lane::Lane, horizon)
+function get_trips(lane::Lane, horizon::Int64)
     return [Trip(lane, t) for t in 1:horizon if (isempty(lane.can_ship) || lane.can_ship[t])]
 end
 
-function get_trips(lanes::Array{Lane, 1}, horizon)
+function get_trips(lanes::Array{Lane, 1}, horizon::Int64)
     return [Trip(l, t) for l in lanes for t in 1:horizon if (isempty(l.can_ship) || l.can_ship[t])]
 end
 
-function get_trips(routes, horizon)
+function get_trips(routes, horizon::Int64)
     return [Trip(r, t) for r in routes for t in 1:horizon]
 end
 

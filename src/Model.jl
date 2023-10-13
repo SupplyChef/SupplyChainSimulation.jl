@@ -13,9 +13,9 @@ Base.show(io::IO, x::Supplier) = print(io, x.name)
 struct Storage <: Location 
     name::String
 
-    holding_costs::Dict{Product, Float64}
+    holding_costs::Dict{<:Product, Float64}
 
-    function Storage(name::String, holding_costs=Dict{Product, Float64}())
+    function Storage(name::String, holding_costs::Dict{<:Product, Float64}=Dict{Product, Float64}())
         return new(name, holding_costs)
     end
 end
@@ -109,11 +109,11 @@ end
 
     Gets all the locations in the network.
 """
-function get_locations(network)
+function get_locations(network::Network)
     return vcat(network.storages, network.customers, network.suppliers)
 end
 
-function create_graph(network)
+function create_graph(network::Network)
     graph = Graphs.DiGraph(length(get_locations(network)))
 
     mapping = Dict{Location, Int64}()

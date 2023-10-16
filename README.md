@@ -2,7 +2,7 @@
 
 [![Build status (Github Actions)](https://github.com/SupplyChef/SupplyChainSimulation.jl/workflows/CI/badge.svg)](https://github.com/SupplyChef/SupplyChainSimulation.jl/actions)
 
-[![codecov.io](http://codecov.io/github/SupplyChef/SupplyChainSimulation.jl/coverage.svg?branch=main)](http://app.codecov.io/github/SupplyChef/SupplyChainSimulation.jl?branch=main)
+[![codecov.io](http://codecov.io/github/SupplyChef/SupplyChainSimulation.jl/coverage.svg?branch=main)](http://app.codecov.io/github/SupplyChef/SupplyChainSimulation.jl?branch=master)
 
 [![](https://img.shields.io/badge/docs-latest-blue.svg)](https://SupplyChef.github.io/SupplyChainSimulation.jl/dev)
 

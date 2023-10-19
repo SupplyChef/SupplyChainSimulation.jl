@@ -147,10 +147,17 @@ end
 
 function get_net_inventory(state::State, location::Node, product::Product, time::Int64)
     # on-hand + in-transit + on-order from suppliers - on-order from supplied
-    return state.on_hand_inventory[location][product] +
-            sum(get_in_transit_inventories(state, location, product)[time:end]; init=0) +
-            get_inbound_orders(state, location, product, time) -
-            get_outbound_orders(state, location, product, time)
+    on_hand = state.on_hand_inventory[location][product]
+    in_transit = sum(get_in_transit_inventories(state, location, product)[time:end]; init=0)
+    inbound = get_inbound_orders(state, location, product, time)
+    outbound = get_outbound_orders(state, location, product, time) 
+
+    @debug "on hand: $on_hand, in transit: $in_transit, inbound: $inbound, outbound: $outbound"
+
+    return on_hand +
+            in_transit +
+            inbound -
+            outbound
 end
 
 """

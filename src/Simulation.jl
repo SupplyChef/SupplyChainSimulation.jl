@@ -1,30 +1,25 @@
 # Receive inventory
-function receive_inventory!(state, env, location::Storage, product, time)
+function receive_inventory!(state::State, env::Env, location::Storage, product, time)
     #println(state)
     quantity = get_in_transit_inventory(state, location, product, time)
     state.on_hand_inventory[location][product] += quantity
     add_in_transit_inventory!(state, location, product, time, -quantity)
-    if quantity > 0
-        #println("Received at $time, $location, $product, $quantity")
-    end
+    @debug "Received at $time, $location, $product, $quantity"
 end
 
-function receive_inventory!(state, env, location::Customer, product, time)
+function receive_inventory!(state::State, env::Env, location::Customer, product, time)
     #println(state)
     quantity = get_in_transit_inventory(state, location, product, time)
     add_in_transit_inventory!(state, location, product, time, -quantity)
-    if quantity > 0
-        println("receive_inventory $location $product $quantity $time")
-        #println("Received at $time, $location, $product, $quantity")
-    end
+    @debug "Received at $time, $location, $product, $quantity"
 end
 
-function receive_inventory!(state, env, location::Supplier, product, time)
+function receive_inventory!(state::State, env::Env, location::Supplier, product, time)
     #no-op
 end
 
 # Send inventory (detailed)
-function send_inventory!(state, env, trip::Trip, destination, product, quantity, time)
+function send_inventory!(state::State, env::Env, trip::Trip, destination, product, quantity, time)
     #println("send_inventory_low $destination $product $quantity $time")
     if time + get_leadtime(trip.route, destination) > get_horizon(state)
         return
@@ -33,7 +28,7 @@ function send_inventory!(state, env, trip::Trip, destination, product, quantity,
     #println("Sent at $time, $(trip.route.origin), $destination, $product, $quantity")
 end
 
-function send_inventory!(state, env, trip::Trip, destination::Customer, product, quantity, time)
+function send_inventory!(state::State, env::Env, trip::Trip, destination::Customer, product, quantity, time)
     #no-op
 end
 
@@ -113,6 +108,7 @@ function place_orders(state::State, env::Env, location::Customer, product::Produ
         trip = first(filter(t -> t.departure >= time, env.supplying_trips[location]))
         order = Order(time, trip.route.origin, location, Set{OrderLine}(), time) # customers orders are due immediately
         push!(order.lines, OrderLine(order, product, quantity))
+        @debug "Ordered at $time, $location, $product, $quantity"
         
         orders = [order]
         #println("Place $order")
@@ -134,6 +130,7 @@ function place_orders(state::State, env::Env, location, product::Product, time::
         if quantity > 0
             order = Order(time, trip.route.origin, location, Set{OrderLine}(), typemax(Int64)) # internal orders are backlogged
             push!(order.lines, OrderLine(order, product, quantity))
+            @debug "Ordered at $time, $location, $product, $quantity"
             
             push!(orders, order)
             #println("Place $order")
@@ -188,7 +185,6 @@ function simulate(env::Env, horizon::Int64, initial_state::State)
         for location in reverse(sorted_locations)
             for product in env.network.products
                 orders = place_orders(state, env, location, product, time)
-                #println("Orders $location, $product: $orders")
                 receive_orders!(state, env, orders)
             end
         end

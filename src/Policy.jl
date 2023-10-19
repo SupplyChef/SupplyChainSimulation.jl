@@ -174,7 +174,7 @@ function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env, lo
     
     past_orders = get_past_inbound_orders(state, location, product, time, length(policy.cover))
     #println("$lane $time $location $past_orders")
-
+    
     weights = 0
     coverage = 0
     for i in 1:length(policy.cover) - 1
@@ -190,7 +190,8 @@ function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env, lo
 
     coverage = coverage + policy.cover[end]
 
-    #println(coverage)
+    @debug "Computing order at $time, $location, $product, past inbound orders: $past_orders, cover: $coverage, net inventory: $net_inventory"
+
     order = max(0, Int(ceil(coverage - net_inventory)))
     return order
 end

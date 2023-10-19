@@ -36,11 +36,11 @@ struct Route <: Transport
     truck::Truck
 
     origin
-    destinations::Array{L1, 1} where L1 <: Location
+    destinations::Array{L1, 1} where L1 <: Node
 
     departures
 
-    lead_times::Dict{L2, Int64} where L2 <: Location
+    lead_times::Dict{L2, Int64} where L2 <: Node
 
     unit_cost
 

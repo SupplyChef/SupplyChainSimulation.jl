@@ -7,7 +7,7 @@ struct Env
     network::Network
     initial_states
     
-    supplying_trips::Dict{Location, Array{Trip, 1}}
+    supplying_trips::Dict{Node, Array{Trip, 1}}
 
     function Env(network, initial_states)
         return new(network, initial_states, Dict(location => get_inbound_trips(network, location) for location in get_locations(network)))
@@ -27,7 +27,7 @@ end
     return demand
 end
 
-@memoize Dict function get_mean_demand(env::Env, location::Location, product::Product, time::Int)
+@memoize Dict function get_mean_demand(env::Env, location::Node, product::Product, time::Int)
     demand = 0
     for customer in get_downstream_customers(env.network, location)
         demand = demand + sum(initial_state.demand[(customer, product)][time] for initial_state in env.initial_states) / length(env.initial_states)

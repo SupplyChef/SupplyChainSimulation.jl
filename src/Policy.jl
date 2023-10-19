@@ -173,6 +173,7 @@ function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env, lo
     net_inventory = get_net_inventory(state, location, product, time)
     
     past_orders = get_past_inbound_orders(state, location, product, time, length(policy.cover))
+    #println("$lane $time $location $past_orders")
 
     weights = 0
     coverage = 0

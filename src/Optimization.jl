@@ -91,7 +91,7 @@ function bboptimize(f, x0, params)
         i3 = rand(1:pool_size)
 
         candidate = copy(candidate_pool[i1])
-        @inbounds for j in 1:length(candidate)
+        @inbounds for j in eachindex(candidate)
             r = rand()
             if r < 0.01
                 candidate[j] = params[:SearchRange][1]

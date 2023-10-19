@@ -1,22 +1,65 @@
 abstract type Product end
 
-abstract type Location end
+abstract type Node end
 
-struct Supplier <: Location
+"""
+The geographical location of a node of the supply chain. 
+The location is defined by its latitude and longitude.
+"""
+struct Location
+    latitude::Float64
+    longitude::Float64
+    name
+
+    function Location(latitude, longitude)
+        return new(latitude, longitude, nothing)
+    end
+
+    function Location(latitude, longitude, name)
+        return new(latitude, longitude, name)
+    end
+end
+
+"""
+A supplier.
+"""
+struct Supplier <: Node
     name::String
+
+    location::Union{Missing, Location}
+
+    """
+    Creates a new supplier.
+    """
+    function Supplier(name::String, location::Location)
+        return new(name, location)
+    end
+
+    function Supplier(name::String)
+        return new(name, missing)
+    end
 end
 
 Base.:(==)(x::Supplier, y::Supplier) = x.name == y.name 
 Base.hash(x::Supplier, h::UInt64) = hash(x.name, h)
 Base.show(io::IO, x::Supplier) = print(io, x.name)
 
-struct Storage <: Location 
+"""
+A storage location.
+"""
+struct Storage <: Node 
     name::String
 
     holding_costs::Dict{<:Product, Float64}
 
+    location::Union{Missing, Location}
+
+    function Storage(name::String, location::Location; holding_costs::Dict{<:Product, Float64}=Dict{Product, Float64}())
+        return new(name, holding_costs, location)
+    end
+
     function Storage(name::String, holding_costs::Dict{<:Product, Float64}=Dict{Product, Float64}())
-        return new(name, holding_costs)
+        return new(name, holding_costs, missing)
     end
 end
 
@@ -24,8 +67,21 @@ Base.:(==)(x::Storage, y::Storage) = x.name == y.name
 Base.hash(x::Storage, h::UInt64) = hash(x.name, h)
 Base.show(io::IO, x::Storage) = print(io, x.name)
 
-struct Customer <: Location 
+"""
+A customer.
+"""
+struct Customer <: Node
     name::String
+
+    location::Union{Missing, Location}
+
+    function Customer(name::String, location::Location)
+        return new(name, location)
+    end
+
+    function Customer(name::String)
+        return new(name, missing)
+    end
 end
 
 Base.:(==)(x::Customer, y::Customer) = x.name == y.name 
@@ -69,11 +125,11 @@ struct Order
     lines::Set{OrderLine} # what 
     due_date::Int64 # when
 
-    function Order(creation_time::Int64, origin::Location, destination::Location, lines::Set{OrderLine}, due_date::Int64)
+    function Order(creation_time::Int64, origin::Node, destination::Node, lines::Set{OrderLine}, due_date::Int64)
         return new(creation_time, origin, destination, lines, due_date)
     end
 
-    function Order(creation_time::Int64, origin::Location, destination::Location, lines::Array{Tuple{P, Int64}, 1}, due_date::Int64) where P <: Product
+    function Order(creation_time::Int64, origin::Node, destination::Node, lines::Array{Tuple{P, Int64}, 1}, due_date::Int64) where P <: Product
         order = new(creation_time, origin, destination, Set{OrderLine}(), due_date)
         for (product, quantity) in lines
             push!(order.lines, OrderLine(order, product, quantity))
@@ -91,13 +147,17 @@ struct Order
 end
 
 struct Network 
-    suppliers::Array{Supplier, 1}
-    storages::Array{Storage, 1}
-    customers::Array{Customer, 1}
+    suppliers::Set{Supplier}
+    storages::Set{Storage}
+    customers::Set{Customer}
     
-    trips::Array{Trip, 1}
+    trips::Set{Trip}
 
-    products::Array{P, 1}  where P <: Product
+    products::Set{<:Product}
+
+    function Network(suppliers, storages, customers, trips, products)
+        return new(Set(suppliers), Set(storages), Set(customers), Set(trips), Set(products))
+    end
 end
 
 function get_inbound_trips(env, location, time)
@@ -110,20 +170,20 @@ end
     Gets all the locations in the network.
 """
 function get_locations(network::Network)
-    return vcat(network.storages, network.customers, network.suppliers)
+    return union(network.storages, network.customers, network.suppliers)
 end
 
 function create_graph(network::Network)
     graph = Graphs.DiGraph(length(get_locations(network)))
 
-    mapping = Dict{Location, Int64}()
+    mapping = Dict{Node, Int64}()
     i = 1
     for location in get_locations(network)
         mapping[location] = i
         i += 1
     end
 
-    for route in unique(map(trip -> trip.route, network.trips))
+    for route in unique(map(trip -> trip.route, collect(network.trips)))
         for destination in get_destinations(route)
             Graphs.add_edge!(graph, mapping[route.origin], mapping[destination])
         end

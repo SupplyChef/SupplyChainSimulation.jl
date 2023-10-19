@@ -125,7 +125,7 @@ end
         final_state = simulate(network, 2, initial_state)
 
         final_state.on_hand_inventory[storage][p] == 10 && 
-        length(final_state.historical_orders) == 0 && 
+        length(collect(Base.Iterators.flatten(final_state.historical_orders))) == 0 && 
         length(collect(Base.Iterators.flatten(final_state.historical_filled_order_lines))) == 0
     end
 
@@ -148,7 +148,7 @@ end
         println(get_total_holding_costs(final_state))
 
         final_state.on_hand_inventory[storage][p] == 0 && 
-        length(final_state.historical_orders) == 2 && 
+        length(collect(Base.Iterators.flatten(final_state.historical_orders))) == 2 && 
         length(collect(Base.Iterators.flatten(final_state.historical_filled_order_lines))) == 2
     end
 
@@ -197,6 +197,34 @@ end
 
 @testset "EOQ" begin
     @test begin 
+        true
+    end
+end
+
+@testset "Simulate" begin
+    @test begin
+        horizon = 50
+
+        product = Single("product")
+
+        supplier = Supplier("supplier")
+        storage = Storage("storage", Dict(product => 0.1))
+        customer = Customer("customer")
+        
+        l1 = Lane(; origin=storage, destination=customer)
+        l2 = Lane(; origin=supplier, destination=storage, fixed_cost=10, lead_time=2)
+
+        network = Network([supplier], [storage], [customer], get_trips([l1, l2], horizon), [product])
+
+        policy = NetSSOrderingPolicy(0, 0)
+
+        initial_states = [State(; on_hand_inventory = Dict(storage => Dict(product => 0)), 
+                                demand = Dict((customer, product) => rand(Poisson(10), horizon)),
+                                policies = Dict((l2, product) => policy)) for i in 1:20]
+
+        for initial_state in initial_states
+            simulate(network, horizon, initial_state)
+        end
         true
     end
 end

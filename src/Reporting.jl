@@ -5,7 +5,7 @@
 """
 function get_total_demand(state)
     demand = 0.0
-    for o in filter(o -> isa(o.destination, Customer), state.historical_orders)
+    for o in filter(o -> isa(o.destination, Customer), collect(Base.Iterators.flatten(state.historical_orders)))
         for ol in o.lines
             demand += ol.quantity
         end
@@ -45,7 +45,7 @@ end
 
 function get_total_orders(state)
     orders = 0.0
-    for o in state.historical_orders
+    for o in Base.Iterators.flatten(state.historical_orders)
         for ol in o.lines
             orders += ol.quantity
         end

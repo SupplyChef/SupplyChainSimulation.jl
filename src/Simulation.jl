@@ -117,7 +117,7 @@ function place_orders(state::State, env::Env, location::Customer, product::Produ
         orders = [order]
         #println("Place $order")
         
-        push!(state.historical_orders, order)
+        push!(state.placed_orders, order)
         
         return orders
     else
@@ -138,7 +138,7 @@ function place_orders(state::State, env::Env, location, product::Product, time::
             push!(orders, order)
             #println("Place $order")
             
-            push!(state.historical_orders, order)
+            push!(state.placed_orders, order)
         end
     end
     return orders

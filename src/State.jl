@@ -4,11 +4,11 @@ import Base.delete!
 abstract type InventoryOrderingPolicy end
 
 struct OrderLineTracker
-    pending_outbound_order_lines::Dict{L2, Set{OrderLine}} where L2 <: Location
-    pending_inbound_order_lines::Dict{L3, Set{OrderLine}} where L3 <: Location
+    pending_outbound_order_lines::Dict{L2, Set{OrderLine}} where L2 <: Node
+    pending_inbound_order_lines::Dict{L3, Set{OrderLine}} where L3 <: Node
     
     function OrderLineTracker(pending_outbound_order_lines)
-        olt = new(Dict{Location, Set{OrderLine}}(), Dict{Location, Set{OrderLine}}())
+        olt = new(Dict{Node, Set{OrderLine}}(), Dict{Node, Set{OrderLine}}())
         for order_line in collect(Base.Iterators.flatten(values(pending_outbound_order_lines)))
             push!(olt, order_line)
         end
@@ -22,30 +22,32 @@ Contains information about the current state of the simulation, including invent
 struct State
     on_hand_inventory::Dict{Storage, Dict{Product, Int64}}
 
-    in_transit_inventory::Dict{L1, Dict{P1, Array{Int64, 1}}} where L1 <: Location where P1 <: Product
+    in_transit_inventory::Dict{L1, Dict{P1, Array{Int64, 1}}} where L1 <: Node where P1 <: Product
 
     order_line_tracker::OrderLineTracker
     filled_order_lines::Set{OrderLine}
+    placed_orders::Set{Order}
 
     demand::Dict{Tuple{Customer, Product}, Array{Int64, 1}}
 
     policies::Dict{Tuple{Transport, Product}, InventoryOrderingPolicy}
 
     historical_on_hand::Array{Dict{Storage, Dict{Product, Int64}}, 1}
-    historical_orders::Array{Order, 1}
+    historical_orders::Array{Set{Order}, 1}
     historical_transportation::Dict{Trip, Array{OrderLine, 1}}
     historical_filled_order_lines::Array{Set{OrderLine}}
-    historical_pending_outbound_order_lines::Array{Dict{Location, Set{OrderLine}}}
+    historical_pending_outbound_order_lines::Array{Dict{Node, Set{OrderLine}}}
 
     function State(;on_hand_inventory, 
-                    in_transit_inventory=Dict{Location, Dict{Product, Array{Int64, 1}}}(), 
+                    in_transit_inventory=Dict{Node, Dict{Product, Array{Int64, 1}}}(), 
                     pending_outbound_order_lines=OrderLine[], 
                     demand, 
                     policies)
         return new(on_hand_inventory, 
                    in_transit_inventory, 
                    OrderLineTracker(pending_outbound_order_lines), 
-                   Set{OrderLine}(), 
+                   Set{OrderLine}(),
+                   Set{Order}(), 
                    demand, 
                    policies, 
                    [], 
@@ -85,7 +87,7 @@ function delete_order_lines!(state::State, order_lines::Set{OrderLine})
     end
 end
 
-function add_in_transit_inventory!(state::State, to::Location, product::Product, time::Int64, quantity::Int64)
+function add_in_transit_inventory!(state::State, to::Node, product::Product, time::Int64, quantity::Int64)
     if !haskey(state.in_transit_inventory, to)
         state.in_transit_inventory[to] = Dict{Product, Array{Float64, 1}}()
     end
@@ -95,7 +97,7 @@ function add_in_transit_inventory!(state::State, to::Location, product::Product,
     state.in_transit_inventory[to][product][time] += quantity
 end
 
-function delete_in_transit_inventory!(state::State, to::Location, product::Product, time::Int64, quantity::Int64)
+function delete_in_transit_inventory!(state::State, to::Node, product::Product, time::Int64, quantity::Int64)
     state.in_transit_inventory[to][product][time] -= quantity
 end
 
@@ -104,7 +106,7 @@ end
 
     Gets the number of units of a product in transit to a location at a given time.
 """
-function get_in_transit_inventory(state::State, to::Location, product::Product, time::Int64)::Int64
+function get_in_transit_inventory(state::State, to::Node, product::Product, time::Int64)::Int64
     if !haskey(state.in_transit_inventory, to)
         return 0
     end
@@ -114,7 +116,7 @@ function get_in_transit_inventory(state::State, to::Location, product::Product, 
     return state.in_transit_inventory[to][product][time]
 end
 
-function get_in_transit_inventories(state::State, to::Location, product::Product)::Array{Int64, 1}
+function get_in_transit_inventories(state::State, to::Node, product::Product)::Array{Int64, 1}
     if !haskey(state.in_transit_inventory, to)
         return [0]
     end
@@ -137,11 +139,13 @@ function snapshot_state!(state::State, time)
     push!(state.historical_on_hand, Dict(k => deepcopy(v) for (k, v) in state.on_hand_inventory))
     push!(state.historical_filled_order_lines, copy(state.filled_order_lines))
     empty!(state.filled_order_lines)
+    push!(state.historical_orders, copy(state.placed_orders))
+    empty!(state.placed_orders)
     push!(state.historical_pending_outbound_order_lines, Dict(k => copy(v) for (k, v) in state.order_line_tracker.pending_inbound_order_lines))
     #println("On hand at $time, $(state.on_hand_inventory)")
 end
 
-function get_net_inventory(state::State, location::Location, product::Product, time::Int64)
+function get_net_inventory(state::State, location::Node, product::Product, time::Int64)
     # on-hand + in-transit + on-order from suppliers - on-order from supplied
     return state.on_hand_inventory[location][product] +
             sum(get_in_transit_inventories(state, location, product)[time:end]; init=0) +
@@ -154,7 +158,7 @@ end
 
     Gets the number of units of a product on order to a location (but not yet shipped there) at a given time.
 """
-function get_inbound_orders(state::State, location::Location, product::Product, time::Int64)::Int64
+function get_inbound_orders(state::State, location::Node, product::Product, time::Int64)::Int64
     sum(ol -> (ol.product == product && ol.order.due_date >= time) ? ol.quantity : 0, 
         get(state.order_line_tracker.pending_inbound_order_lines, location, OrderLine[]);
         init = 0
@@ -166,21 +170,21 @@ end
 
     Gets the number of units of a product on order at a location (and not yet shipped out) at a given time.
 """
-function get_outbound_orders(state::State, location::Location, product::Product, time::Int64)::Int64
+function get_outbound_orders(state::State, location::Node, product::Product, time::Int64)::Int64
     sum(ol -> (ol.product == product && ol.order.due_date >= time) ? ol.quantity : 0, 
         get(state.order_line_tracker.pending_outbound_order_lines, location, OrderLine[]);
         init = 0
     )
 end
 
-function get_past_inbound_orders(state::State, location::Location, product::Product, time::Int64, step_back::Int64)::Array{Union{Missing, Int64}, 1}
+function get_past_inbound_orders(state::State, location::Node, product::Product, time::Int64, step_back::Int64)::Array{Union{Missing, Int64}, 1}
     past_orders = zeros(Union{Missing, Int64}, step_back)
     for t in 1:step_back
-        if time - t < 1
+        if (time+1) - t < 1
             past_orders[t] = missing
         else
-            orders = filter(o -> o.creation_time == time - t && o.origin == location, state.historical_orders)
-            order_lines = collect(Base.Iterators.flatten(map(o -> o.lines, orders)))
+            orders = filter(o -> o.creation_time == time - t && o.origin == location, state.historical_orders[(time+1) - t])
+            order_lines = collect(Base.Iterators.flatten(map(o -> o.lines, collect(orders))))
             order_lines = filter(ol -> ol.product == product, order_lines)
             past_orders[t] = sum(ol -> ol.quantity, order_lines; init=0)
         end

@@ -1,7 +1,7 @@
 name = "SupplyChainSimulation"
 uuid = "1febdd50-69ad-4f0a-8312-f316c31db602"
 authors = ["SupplyChef <47842426+SupplyChef@users.noreply.github.com>"]
-version = "0.2.1"
+version = "0.2.2"
 
 [deps]
 BlackBoxOptim = "a134a8b2-14d6-55f6-9291-3336d3ab0209"

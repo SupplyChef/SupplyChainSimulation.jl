@@ -1,37 +1,42 @@
 @test begin #cover policy
-    p = Single("product")
+    horizon = 20
+
+    product = Product("product")
 
     customer = Customer("c")
-    storage = Storage("s", Dict(p => 0.1))
+    storage = Storage("s")
+    add_product!(storage, product; unit_holding_cost=0.1)
     storage2 = Storage("s2")
-
-    horizon = 20
+    add_product!(storage2, product; initial_inventory=20 * horizon)
     
-    l = Lane(; origin = storage, destination = customer, unit_cost = 0)
-    l2 = Lane(; origin = storage2, destination = storage, unit_cost = 0, lead_time = 2)
+    l = Lane(storage, customer; unit_cost=0)
+    l2 = Lane(storage2, storage; unit_cost=0, time=2)
 
     policy = OnHandUptoOrderingPolicy(0)
     policy2 = ForwardCoverageOrderingPolicy(0)
 
-    network = Network([], [storage, storage2], [customer], get_trips([l, l2], horizon), [p])
+    network = SupplyChain(horizon)
+        
+    add_storage!(network, storage)
+    add_storage!(network, storage2)
+    add_customer!(network, customer)
+    add_product!(network, product)
+    add_lane!(network, l)
+    add_lane!(network, l2)
 
     demand = Poisson(10)
 
-    initial_states = [State(; on_hand_inventory = Dict(storage => Dict(p => 0), 
-                                                     storage2 => Dict(p => 20 * horizon)), 
-                            in_transit_inventory = Dict(storage => Dict(p => repeat([0], horizon)), 
-                                                        storage2 => Dict(p => repeat([0], horizon)), 
-                                                        customer => Dict(p => repeat([0], horizon))), 
-                            pending_outbound_order_lines = Dict(storage => Set{OrderLine}(), storage2 => Set{OrderLine}()),
-                            demand = Dict((customer, p) => rand(demand, horizon)),
-                            policies = Dict((l, p) => policy, (l2, p) => policy2)) for i in 1:10]
+    initial_states = [State(; pending_outbound_order_lines = Dict(storage => Set{OrderLine}(), storage2 => Set{OrderLine}()),
+                              demand = Dict((customer, product) => rand(demand, horizon))) for i in 1:10]
 
-    optimize!(network, horizon, initial_states...)
+    policies = Dict((l, product) => policy, (l2, product) => policy2)
+                            
+    optimize!(network, policies, initial_states...)
 
     println(policy)
     println(policy2)
 
-    final_state = simulate(network, horizon, initial_states[1])
+    final_state = simulate(network, policies, initial_states[1])
 
     println("lost sales: $(get_total_lost_sales(final_state))")
     println("sales: $(get_total_sales(final_state))")
@@ -42,43 +47,48 @@ end
 
 @test begin #cover policy
     store_count = 100
+    horizon = 20
 
-    p = Single("product")
+    product = Product("product")
 
     customers = [Customer("c$i") for i in 1:store_count]
-    storage = Storage("s", Dict(p => 0.1))
+    storage = Storage("s")
+    add_product!(storage, product; unit_holding_cost=0.1)
     storage2 = Storage("s2")
-
-    horizon = 20
+    add_product!(storage2, product; initial_inventory=200000 * horizon)
     
-    lanes = [Lane(; origin = storage, destination = customers[i], unit_cost = 0) for i in 1:store_count]
-    l0 = Lane(; origin = storage2, destination = storage, unit_cost = 0, lead_time = 2)
+    lanes = [Lane(storage, customers[i]; unit_cost=0) for i in 1:store_count]
+    l0 = Lane(storage2, storage; unit_cost=0, time=2)
 
     policy = OnHandUptoOrderingPolicy(0)
     policy2 = ForwardCoverageOrderingPolicy(0)
-    policies = Dict((l0, p) => policy2)
-    println(policies)
+    policies = Dict((l0, product) => policy2)
 
-    network = Network([], [storage, storage2], customers, get_trips(vcat(lanes, [l0]), horizon), [p])
+    network = SupplyChain(horizon)
+        
+    add_storage!(network, storage)
+    add_storage!(network, storage2)
+    for customer in customers
+        add_customer!(network, customer)
+    end
+    add_product!(network, product)
+    for l in lanes
+        add_lane!(network, l)
+    end
+    add_lane!(network, l0)
 
     demand = Poisson(10)
 
-    initial_states = [State(; on_hand_inventory = Dict(storage => Dict(p => 0), 
-                                                     storage2 => Dict(p => 200000 * horizon)), 
-                            in_transit_inventory = Dict(vcat([storage => Dict(p => repeat([0], horizon)), 
-                                                        storage2 => Dict(p => repeat([0], horizon))], 
-                                                        [customers[i] => Dict(p => repeat([0], horizon)) for i in 1:store_count])), 
-                            pending_outbound_order_lines = Dict(storage => Set{OrderLine}(), storage2 => Set{OrderLine}()),
-                            demand = Dict([(customers[i], p) => rand(demand, horizon) for i in 1:store_count]...),
-                            policies = policies) for j in 1:10]
+    initial_states = [State(; pending_outbound_order_lines = Dict(storage => Set{OrderLine}(), storage2 => Set{OrderLine}()),
+                              demand = Dict([(customers[i], product) => rand(demand, horizon) for i in 1:store_count]...)) for j in 1:10]
 
     #println(network)
-    optimize!(network, horizon, initial_states...; cost_function=s->get_total_lost_sales(s) + 0.00001 * get_total_orders(s))
+    optimize!(network, policies, initial_states...; cost_function=s->get_total_lost_sales(s) + 0.00001 * get_total_orders(s))
 
     println(policy)
     println(policy2)
 
-    final_state = simulate(network, horizon, initial_states[1])
+    final_state = simulate(network, policies, initial_states[1])
 
     println("demand: $(get_total_demand(final_state))")
     println("lost sales: $(get_total_lost_sales(final_state))")

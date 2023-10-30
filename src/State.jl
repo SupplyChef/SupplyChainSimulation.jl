@@ -30,26 +30,20 @@ struct State
 
     demand::Dict{Tuple{Customer, Product}, Array{Int64, 1}}
 
-    policies::Dict{Tuple{Transport, Product}, InventoryOrderingPolicy}
-
     historical_on_hand::Array{Dict{Storage, Dict{Product, Int64}}, 1}
     historical_orders::Array{Set{Order}, 1}
     historical_transportation::Dict{Trip, Array{OrderLine, 1}}
     historical_filled_order_lines::Array{Set{OrderLine}}
     historical_pending_outbound_order_lines::Array{Dict{Node, Set{OrderLine}}}
 
-    function State(;on_hand_inventory, 
-                    in_transit_inventory=Dict{Node, Dict{Product, Array{Int64, 1}}}(), 
-                    pending_outbound_order_lines=OrderLine[], 
-                    demand, 
-                    policies)
-        return new(on_hand_inventory, 
-                   in_transit_inventory, 
+    function State(;pending_outbound_order_lines=OrderLine[], 
+                    demand)
+        return new(Dict{Storage, Dict{Product, Int64}}(), 
+                   Dict{Node, Dict{Product, Array{Int64, 1}}}(), 
                    OrderLineTracker(pending_outbound_order_lines), 
                    Set{OrderLine}(),
                    Set{Order}(), 
                    demand, 
-                   policies, 
                    [], 
                    Order[],
                    Dict{Trip, Array{OrderLine, 1}}(), 
@@ -85,6 +79,33 @@ function delete_order_lines!(state::State, order_lines::Set{OrderLine})
     for order_line in order_lines
         delete_order_line!(state, order_line)
     end
+end
+
+function set_on_hand_inventory!(state::State, to::Node, product::Product, quantity)
+    if !haskey(state.on_hand_inventory, to)
+        state.on_hand_inventory[to] = Dict{Product, Float64}()
+    end
+    state.on_hand_inventory[to][product] = Int(quantity)
+end
+
+function add_on_hand_inventory!(state::State, to::Node, product::Product, quantity::Int64)
+    if !haskey(state.on_hand_inventory, to)
+        state.on_hand_inventory[to] = Dict{Product, Float64}()
+    end
+    if !haskey(state.on_hand_inventory[to], product)
+        state.on_hand_inventory[to][product] = 0
+    end
+    state.on_hand_inventory[to][product] += quantity
+end
+
+function get_on_hand_inventory(state::State, to::Node, product::Product)::Int64
+    if !haskey(state.on_hand_inventory, to)
+        return 0
+    end
+    if !haskey(state.on_hand_inventory[to], product)
+        return 0
+    end
+    return state.on_hand_inventory[to][product]
 end
 
 function add_in_transit_inventory!(state::State, to::Node, product::Product, time::Int64, quantity::Int64)
@@ -147,7 +168,7 @@ end
 
 function get_net_inventory(state::State, location::Node, product::Product, time::Int64)
     # on-hand + in-transit + on-order from suppliers - on-order from supplied
-    on_hand = state.on_hand_inventory[location][product]
+    on_hand = get_on_hand_inventory(state, location, product)
     in_transit = sum(get_in_transit_inventories(state, location, product)[time:end]; init=0)
     inbound = get_inbound_orders(state, location, product, time)
     outbound = get_outbound_orders(state, location, product, time) 

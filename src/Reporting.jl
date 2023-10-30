@@ -93,9 +93,13 @@ function get_total_holding_costs(state)
     for historical_on_hand in state.historical_on_hand
         for location in keys(historical_on_hand)
             for product in keys(historical_on_hand[location])
-                holding_costs += historical_on_hand[location][product] * get(location.holding_costs, product, 0)
+                holding_costs += historical_on_hand[location][product] * get(location.unit_holding_cost, product, 0)
             end
         end
     end
     return holding_costs
+end
+
+function get_shipments(state)
+    state.historical_filled_order_lines
 end

@@ -1,13 +1,7 @@
 module SupplyChainSimulation
 
-export Route
-export Lane
-export Storage
-export Customer
-export Supplier
 export Network
 export Product
-export Single
 export Bundle
 export Order
 export OrderLine
@@ -22,7 +16,7 @@ export ForwardCoverageOrderingPolicy
 export BackwardCoverageOrderingPolicy
 export QuantityOrderingPolicy
 
-export set_parameter!
+export set_parameters!
 export get_downstream_customers
 export simulate
 export optimize!
@@ -52,6 +46,7 @@ export plot_pending_outbound_order_lines
 using Graphs
 using Optim
 using BlackBoxOptim
+using SupplyChainModeling
 
 include("Model.jl")
 include("State.jl")

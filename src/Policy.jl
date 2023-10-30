@@ -6,23 +6,51 @@ mutable struct QuantityOrderingPolicy <: InventoryOrderingPolicy
 end
 
 """
-    get_parameter_count(policy::QuantityOrderingPolicy)
+    get_parameters(policy::QuantityOrderingPolicy)
 
-    Gets the number of parameters for the policy.
+    Gets the parameters for the policy.
 """
-function get_parameter_count(policy::QuantityOrderingPolicy)
-    return length(policy.orders)
+function get_parameters(policy::QuantityOrderingPolicy)
+    return policy.orders
 end
 
-function set_parameter!(policy::QuantityOrderingPolicy, values::Array{Float64, 1})
-    policy.orders = Int.(round.(values))
+function set_parameters!(policy::QuantityOrderingPolicy, values::Array{Float64, 1})
+    policy.orders .= Int.(round.(values))
 end
 
 function get_order(policy::QuantityOrderingPolicy, state, env, location, lane, product, time)
-    #println(policy.orders)
     order = max(0, policy.orders[time])
-    #println(order)
     return order
+end
+
+"""
+Orders a given quantity at a given time period.
+"""
+mutable struct ProductQuantityOrderingPolicy <: InventoryOrderingPolicy
+    order::Int64
+    period::Int64
+end
+
+"""
+    get_parameters(policy::ProductQuantityOrderingPolicy)
+
+    Gets the parameters for the policy.
+"""
+function get_parameters(policy::ProductQuantityOrderingPolicy)
+    return [policy.order]
+end
+
+function set_parameters!(policy::ProductQuantityOrderingPolicy, values::Array{Float64, 1})
+    policy.order = Int(round(values[1]))
+end
+
+function get_order(policy::ProductQuantityOrderingPolicy, state, env, location, lane, product, time)
+    if time == policy.period
+        order = max(0, policy.order)
+        return order
+    else
+        return 0
+    end 
 end
 
 """
@@ -34,15 +62,15 @@ end
 
 
 """
-    get_parameter_count(policy::OnHandUptoOrderingPolicy)
+    get_parameters(policy::OnHandUptoOrderingPolicy)
 
-    Gets the number of parameters for the policy.
+    Gets the parameters for the policy.
 """
-function get_parameter_count(policy::OnHandUptoOrderingPolicy)
-    return 1
+function get_parameters(policy::OnHandUptoOrderingPolicy)
+    return [policy.upto]
 end
 
-function set_parameter!(policy::OnHandUptoOrderingPolicy, values::Array{Float64, 1})
+function set_parameters!(policy::OnHandUptoOrderingPolicy, values::Array{Float64, 1})
     policy.upto = Int(round(values[1]))
 end
 
@@ -59,15 +87,15 @@ end
 
 
 """
-    get_parameter_count(policy::NetUptoOrderingPolicy)
+    get_parameters(policy::NetUptoOrderingPolicy)
 
-    Gets the number of parameters for the policy.
+    Gets the parameters for the policy.
 """
-function get_parameter_count(policy::NetUptoOrderingPolicy)
-    return 1
+function get_parameters(policy::NetUptoOrderingPolicy)
+    return [policy.upto]
 end
 
-function set_parameter!(policy::NetUptoOrderingPolicy, values::Array{Float64, 1})
+function set_parameters!(policy::NetUptoOrderingPolicy, values::Array{Float64, 1})
     policy.upto = Int(round(values[1]))
 end
 
@@ -84,15 +112,15 @@ mutable struct NetSSOrderingPolicy <: InventoryOrderingPolicy
 end
 
 """
-    get_parameter_count(policy::NetSSOrderingPolicy)
+    get_parameters(policy::NetSSOrderingPolicy)
 
-    Gets the number of parameters for the policy.
+    Gets the parameters for the policy.
 """
-function get_parameter_count(policy::NetSSOrderingPolicy)
-    return 2
+function get_parameters(policy::NetSSOrderingPolicy)
+    return [policy.s, policy.S]
 end
 
-function set_parameter!(policy::NetSSOrderingPolicy, values::Array{Float64, 1})
+function set_parameters!(policy::NetSSOrderingPolicy, values::Array{Float64, 1})
     policy.s = Int(round(values[1]))
     policy.S = Int(round(values[2]))
 end
@@ -115,15 +143,15 @@ mutable struct ForwardCoverageOrderingPolicy <: InventoryOrderingPolicy
 end
 
 """
-    get_parameter_count(policy::ForwardCoverageOrderingPolicy)
+    get_parameters(policy::ForwardCoverageOrderingPolicy)
 
-    Gets the number of parameters for the policy.
+    Gets the parameters for the policy.
 """
-function get_parameter_count(policy::ForwardCoverageOrderingPolicy)
-    return 1
+function get_parameters(policy::ForwardCoverageOrderingPolicy)
+    return [policy.cover]
 end
 
-function set_parameter!(policy::ForwardCoverageOrderingPolicy, values::Array{Float64, 1})
+function set_parameters!(policy::ForwardCoverageOrderingPolicy, values::Array{Float64, 1})
     policy.cover = values[1]
 end
 
@@ -153,19 +181,19 @@ end
 Orders inventory to cover the coming periods based on past demand.
 """
 mutable struct BackwardCoverageOrderingPolicy <: InventoryOrderingPolicy
-    cover::Array{Float64}
+    cover::Array{Float64, 1}
 end
 
 """
-    get_parameter_count(policy::BackwardCoverageOrderingPolicy)
+    get_parameters(policy::BackwardCoverageOrderingPolicy)
 
-    Gets the number of parameters for the policy.
+    Gets the parameters for the policy.
 """
-function get_parameter_count(policy::BackwardCoverageOrderingPolicy)
-    return length(policy.cover)
+function get_parameters(policy::BackwardCoverageOrderingPolicy)
+    return policy.cover
 end
 
-function set_parameter!(policy::BackwardCoverageOrderingPolicy, values::Array{Float64, 1})
+function set_parameters!(policy::BackwardCoverageOrderingPolicy, values::Array{Float64, 1})
     policy.cover = values
 end
 

@@ -2,7 +2,7 @@
 function receive_inventory!(state::State, env::Env, location::Storage, product, time)
     #println(state)
     quantity = get_in_transit_inventory(state, location, product, time)
-    state.on_hand_inventory[location][product] += quantity
+    add_on_hand_inventory!(state, location, product, quantity)
     add_in_transit_inventory!(state, location, product, time, -quantity)
     @debug "Received at $time, $location, $product, $quantity"
 end
@@ -102,7 +102,7 @@ function send_inventory!(state::State, env::Env, location, product::Product, tim
 end
 
 # Place orders
-function place_orders(state::State, env::Env, location::Customer, product::Product, time::Int64)
+function place_orders(state::State, env::Env, policies, location::Customer, product::Product, time::Int64)
     quantity = state.demand[(location, product)][time]
     if quantity > 0
         trip = first(filter(t -> t.departure >= time, env.supplying_trips[location]))
@@ -121,21 +121,23 @@ function place_orders(state::State, env::Env, location::Customer, product::Produ
     end
 end
     
-function place_orders(state::State, env::Env, location, product::Product, time::Int)
+function place_orders(state::State, env::Env, policies, location, product::Product, time::Int)
     orders = Order[]
     for trip in get_inbound_trips(env, location, time)
-        #println(state.policies)
-        policy = state.policies[(trip.route, product)]
-        quantity = get_order(policy, state, env, location, trip.route, product, time) 
-        if quantity > 0
-            order = Order(time, trip.route.origin, location, Set{OrderLine}(), typemax(Int64)) # internal orders are backlogged
-            push!(order.lines, OrderLine(order, product, quantity))
-            @debug "Ordered at $time, $location, $product, $quantity"
-            
-            push!(orders, order)
-            #println("Place $order")
-            
-            push!(state.placed_orders, order)
+        #println(policies)
+        if haskey(policies, (trip.route, product))
+            policy = policies[(trip.route, product)]
+            quantity = get_order(policy, state, env, location, trip.route, product, time) 
+            if quantity > 0
+                order = Order(time, trip.route.origin, location, Set{OrderLine}(), typemax(Int64)) # internal orders are backlogged
+                push!(order.lines, OrderLine(order, product, quantity))
+                @debug "Ordered at $time, $location, $product, $quantity"
+                
+                push!(orders, order)
+                #println("Place $order")
+                
+                push!(state.placed_orders, order)
+            end
         end
     end
     return orders
@@ -160,37 +162,58 @@ function receive_order!(state::State, env::Env, order::Order)
 end
 
 # Simulate
-function simulate(network::Network, horizon::Int64, initial_state::State)
-    return simulate(Env(network, [initial_state]), horizon, initial_state)
+function simulate(supplychain::SupplyChain, policies, initial_state::State)
+    return simulate(Env(supplychain, [initial_state]), policies, initial_state)
 end
 
 """
-    simulate(env::Env, horizon::Int64, initial_state::State)
+    simulate(env::Env, policies, initial_state::State)
 
     Simulates the supply chain for horizon steps, starting from the initial state.
 """
-function simulate(env::Env, horizon::Int64, initial_state::State)
+function simulate(env::Env, policies, initial_state::State)
+    for storage in env.supplychain.storages
+        for product in env.supplychain.products
+            if get_initial_inventory(storage, product) > 0
+                set_on_hand_inventory!(initial_state, storage, product, get_initial_inventory(storage, product))
+            end
+        end
+    end
+
+    for lane in env.supplychain.lanes
+        if !isnothing(lane.initial_arrivals)
+            for (product, arrivals) in lane.initial_arrivals
+                for i in 1:length(lane.destinations)
+                    for j in 1:length(arrivals[i])
+                        add_in_transit_inventory!(initial_state, lane.destinations[i], product, j, arrivals[i][j])
+                    end
+                end
+            end
+        end
+    end
+
+    #println(initial_state)
     state = deepcopy(initial_state)
     snapshot_state!(state, 0)
 
-    sorted_locations = get_sorted_locations(env.network)
+    sorted_locations = get_sorted_locations(env.supplychain)
 
-    for time in 1:horizon
+    for time in 1:env.supplychain.horizon
         for location in sorted_locations
-            for product in env.network.products
+            for product in env.supplychain.products
                 receive_inventory!(state, env, location, product, time)
             end
         end
 
         for location in reverse(sorted_locations)
-            for product in env.network.products
-                orders = place_orders(state, env, location, product, time)
+            for product in env.supplychain.products
+                orders = place_orders(state, env, policies, location, product, time)
                 receive_orders!(state, env, orders)
             end
         end
 
         for location in sorted_locations
-            for product in env.network.products
+            for product in env.supplychain.products
                 receive_inventory!(state, env, location, product, time)
                 send_inventory!(state, env, location, product, time)
             end

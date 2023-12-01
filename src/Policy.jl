@@ -223,3 +223,27 @@ function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env, lo
     order = max(0, Int(ceil(coverage - net_inventory)))
     return order
 end
+
+"""
+Places a single order at a given time.
+"""
+mutable struct SingleOrderOrderingPolicy <: InventoryOrderingPolicy
+    period::Int64
+    quantity
+end
+
+function get_parameters(policy::SingleOrderOrderingPolicy)
+    return [policy.period, policy.quantity]
+end
+
+function set_parameters!(policy::SingleOrderOrderingPolicy, values::Array{Float64, 1})
+    policy.quantity = Int(round(values[2]))
+end
+
+function get_order(policy::SingleOrderOrderingPolicy, state::State, env, location, lane, product, time)
+    if time == policy.period
+        return policy.quantity
+    else
+        return 0
+    end
+end

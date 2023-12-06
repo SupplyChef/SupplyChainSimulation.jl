@@ -28,7 +28,7 @@ end
     Optimizes the inventory policies in the supply chain by simulating the inventory movement starting from the initial states and costing the results with the cost function.
 """
 function optimize!(supplychain::SupplyChain, lane_policies::Dict{Tuple{Lane, Product}, <:InventoryOrderingPolicy}, initial_states...; params::Dict{Symbol, Float64}=Dict{Symbol, Float64}(), cost_function=s->get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s))
-    env = Env(supplychain, initial_states)
+    env = Env(supplychain, initial_states, lane_policies)
 
     policies = unique([lane_policies[k] for k in keys(lane_policies)])
     #println(policies)
@@ -65,6 +65,7 @@ end
 
 function bboptimize(f, x0, params)
     start = Dates.now()
+    latest = start
 
     best_f = f(x0)
     best_x = copy(x0)
@@ -135,8 +136,9 @@ function bboptimize(f, x0, params)
             println("** $i, $(Dates.now() - start), $best_f, $best_x")
         end
 
-        if i % 500 == 0
-            println("$i, $(Dates.now() - start), $best_f, $(sum(pool_f) / length(pool_f)), $best_x")
+        if i % 50 == 0
+            println("$i, $(Dates.now() - start), $(Dates.now() - latest), $best_f")#, $best_x")
+            latest = Dates.now()
         end
     end
     return best_x

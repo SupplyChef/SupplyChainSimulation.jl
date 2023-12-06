@@ -41,17 +41,19 @@ export eoq_quantity
 
 export plot_inventory_movement
 export plot_inventory_onhand
-export plot_pending_outbound_order_lines
+# export plot_pending_outbound_order_lines
 
 using Graphs
 using Optim
 using BlackBoxOptim
 using SupplyChainModeling
 
+abstract type InventoryOrderingPolicy end
+
 include("Model.jl")
 include("State.jl")
-include("Env.jl")
 include("Policy.jl")
+include("Env.jl")
 
 include("Optimization.jl")
 include("Reporting.jl")

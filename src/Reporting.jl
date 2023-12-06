@@ -6,9 +6,7 @@
 function get_total_demand(state)
     demand = 0.0
     for o in filter(o -> isa(o.destination, Customer), collect(Base.Iterators.flatten(state.historical_orders)))
-        for ol in o.lines
-            demand += ol.quantity
-        end
+        demand += o.quantity
     end
     return demand
 end
@@ -20,7 +18,7 @@ end
 """
 function get_total_sales(state)
     sales = 0
-    for ol in filter(ol -> isa(ol.order.destination, Customer), collect(Base.Iterators.flatten(state.historical_filled_order_lines)))
+    for ol in filter(ol -> isa(ol.destination, Customer), collect(Base.Iterators.flatten(state.historical_filled_orders)))
         sales += ol.quantity
     end
     return sales
@@ -46,9 +44,7 @@ end
 function get_total_orders(state)
     orders = 0.0
     for o in Base.Iterators.flatten(state.historical_orders)
-        for ol in o.lines
-            orders += ol.quantity
-        end
+        orders += o.quantity
     end
     return orders
 end
@@ -73,12 +69,13 @@ end
 """
 function get_total_trip_fixed_costs(state)
     transportation_costs = 0
-    seen = Set{Trip}() 
+    seen = Set{UInt}() 
     for (trip, order_lines) in state.historical_transportation
-        if trip ∉ seen
+        h = hash(trip)
+        if h ∉ seen
             transportation_costs += get_fixed_cost(trip.route)
         end
-        push!(seen, trip)
+        push!(seen, h)
     end
     return transportation_costs
 end
@@ -91,15 +88,13 @@ end
 function get_total_holding_costs(state)
     holding_costs = 0
     for historical_on_hand in state.historical_on_hand
-        for location in keys(historical_on_hand)
-            for product in keys(historical_on_hand[location])
-                holding_costs += historical_on_hand[location][product] * get(location.unit_holding_cost, product, 0)
-            end
+        for (location, product) in keys(historical_on_hand)
+            holding_costs += historical_on_hand[(location, product)] * get(location.unit_holding_cost, product, 0)
         end
     end
     return holding_costs
 end
 
 function get_shipments(state)
-    state.historical_filled_order_lines
+    state.historical_filled_orders
 end

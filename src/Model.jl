@@ -1,34 +1,23 @@
 include("Model-Transportation.jl")
 
 mutable struct OrderLine
-    order
-    trip::Union{Missing, Trip} # how (filled when shipping)
+    creation_time::Int64
+    origin::Node # from
+    destination::Node # to 
     product::Product
     quantity::Int64
-
-    function OrderLine(order, product, quantity)
-        return new(order, missing, product, quantity)
-    end
-end
-
-struct Order
-    creation_time::Int64
-    origin # from
-    destination # to 
-    lines::Set{OrderLine} # what 
     due_date::Int64 # when
 
-    function Order(creation_time::Int64, origin::Node, destination::Node, lines::Set{OrderLine}, due_date::Int64)
-        return new(creation_time, origin, destination, lines, due_date)
-    end
-
-    function Order(creation_time::Int64, origin::Node, destination::Node, lines::Array{Tuple{P, Int64}, 1}, due_date::Int64) where P <: Product
-
-        order = new(creation_time, origin, destination, Set{OrderLine}(), due_date)
-        for (product, quantity) in lines
-            push!(order.lines, OrderLine(order, product, quantity))
-        end
-        return order
+    trip::Union{Missing, Trip} # how (filled when shipping)
+    
+    function OrderLine( creation_time::Int64,
+                        origin::Node, # from
+                        destination::Node, # to 
+                        product::Product,
+                        quantity::Int64,
+                        due_date::Int64 # when
+            )
+        return new(creation_time, origin, destination, product, quantity, due_date, missing)
     end
 end
 

@@ -75,7 +75,7 @@ function set_parameters!(policy::OnHandUptoOrderingPolicy, values::Array{Float64
 end
 
 function get_order(policy::OnHandUptoOrderingPolicy, state::State, env, location, lane, product, time)
-    return max(0, policy.upto - state.on_hand_inventory[location][product])
+    return max(0, policy.upto - state.on_hand_inventory[(location, product)])
 end
 
 """
@@ -218,7 +218,7 @@ function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env, lo
 
     coverage = coverage + policy.cover[end]
 
-    @debug "Computing order at $time, $location, $product, past inbound orders: $past_orders, cover: $coverage, net inventory: $net_inventory"
+    #@debug "Computing order at $time, $location, $product, past inbound orders: $past_orders, cover: $coverage, net inventory: $net_inventory"
 
     order = max(0, Int(ceil(coverage - net_inventory)))
     return order

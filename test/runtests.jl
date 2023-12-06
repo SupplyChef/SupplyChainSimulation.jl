@@ -114,8 +114,8 @@ end
         l = Lane(storage, customer; unit_cost=0)
         l2 = Lane(storage2, storage; unit_cost=0, initial_arrivals=Dict(product => [10, 0]))
 
-        o = Order(0, l.origin, l.destinations[1], [(product, 5)], 1)
-        o2 = Order(0, l2.origin, l2.destinations[1], [(product, 15)], 1)
+        o = OrderLine(0, l.origin, l.destinations[1], product, 5, 1)
+        o2 = OrderLine(0, l2.origin, l2.destinations[1], product, 15, 1)
 
         network = SupplyChain(1)
         
@@ -126,13 +126,16 @@ end
         add_lane!(network, l)
         add_lane!(network, l2)
 
-        initial_state = State(; pending_outbound_order_lines = Dict(storage => o.lines, storage2 => o2.lines),
+        initial_state = State(; pending_outbound_order_lines = Dict(storage => [o], storage2 => [o2]),
                                 demand = Dict((customer, product) => [0, 0]))
 
         #println("inbound $(get_inbound_orders(initial_state, storage, product, 1))") 
         #println("outbound $(get_outbound_orders(initial_state, storage, product, 1))")
         #println("net $(get_net_inventory(initial_state, storage, product, 1))")
-                            
+        
+        @info get_inbound_orders(initial_state, storage, product, 1)
+        @info get_outbound_orders(initial_state, storage, product, 1)
+        
         get_inbound_orders(initial_state, storage, product, 1) == 15 && 
         get_outbound_orders(initial_state, storage, product, 1) == 5 
         #get_net_inventory(initial_state, storage, product, 1) == 20
@@ -160,9 +163,9 @@ end
         policies = Dict((l, product) => OnHandUptoOrderingPolicy(0))
         final_state = simulate(network, policies, initial_state)
 
-        final_state.on_hand_inventory[storage][product] == 10 && 
+        final_state.on_hand_inventory[(storage, product)] == 10 && 
         length(collect(Base.Iterators.flatten(final_state.historical_orders))) == 0 && 
-        length(collect(Base.Iterators.flatten(final_state.historical_filled_order_lines))) == 0
+        length(collect(Base.Iterators.flatten(final_state.historical_filled_orders))) == 0
     end
 
     @test begin
@@ -192,9 +195,12 @@ end
 
         println(get_total_holding_costs(final_state))
 
-        final_state.on_hand_inventory[storage][product] == 0 && 
+        @info final_state.on_hand_inventory[(storage, product)]
+        @info length(collect(Base.Iterators.flatten(final_state.historical_orders)))
+        @info length(collect(Base.Iterators.flatten(final_state.historical_filled_orders)))
+        final_state.on_hand_inventory[(storage, product)] == 0 && 
         length(collect(Base.Iterators.flatten(final_state.historical_orders))) == 2 && 
-        length(collect(Base.Iterators.flatten(final_state.historical_filled_order_lines))) == 2
+        length(collect(Base.Iterators.flatten(final_state.historical_filled_orders))) == 2
     end
 
     @test begin

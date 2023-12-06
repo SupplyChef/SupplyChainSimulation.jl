@@ -49,17 +49,17 @@ function plot_inventory_onhand(state::State, locations::Array{L, 1}, product::Pr
         layout)
 end
 
-function plot_pending_outbound_order_lines(state::State, locations::Array{L, 1}, product::Product) where L <: Node
-    layout = Layout(title="Pending outbound order lines",
-                   xaxis_title="Period",
-                   yaxis_title="Unit")
+# function plot_pending_outbound_order_lines(state::State, locations::Array{L, 1}, product::Product) where L <: Node
+#     layout = Layout(title="Pending outbound order lines",
+#                    xaxis_title="Period",
+#                    yaxis_title="Unit")
 
-    plot([scatter(;x=1:length(state.historical_pending_outbound_order_lines), 
-                  y=[sum(ol -> (ol.product == product && ol.order.due_date >= time) ? ol.quantity : 0, get(historical_pending_outbound_order_lines, location, OrderLine[]); init=0) for (time, historical_pending_outbound_order_lines) in enumerate(state.historical_pending_outbound_order_lines)],
-                  name=location.name,
-                  mode="lines") for location in locations],
-        layout)
-end
+#     plot([scatter(;x=1:length(state.historical_pending_outbound_order_lines), 
+#                   y=[sum(ol -> (ol.order.due_date >= time) ? ol.quantity : 0, get(historical_pending_outbound_order_lines, (location, product), OrderLine[]); init=0) for (time, historical_pending_outbound_order_lines) in enumerate(state.historical_pending_outbound_order_lines)],
+#                   name=location.name,
+#                   mode="lines") for location in locations],
+#         layout)
+# end
 
 function plot_orders(state::State, locations::Array{L, 1}, product::Product) where L <: Node
     layout = Layout(title="Orders",
@@ -87,8 +87,8 @@ function plot_inventory_movement(state::State, product::Product)
     index = 0
     mapping = Dict{String, Int}()
 
-    for i in 1:length(state.historical_filled_order_lines)
-        for ol in filter(ol -> ol.product == product, state.historical_filled_order_lines[i])
+    for i in 1:length(state.historical_filled_orders)
+        for ol in filter(ol -> ol.product == product, state.historical_filled_orders[i])
             source = "$(ol.order.origin.name)@$i"
             if !haskey(mapping, source)
                 mapping[source] = index

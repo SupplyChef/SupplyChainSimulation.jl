@@ -354,7 +354,7 @@ using Distributions
     @test begin #safety stock
         horizon = 50
 
-        product = Product("product")
+        product = SupplyChainModeling.Product("product")
 
         supplier = Supplier("supplier")
         storage = Storage("storage")

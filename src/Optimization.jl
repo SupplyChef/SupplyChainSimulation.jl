@@ -144,9 +144,9 @@ function bboptimize(f, x0, params)
     return best_x
 end
 
-function minimizer(results::BlackBoxOptim.OptimizationResults)
-    return best_candidate(results)
-end
+#function minimizer(results::BlackBoxOptim.OptimizationResults)
+#    return best_candidate(results)
+#end
 
 function minimizer(x)
     return x

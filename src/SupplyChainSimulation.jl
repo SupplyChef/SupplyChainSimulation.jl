@@ -44,8 +44,8 @@ export plot_inventory_onhand
 # export plot_pending_outbound_order_lines
 
 using Graphs
-using Optim
-using BlackBoxOptim
+#using Optim
+#using BlackBoxOptim
 using SupplyChainModeling
 
 abstract type InventoryOrderingPolicy end

@@ -1,8 +1,9 @@
 using SupplyChainModeling
-using SupplyChainSimulation
 
 using Distributions:Poisson
 using Test
+
+using SupplyChainSimulation
 
 @testset "SupplyChain" begin
     @test begin

@@ -19,7 +19,7 @@ mutable struct State
 
     historical_on_hand::Array{Dict{Tuple{Storage, Product}, Int64}, 1}
     historical_orders::Array{Set{OrderLine}, 1}
-    historical_transportation::Dict{Trip, Array{OrderLine, 1}}
+    historical_transportation::Set{Trip}
     historical_filled_orders::Array{Set{OrderLine}}
     historical_pending_outbound_order_lines::Array{Dict{Node, Set{OrderLine}}}
 
@@ -34,7 +34,7 @@ mutable struct State
                    demand, 
                    [], 
                    OrderLine[],
-                   Dict{Trip, Array{OrderLine, 1}}(), 
+                   Set{Trip}(), 
                    [],
                    [])
                    
@@ -188,5 +188,5 @@ function get_net_network_inventory(state, location, product)
 end
 
 function get_used_trucks(state)
-    return [trip.truck for trip in keys(state.historical_transportation)]
+    return [trip.truck for trip in state.historical_transportation]
 end

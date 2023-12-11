@@ -22,7 +22,7 @@ mutable struct OrderLine
 end
 
 function get_inbound_trips(env, location, time)
-    return filter(trip -> trip.departure == time, env.supplying_trips[location])
+    return Iterators.filter(trip -> trip.departure == time, env.supplying_trips[location])
 end
 
 """
@@ -53,7 +53,7 @@ function create_graph(supplychain::SupplyChain)
     return (graph, mapping)
 end
 
-function get_sorted_locations(supplychain)
+function get_sorted_locations(supplychain)::Vector{<:Node}
     (graph, mapping) = create_graph(supplychain)
 
     reverse_mapping = Vector{eltype(mapping.keys)}(undef, length(mapping))

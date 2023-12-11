@@ -52,10 +52,7 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
             
             delete_order_line!(state, order_line)
             
-            if !haskey(state.historical_transportation, order_line.trip)
-                state.historical_transportation[order_line.trip] = OrderLine[]
-            end
-            push!(state.historical_transportation[order_line.trip], order_line)
+            push!(state.historical_transportation, trip)
             push!(state.filled_orders, order_line)
         # end
     end
@@ -89,10 +86,7 @@ function send_inventory!(state::State, env::Env, location, product::Product, tim
             
             push!(fulfilled_order_lines, order_line)
             
-            if !haskey(state.historical_transportation, order_line.trip)
-                state.historical_transportation[order_line.trip] = OrderLine[]
-            end
-            push!(state.historical_transportation[order_line.trip], order_line)
+            push!(state.historical_transportation, trip)
 
             push!(state.filled_orders, order_line)
 
@@ -193,23 +187,21 @@ function simulate(env::Env, policies, initial_state::State)
     state = deepcopy(initial_state)
     snapshot_state!(state, 0)
 
-    sorted_locations = get_sorted_locations(env.supplychain)
-
     for time in 1:env.supplychain.horizon
-        for location in sorted_locations
+        for location in env.sorted_locations
             for product in env.supplychain.products
                 receive_inventory!(state, env, location, product, time)
             end
         end
 
-        for location in reverse(sorted_locations)
+        for location in reverse(env.sorted_locations)
             for product in env.supplychain.products
                 orders = place_orders(state, env, location, product, time)
                 receive_orders!(state, env, orders)
             end
         end
 
-        for location in sorted_locations
+        for location in env.sorted_locations
             for product in env.supplychain.products
                 receive_inventory!(state, env, location, product, time)
                 send_inventory!(state, env, location, product, time)

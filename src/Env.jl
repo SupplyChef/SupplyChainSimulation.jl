@@ -5,12 +5,18 @@ struct Env
     supplychain::SupplyChain
     initial_states
     
+    sorted_locations
+    sorted_products
     supplying_trips::Dict{Node, Array{Trip, 1}}
 
     function Env(supplychain, initial_states, policies)
         trips = get_trips(supplychain, policies)
+        sorted_locations = get_sorted_locations(supplychain)
+
         return new(supplychain, 
-                   initial_states, 
+                   initial_states,
+                   sorted_locations, 
+                   collect(supplychain.products),
                    Dict(location => sort(collect(filter(trip -> is_destination(location, trip.route), trips)), 
                                          by=t->t.departure) for location in get_locations(supplychain)))
     end

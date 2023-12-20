@@ -23,7 +23,7 @@ struct Env
 end
 
 function get_inbound_trips(supplychain, location)
-    return collect(filter(trip -> is_destination(location, trip.route), get_trips(supplychain.lanes, supplychain.horizon)))
+    return collect(sort(filter(trip -> is_destination(location, trip.route), get_trips(supplychain.lanes, supplychain.horizon)), by=t -> t.unit_cost))
 end
 
 function get_mean_demands(env::Env)
@@ -31,14 +31,14 @@ function get_mean_demands(env::Env)
 end
 
 function get_mean_demand(env::Env, customer::Customer, product::Product, time::Int)
-    demand = sum(initial_state.demand[(customer, product)][time] for initial_state in env.initial_states) / length(env.initial_states)
+    demand = sum(initial_state.demand[(customer, product)].demand[time] for initial_state in env.initial_states) / length(env.initial_states)
     return demand
 end
 
 function get_mean_demand(env::Env, location::Node, product::Product, time::Int)
     demand = 0
     for customer in get_downstream_customers(env.supplychain, location)
-        demand = demand + sum(initial_state.demand[(customer, product)][time] for initial_state in env.initial_states) / length(env.initial_states)
+        demand = demand + sum(initial_state.demand[(customer, product)].demand[time] for initial_state in env.initial_states) / length(env.initial_states)
     end
     return demand
 end

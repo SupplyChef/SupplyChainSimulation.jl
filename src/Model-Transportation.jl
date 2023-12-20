@@ -14,7 +14,7 @@ A trip is the basis of transportation in the simulation. It follows a route with
 struct Trip
     route::Lane
     departure::Int64
-    policies::Union{Missing, Dict{Product, <:InventoryOrderingPolicy}}
+    policies::Union{Missing, Dict{Product, InventoryOrderingPolicy}}
 end
 
 function get_trips(lane::Lane, horizon::Int64)

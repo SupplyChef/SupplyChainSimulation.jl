@@ -10,33 +10,33 @@ mutable struct State
     in_transit_inventory::Dict{Tuple{<:Node, Product}, Array{Int64, 1}}
 
     pending_outbound_order_lines::Dict{Tuple{<:Node, Product}, Set{OrderLine}}
-    pending_inbound_order_lines::Dict{L3, Set{OrderLine}} where L3 <: Node
+    pending_inbound_order_lines::Dict{Tuple{<:Node, Product}, Set{OrderLine}}
 
     filled_orders::Set{OrderLine}
     placed_orders::Set{OrderLine}
 
-    demand::Dict{Tuple{Customer, Product}, Array{Int64, 1}}
+    demand::Dict{Tuple{Customer, Product}, Demand}
 
     historical_on_hand::Array{Dict{Tuple{Storage, Product}, Int64}, 1}
     historical_orders::Array{Set{OrderLine}, 1}
     historical_transportation::Set{Trip}
     historical_filled_orders::Array{Set{OrderLine}}
-    historical_pending_outbound_order_lines::Array{Dict{Node, Set{OrderLine}}}
+    #historical_pending_outbound_order_lines::Array{Dict{Node, Set{OrderLine}}}
 
     function State(;pending_outbound_order_lines=Dict{Storage, Array{OrderLine, 1}}(), 
-                    demand)
+                    demand::Array{Demand, 1})
         state = new(Dict{Tuple{Storage, Product}, Int64}(), 
                    Dict{Tuple{<:Node, Product}, Array{Int64, 1}}(), 
-                   Dict{Node, Set{OrderLine}}(), 
-                   Dict{Node, Set{OrderLine}}(),
+                   Dict{Tuple{<:Node, Product}, Set{OrderLine}}(),
+                   Dict{Tuple{<:Node, Product}, Set{OrderLine}}(),
                    Set{OrderLine}(),
-                   Set{OrderLine}(), 
-                   demand, 
+                   Set{OrderLine}(),
+                   Dict{Tuple{Customer, Product}, Demand}((d.customer, d.product) => d for d in demand), 
                    [], 
                    OrderLine[],
                    Set{Trip}(), 
-                   [],
                    [])
+                   #,[])
                    
         for order_line in collect(Base.Iterators.flatten(values(pending_outbound_order_lines)))
             add_order_line!(state, order_line)
@@ -47,20 +47,22 @@ mutable struct State
 end
 
 function add_order_line!(state::State, order_line::OrderLine)
-    if !haskey(state.pending_outbound_order_lines, (order_line.origin, order_line.product)) 
-        state.pending_outbound_order_lines[(order_line.origin, order_line.product)] = Set{OrderLine}()
+    t1 = (order_line.origin, order_line.product)
+    if !haskey(state.pending_outbound_order_lines, t1) 
+        state.pending_outbound_order_lines[t1] = Set{OrderLine}()
     end
-    if !haskey(state.pending_inbound_order_lines, order_line.destination) 
-        state.pending_inbound_order_lines[order_line.destination] = Set{OrderLine}()
+    t2 = (order_line.destination, order_line.product)
+    if !haskey(state.pending_inbound_order_lines, t2) 
+        state.pending_inbound_order_lines[t2] = Set{OrderLine}()
     end
 
-    Base.push!(state.pending_outbound_order_lines[(order_line.origin, order_line.product)], order_line)
-    Base.push!(state.pending_inbound_order_lines[order_line.destination], order_line)
+    Base.push!(state.pending_outbound_order_lines[t1], order_line)
+    Base.push!(state.pending_inbound_order_lines[t2], order_line)
 end
 
 function delete_order_line!(state::State, order_line::OrderLine)
     Base.delete!(state.pending_outbound_order_lines[(order_line.origin, order_line.product)], order_line)
-    Base.delete!(state.pending_inbound_order_lines[order_line.destination], order_line)
+    Base.delete!(state.pending_inbound_order_lines[(order_line.destination, order_line.product)], order_line)
 end
 
 function delete_order_lines!(state::State, order_lines::Set{OrderLine})
@@ -117,7 +119,7 @@ end
     Gets the number of steps in the simulation.
 """
 function get_horizon(state::State)
-    return maximum(length.(values(state.demand)))
+    return maximum(length.(map(d -> d.demand, values(state.demand))))
 end
 
 function snapshot_state!(state::State, time)
@@ -135,7 +137,7 @@ end
 function get_net_inventory(state::State, location::Node, product::Product, time::Int64)
     # on-hand + in-transit + on-order from suppliers - on-order from supplied
     on_hand = get_on_hand_inventory(state, location, product)
-    in_transit = sum(get_in_transit_inventories(state, location, product)[time:end]; init=0)
+    in_transit = sum(@view get_in_transit_inventories(state, location, product)[time:end]; init=0)
     inbound = get_inbound_orders(state, location, product, time)
     outbound = get_outbound_orders(state, location, product, time) 
 
@@ -153,8 +155,8 @@ end
     Gets the number of units of a product on order to a location (but not yet shipped there) at a given time.
 """
 function get_inbound_orders(state::State, location::Node, product::Product, time::Int64)::Int64
-    sum(ol -> (ol.product == product && ol.due_date >= time) ? ol.quantity : 0, 
-        get(state.pending_inbound_order_lines, location, OrderLine[]);
+    sum(ol -> (ol.due_date >= time) ? ol.quantity : 0, 
+        get(state.pending_inbound_order_lines, (location, product), OrderLine[]);
         init = 0
     )
 end

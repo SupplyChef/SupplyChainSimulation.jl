@@ -26,7 +26,7 @@ using Distributions
         policy = OnHandUptoOrderingPolicy(0)
 
         initial_states = [State(; 
-                                demand = Dict((customer, product) => rand(Poisson(10), horizon)),
+                                demand = [Demand(customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)]
                                 ) for i in 1:10]
 
         policies = Dict((l2, product) => policy)
@@ -70,7 +70,7 @@ using Distributions
         add_lane!(network, l2)
 
         initial_state = State(; pending_outbound_order_lines = Dict(storage => Set{OrderLine}(), storage2 => Set{OrderLine}()),
-                                demand = Dict((customer, product) => repeat([10], horizon)))
+                                demand = [Demand(customer, product, repeat([10.0], horizon); sales_price=1.0, lost_sales_cost=1.0)])
 
         policies = Dict((l, product) => policy, (l2, product) => policy2)
         optimize!(network, policies, initial_state)
@@ -122,7 +122,7 @@ using Distributions
         add_lane!(network, l2)
 
         initial_state = State(; pending_outbound_order_lines = Dict(storage => Set{OrderLine}(), storage2 => Set{OrderLine}()),
-                                demand = Dict((customer, product) => repeat([10], horizon)))
+                                demand = [Demand(customer, product, repeat([10.0], horizon); sales_price=1.0, lost_sales_cost=1.0)])
 
         policies = Dict((l2, product) => policy2)
 
@@ -176,7 +176,8 @@ using Distributions
         add_lane!(network, l2)
 
         initial_state = State(; pending_outbound_order_lines = Dict(storage => Set{OrderLine}(), storage2 => Set{OrderLine}()),
-                                demand = Dict((customer1, product) => repeat([10], horizon), (customer2, product) => repeat([10], horizon)))
+                                demand = [Demand(customer1, product, repeat([10.0], horizon); sales_price=1.0, lost_sales_cost=1.0),
+                                          Demand(customer2, product, repeat([10.0], horizon); sales_price=1.0, lost_sales_cost=1.0)])
 
         policies = Dict((l2, product) => policy2)
                                 
@@ -240,9 +241,8 @@ using Distributions
 
 
         initial_state = State(; 
-                                demand = Dict(
-                                            (customer1, product) => repeat([10], horizon), 
-                                            (customer2, product) => repeat([10], horizon)),
+                                demand = [Demand(customer1, product, repeat([10.0], horizon); sales_price=1.0, lost_sales_cost=1.0), 
+                                          Demand(customer2, product, repeat([10.0], horizon); sales_price=1.0, lost_sales_cost=1.0)],
                         )
 
         policies = Dict(
@@ -293,7 +293,7 @@ using Distributions
         demand = Poisson(10)
     
         initial_states = [State(; pending_outbound_order_lines = Dict(storage => Set{OrderLine}(), storage2 => Set{OrderLine}()),
-                                  demand = Dict((customer, product) => rand(demand, horizon))) for i in 1:10]
+                                  demand = [Demand(customer, product, rand(demand, horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:10]
     
         policies = Dict((l2, product) => policy2)
         optimize!(network, policies, initial_states...)
@@ -334,7 +334,7 @@ using Distributions
         policy = NetSSOrderingPolicy(0, 0)
 
         initial_states = [State(; 
-                                demand = Dict((customer, product) => repeat([10], horizon))) for i in 1:1]
+                                demand = [Demand(customer, product, repeat([10.0], horizon); sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:1]
 
         policies = Dict((l2, product) => policy)
         
@@ -376,7 +376,7 @@ using Distributions
         policy = NetSSOrderingPolicy(0, 0)
 
         initial_states = [State(; 
-                                demand = Dict((customer, product) => rand(Poisson(10), horizon))) for i in 1:20]
+                                demand = [Demand(customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:20]
 
         policies = Dict((l2, product) => policy)
         optimize!(network, policies, initial_states...)

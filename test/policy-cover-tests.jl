@@ -27,7 +27,7 @@
     demand = Poisson(10)
 
     initial_states = [State(; pending_outbound_order_lines = Dict(storage => Set{OrderLine}(), storage2 => Set{OrderLine}()),
-                              demand = Dict((customer, product) => rand(demand, horizon))) for i in 1:10]
+                              demand = [Demand(customer, product, rand(demand, horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:10]
 
     policies = Dict((l, product) => policy, (l2, product) => policy2)
                             
@@ -80,7 +80,7 @@ end
     demand = Poisson(10)
 
     initial_states = [State(; pending_outbound_order_lines = Dict(storage => Set{OrderLine}(), storage2 => Set{OrderLine}()),
-                              demand = Dict([(customers[i], product) => rand(demand, horizon) for i in 1:store_count]...)) for j in 1:10]
+                              demand = [Demand(customers[i], product, rand(demand, horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0) for i in 1:store_count]) for j in 1:10]
 
     #println(network)
     optimize!(network, policies, initial_states...; cost_function=s->get_total_lost_sales(s) + 0.00001 * get_total_orders(s))

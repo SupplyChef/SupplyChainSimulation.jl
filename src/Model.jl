@@ -1,24 +1,24 @@
 include("Model-Transportation.jl")
 
-mutable struct OrderLine
+mutable struct OrderLine{O<:Node, D<:Node}
     creation_time::Int64
-    origin::Node # from
-    destination::Node # to 
+    origin::O # from
+    destination::D # to 
     product::Product
     quantity::Int64
     due_date::Int64 # when
 
     trip::Union{Missing, Trip} # how (filled when shipping)
     
-    function OrderLine( creation_time::Int64,
-                        origin::Node, # from
-                        destination::Node, # to 
-                        product::Product,
-                        quantity::Int64,
-                        due_date::Int64 # when
-            )
-        return new(creation_time, origin, destination, product, quantity, due_date, missing)
-    end
+    #function OrderLine{O, D}( creation_time::Int64,
+    #                    origin::O, # from
+    #                    destination::D, # to 
+    #                    product::Product,
+    #                    quantity::Int64,
+    #                    due_date::Int64 # when
+    #        ) where {O<:Node, D<:Node}
+    #    return new(creation_time, origin, destination, product, quantity, due_date, missing)
+    #end
 end
 
 function get_inbound_trips(env, location, time)

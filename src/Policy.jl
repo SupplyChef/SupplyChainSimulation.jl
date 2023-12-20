@@ -218,9 +218,8 @@ function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env, lo
 
     coverage = coverage + policy.cover[end]
 
-    #@debug "Computing order at $time, $location, $product, past inbound orders: $past_orders, cover: $coverage, net inventory: $net_inventory"
-
     order = max(0, Int(ceil(coverage - net_inventory)))
+    @debug "Computing order at $time, $location, $product, order: $order, past inbound orders: $past_orders, cover: $coverage, net inventory: $net_inventory"
     return order
 end
 

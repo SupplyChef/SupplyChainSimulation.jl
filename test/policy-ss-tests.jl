@@ -23,7 +23,7 @@
     add_lane!(network, l)
     add_lane!(network, l2)
 
-    initial_state = State(; demand = Dict((customer, product) => repeat([10], horizon)))
+    initial_state = State(; demand = [Demand(customer, product, repeat([10.0], horizon); sales_price=1.0, lost_sales_cost=1.0)])
 
     policies = Dict((l2, product) => policy2)
 
@@ -67,7 +67,7 @@ end
     add_lane!(network, l)
     add_lane!(network, l2)
 
-    initial_state = State(; demand = Dict((customer, product) => repeat([10], horizon)))
+    initial_state = State(; demand = [Demand(customer, product, repeat([10.0], horizon); sales_price=1.0, lost_sales_cost=1.0)])
 
     policies = Dict((l2, product) => policy2)
 
@@ -112,7 +112,7 @@ end
 
     demand = Poisson(10)
 
-    initial_states = [State(; demand = Dict((customer, product) => rand(demand, horizon))) for i in 1:30]
+    initial_states = [State(; demand = [Demand(customer, product, rand(demand, horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:30]
 
     policies = Dict((l2, product) => policy2)
     

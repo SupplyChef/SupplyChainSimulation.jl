@@ -54,7 +54,7 @@ The second step is to define the starting state. The initial state represents th
 policy = OnHandUptoOrderingPolicy(0)
     policies = Dict((l2, product) => policy)
 
-    initial_states = [State(; demand = Dict((customer, product) => rand(Poisson(10), horizon))) for i in 1:10]
+    initial_states = [State(; demand = [Demand(customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:10]
 ```
 
 The third step is to run the simulation or the optimization (depending on whether you already know the policies you want to use or whether you want to find the best policies). In our example we will search the best policy by running the optimizer.
@@ -156,7 +156,7 @@ add_lane!(network, l2)
 policy = NetSSOrderingPolicy(0, 0)
 policies = Dict((l2, product) => policy)
 
-initial_states = [State(; demand = Dict((customer, product) => repeat([10], horizon))) for i in 1:1]
+initial_states = [State(; demand = [Demand(customer, product, repeat([10.0], horizon); sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:1]
 
 optimize!(network, policies, initial_states...)
 
@@ -193,7 +193,7 @@ add_lane!(network, l2)
 policy = NetSSOrderingPolicy(0, 0)
 policies = Dict((l2, product) => policy)
 
-initial_states = [State(; demand = Dict((customer, product) => rand(Poisson(10), horizon))) for i in 1:20]
+initial_states = [State(; demand = [Demand(customer, product, rand(Poisson(10), horizon) * 1.0; ; sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:20]
 
 optimize!(network, policies, initial_states...)
 
@@ -247,7 +247,7 @@ add_lane!(network, l2)
 add_lane!(network, l3)
 add_lane!(network, l4)
 
-initial_states = [State(; demand = Dict((customer, product) => rand(Poisson(10), horizon))) for i in 1:30]
+initial_states = [State(; demand = [Demand(customer, product, rand(Poisson(10), horizon) * 1.0; ; sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:30]
 
 optimize!(network, policies, initial_states...)
 ```

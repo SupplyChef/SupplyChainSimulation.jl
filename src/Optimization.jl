@@ -27,8 +27,9 @@ end
 
     Optimizes the inventory policies in the supply chain by simulating the inventory movement starting from the initial states and costing the results with the cost function.
 """
-function optimize!(supplychain::SupplyChain, lane_policies::Dict{Tuple{Lane, Product}, <:InventoryOrderingPolicy}, initial_states...; params::Dict{Symbol, Float64}=Dict{Symbol, Float64}(), cost_function=s->get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s))
+function optimize!(supplychain::SupplyChain, lane_policies::Dict{Tuple{Lane, Product}, <:InventoryOrderingPolicy}, initial_states...; params::Dict{Symbol, Float64}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s))
     env = Env(supplychain, initial_states, lane_policies)
+    #println(env)
 
     policies = unique([lane_policies[k] for k in keys(lane_policies)])
     #println(policies)
@@ -76,9 +77,10 @@ function bboptimize(f, x0, params)
     candidate_pool = [rand(length(x0)) .* (params[:SearchRange][2] - params[:SearchRange][1]) .+ params[:SearchRange][1] for i in 1:pool_size]
     #println(candidate_pool)
     pool_f = [f(candidate) for candidate in candidate_pool]
-    
+    #println(pool_f)
+
     t = max(0.1, min(0.9, 6 / length(x0)))
-    println(t)
+    #println(t)
 
     for i in 1:params[:MaxFuncEvals]
         if i > last_progress + params[:MaxStepsWithoutProgress]
@@ -115,7 +117,6 @@ function bboptimize(f, x0, params)
         end
         candidate_f = f(candidate)
         #println("$i, $(Dates.now() - start), $candidate_f, $candidate")
-        #println("$candidate_f, $candidate")
         if (candidate_f ≈ pool_f[i1]) && (sum(candidate_f) < sum(pool_f[i1]))
             pool_f[i1] = candidate_f
             candidate_pool[i1] = candidate

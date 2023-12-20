@@ -5,8 +5,8 @@
 """
 function get_total_demand(state)
     demand = 0.0
-    for o in filter(o -> isa(o.destination, Customer), collect(Base.Iterators.flatten(state.historical_orders)))
-        demand += o.quantity
+    for ol in filter(ol -> isa(ol.destination, Customer), collect(Base.Iterators.flatten(state.historical_orders)))
+        demand += ol.quantity * state.demand[(ol.destination, ol.product)].sales_price
     end
     return demand
 end
@@ -19,7 +19,7 @@ end
 function get_total_sales(state)
     sales = 0
     for ol in filter(ol -> isa(ol.destination, Customer), collect(Base.Iterators.flatten(state.historical_filled_orders)))
-        sales += ol.quantity
+        sales += ol.quantity * state.demand[(ol.destination, ol.product)].sales_price
     end
     return sales
 end
@@ -30,7 +30,15 @@ end
     Gets the total lost sales (in unit) for the state.
 """
 function get_total_lost_sales(state)
-    return get_total_demand(state) - get_total_sales(state)
+    all_orders = Set(filter(ol -> isa(ol.destination, Customer), collect(Base.Iterators.flatten(state.historical_orders))))
+    fulfilled_orders = Set(filter(ol -> isa(ol.destination, Customer), collect(Base.Iterators.flatten(state.historical_filled_orders))))
+    unfulfilled_orders = setdiff(all_orders, fulfilled_orders)
+
+    lost_sales = 0
+    for ol in unfulfilled_orders
+        lost_sales += ol.quantity * state.demand[(ol.destination, ol.product)].lost_sales_cost
+    end
+    return lost_sales
 end
 
 function get_total_on_hand(state)

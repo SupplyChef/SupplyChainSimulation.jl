@@ -23,7 +23,7 @@
         policy = OnHandUptoOrderingPolicy(0)
         policies = Dict((l2, product) => policy)
 
-        initial_states = [State(; demand = Dict((customer, product) => rand(Poisson(10), horizon))) for i in 1:10]
+        initial_states = [State(; demand = [Demand(customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:10]
 
         optimize!(network, policies, initial_states...)
         final_states = [simulate(network, policies, initial_state) for initial_state in initial_states]
@@ -55,7 +55,7 @@
         policy = NetSSOrderingPolicy(0, 0)
         policies = Dict((l2, product) => policy)
 
-        initial_states = [State(; demand = Dict((customer, product) => repeat([10], horizon))) for i in 1:1]
+        initial_states = [State(; demand = [Demand(customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:1]
 
         optimize!(network, policies, initial_states...)
 
@@ -87,7 +87,7 @@
         policy = NetSSOrderingPolicy(0, 0)
         policies = Dict((l2, product) => policy)
 
-        initial_states = [State(; demand = Dict((customer, product) => rand(Poisson(10), horizon))) for i in 1:20]
+        initial_states = [State(; demand = [Demand(customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:20]
 
         optimize!(network, policies, initial_states...)
 
@@ -134,7 +134,7 @@
         add_lane!(network, l3)
         add_lane!(network, l4)
 
-        initial_states = [State(; demand = Dict((customer, product) => rand(Poisson(10), horizon))) for i in 1:30]
+        initial_states = [State(; demand = [Demand(customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:30]
 
         optimize!(network, policies, initial_states...)
         true

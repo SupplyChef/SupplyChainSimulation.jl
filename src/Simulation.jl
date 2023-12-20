@@ -4,14 +4,14 @@ function receive_inventory!(state::State, env::Env, location::Storage, product, 
     quantity = get_in_transit_inventory(state, location, product, time)
     add_on_hand_inventory!(state, location, product, quantity)
     add_in_transit_inventory!(state, location, product, time, -quantity)
-    #@debug "Received at $time, $location, $product, $quantity"
+    @debug "Received at $time, $location, $product, $quantity"
 end
 
 function receive_inventory!(state::State, env::Env, location::Customer, product, time)
     #println(state)
     quantity = get_in_transit_inventory(state, location, product, time)
     add_in_transit_inventory!(state, location, product, time, -quantity)
-    #@debug "Received at $time, $location, $product, $quantity"
+    @debug "Received at $time, $location, $product, $quantity"
 end
 
 function receive_inventory!(state::State, env::Env, location::Supplier, product, time)
@@ -25,36 +25,44 @@ function send_inventory!(state::State, env::Env, trip::Trip, destination, produc
         return
     end
     add_in_transit_inventory!(state, destination, product, time + get_leadtime(trip.route, destination), quantity)
-    #println("Sent at $time, $(trip.route.origin), $destination, $product, $quantity")
+    @debug "Sent at $time, $(trip.route.origin), $destination, $product, $quantity with lead time $(trip.route.times[1])"
 end
 
 function send_inventory!(state::State, env::Env, trip::Trip, destination::Customer, product, quantity, time)
     #no-op
+    @debug "Sent at $time, $(trip.route.origin), $destination, $product, $quantity with lead time $(trip.route.times[1])"
 end
 
 # Send inventory
 function send_inventory!(state::State, env::Env, location::Supplier, product::Product, time::Int)
-    order_lines = sort(collect(get(state.pending_outbound_order_lines, (location, product), OrderLine[])), by=ol -> ol.due_date)
-    
+    order_lines = collect(get(state.pending_outbound_order_lines, (location, product), OrderLine[]))
+    sort!(order_lines, by=ol -> ol.due_date)
+    sort!(order_lines, by=ol -> ol.creation_time)
+    #@debug order_lines
+
     for order_line in order_lines
         if order_line.due_date < time
             delete_order_line!(state, order_line)
             continue
         end
 
-        # if true
+        if ismissing(order_line.trip) || order_line.trip.departure < time
+            @debug "replacing trip $(order_line.trip)"
             trips = env.supplying_trips[order_line.destination]
-            trip_index = findfirst(t -> t.departure >= time, trips)
+            trip_index = findfirst(t -> (t.departure >= time) && (t.departure + t.route.times[1] <= order_line.due_date), trips)
+            if isnothing(trip_index) 
+                continue
+            end
             trip = trips[trip_index]
-
             order_line.trip = trip
-            send_inventory!(state, env, trip, order_line.destination, order_line.product, order_line.quantity, time)
+        end
+
+        send_inventory!(state, env, order_line.trip, order_line.destination, order_line.product, order_line.quantity, time)
             
-            delete_order_line!(state, order_line)
+        delete_order_line!(state, order_line)
             
-            push!(state.historical_transportation, trip)
-            push!(state.filled_orders, order_line)
-        # end
+        push!(state.historical_transportation, order_line.trip)
+        push!(state.filled_orders, order_line)
     end
 end
 
@@ -64,7 +72,10 @@ function send_inventory!(state::State, env::Env, location, product::Product, tim
         return
     end
 
-    order_lines = sort(collect(state.pending_outbound_order_lines[(location, product)]), by=ol -> ol.due_date)
+    order_lines = collect(state.pending_outbound_order_lines[(location, product)])
+    sort!(order_lines, by=ol -> ol.due_date)
+    sort!(order_lines, by=ol -> ol.creation_time)
+    #@debug order_lines
 
     #println("send_inventory order_lines $order_lines")
     fulfilled_order_lines = Set{OrderLine}()
@@ -76,17 +87,23 @@ function send_inventory!(state::State, env::Env, location, product::Product, tim
         
         #println("send_inventory on_hand $(state.on_hand_inventory[location][order_line.product]) vs $(order_line.quantity)")
         if order_line.quantity <= state.on_hand_inventory[(location, product)]
-            trips = env.supplying_trips[order_line.destination]
-            trip_index = findfirst(t -> t.departure >= time, trips)
-            trip = trips[trip_index]
+            if ismissing(order_line.trip) || order_line.trip.departure < time
+                @debug "replacing trip $(order_line.trip)"
+                trips = env.supplying_trips[order_line.destination]
+                trip_index = findfirst(t -> (t.departure >= time) && (t.departure + t.route.times[1] <= order_line.due_date), trips)
+                if isnothing(trip_index) 
+                    continue
+                end
+                trip = trips[trip_index]
+                order_line.trip = trip
+            end
 
-            order_line.trip = trip
-            send_inventory!(state, env, trip,  order_line.destination, order_line.product, order_line.quantity, time)
+            send_inventory!(state, env, order_line.trip,  order_line.destination, order_line.product, order_line.quantity, time)
             state.on_hand_inventory[(location, product)] -= order_line.quantity
             
             push!(fulfilled_order_lines, order_line)
             
-            push!(state.historical_transportation, trip)
+            push!(state.historical_transportation, order_line.trip)
 
             push!(state.filled_orders, order_line)
 
@@ -101,13 +118,13 @@ end
 
 # Place orders
 function place_orders(state::State, env::Env, location::Customer, product::Product, time::Int64)
-    quantity = state.demand[(location, product)][time]
+    quantity = Int(state.demand[(location, product)].demand[time])
     if quantity > 0
         trips = env.supplying_trips[location]
         trip_index = findfirst(t -> t.departure >= time, trips)
         trip = trips[trip_index]
 
-        order = OrderLine(time, trip.route.origin, location, product, quantity, time) # customers orders are due immediately
+        order = OrderLine(time, trip.route.origin, location, product, quantity, time, missing) # customers orders are due immediately
         #@debug "Ordered at $time, $location, $product, $quantity"
         push!(state.placed_orders, order)
         
@@ -125,8 +142,8 @@ function place_orders(state::State, env::Env, location, product::Product, time::
         if !isnothing(policy)
             quantity = get_order(policy, state, env, location, trip.route, product, time) 
             if quantity > 0
-                order = OrderLine(time, trip.route.origin, location, product, quantity, typemax(Int64))
-                #@debug "Ordered at $time, $location, $product, $quantity"
+                order = OrderLine(time, trip.route.origin, location, product, quantity, typemax(Int64), trip)
+                @debug "Ordered at $time, $location, $product, $quantity from $(trip.route.origin) with lead time $(trip.route.times[1])"
                 
                 push!(orders, order)
                 push!(state.placed_orders, order)

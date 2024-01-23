@@ -3,18 +3,18 @@ Contains information about the environment of the simulation, including the netw
 """
 struct Env 
     supplychain::SupplyChain
-    initial_states
+    initial_states::Array{State, 1}
     
-    sorted_locations
-    sorted_products
+    sorted_locations::Array{<:Node, 1}
+    sorted_products::Array{Product, 1}
     supplying_trips::Dict{Node, Array{Trip, 1}}
 
-    function Env(supplychain, initial_states, policies)
+    function Env(supplychain::SupplyChain, initial_states, policies)
         trips = get_trips(supplychain, policies)
         sorted_locations = get_sorted_locations(supplychain)
 
         return new(supplychain, 
-                   initial_states,
+                   collect(initial_states),
                    sorted_locations, 
                    collect(supplychain.products),
                    Dict(location => sort(collect(filter(trip -> is_destination(location, trip.route), trips)), 

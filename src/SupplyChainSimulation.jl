@@ -52,8 +52,8 @@ abstract type InventoryOrderingPolicy end
 
 include("Model.jl")
 include("State.jl")
-include("Policy.jl")
 include("Env.jl")
+include("Policy.jl")
 
 include("Optimization.jl")
 include("Reporting.jl")

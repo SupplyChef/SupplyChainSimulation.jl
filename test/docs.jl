@@ -12,21 +12,26 @@
         l1 = Lane(storage, customer)
         l2 = Lane(supplier, storage)
 
-        network = SupplyChain(horizon)
-        add_supplier!(network, supplier)
-        add_storage!(network, storage)
-        add_customer!(network, customer)
-        add_product!(network, product)
-        add_lane!(network, l1)
-        add_lane!(network, l2)
+        n() = begin
+            network = SupplyChain(horizon)
+            add_supplier!(network, supplier)
+            add_storage!(network, storage)
+            add_customer!(network, customer)
+            add_product!(network, product)
+            add_lane!(network, l1)
+            add_lane!(network, l2)
+
+            add_demand!(network, customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)
+
+            return network
+        end
+        initial_states = [n() for i in 1:10]
 
         policy = OnHandUptoOrderingPolicy(0)
         policies = Dict((l2, product) => policy)
 
-        initial_states = [State(; demand = [Demand(customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:10]
-
-        optimize!(network, policies, initial_states...)
-        final_states = [simulate(network, policies, initial_state) for initial_state in initial_states]
+        optimize!(policies, initial_states...)
+        final_states = [simulate(initial_state, policies) for initial_state in initial_states]
         true
     end
 
@@ -44,20 +49,25 @@
         l1 = Lane(storage, customer)
         l2 = Lane(supplier, storage, fixed_cost=10)
 
-        network = SupplyChain(horizon)
-        add_supplier!(network, supplier)
-        add_storage!(network, storage)
-        add_customer!(network, customer)
-        add_product!(network, product)
-        add_lane!(network, l1)
-        add_lane!(network, l2)
+        n() = begin
+            network = SupplyChain(horizon)
+            add_supplier!(network, supplier)
+            add_storage!(network, storage)
+            add_customer!(network, customer)
+            add_product!(network, product)
+            add_lane!(network, l1)
+            add_lane!(network, l2)
+
+            add_demand!(network, customer, product, repeat([10.0], horizon); sales_price=1.0, lost_sales_cost=1.0)
+
+            return network
+        end
 
         policy = NetSSOrderingPolicy(0, 0)
         policies = Dict((l2, product) => policy)
 
-        initial_states = [State(; demand = [Demand(customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:1]
-
-        optimize!(network, policies, initial_states...)
+        initial_states = [n() for i in 1:1]
+        optimize!(policies, initial_states...)
 
         println(policy)
         true
@@ -76,20 +86,26 @@
         l1 = Lane(storage, customer)
         l2 = Lane(supplier, storage; fixed_cost=10, time=2)
 
-        network = SupplyChain(horizon)
-        add_supplier!(network, supplier)
-        add_storage!(network, storage)
-        add_customer!(network, customer)
-        add_product!(network, product)
-        add_lane!(network, l1)
-        add_lane!(network, l2)
+        n() = begin
+            network = SupplyChain(horizon)
+            add_supplier!(network, supplier)
+            add_storage!(network, storage)
+            add_customer!(network, customer)
+            add_product!(network, product)
+            add_lane!(network, l1)
+            add_lane!(network, l2)
+
+            add_demand!(network, customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)
+
+            return network
+        end
 
         policy = NetSSOrderingPolicy(0, 0)
         policies = Dict((l2, product) => policy)
 
-        initial_states = [State(; demand = [Demand(customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:20]
+        initial_states = [n() for i in 1:20]
 
-        optimize!(network, policies, initial_states...)
+        optimize!(policies, initial_states...)
 
         println(policy)
         true
@@ -122,21 +138,27 @@
                         (l3, product) => policy3,
                         (l4, product) => policy4)
 
-        network = SupplyChain(horizon)
-        add_supplier!(network, supplier)
-        add_storage!(network, factory)
-        add_storage!(network, wholesaler)
-        add_storage!(network, retailer)
-        add_customer!(network, customer)
-        add_product!(network, product)
-        add_lane!(network, l)
-        add_lane!(network, l2)
-        add_lane!(network, l3)
-        add_lane!(network, l4)
+        n() = begin
+            network = SupplyChain(horizon)
+            add_supplier!(network, supplier)
+            add_storage!(network, factory)
+            add_storage!(network, wholesaler)
+            add_storage!(network, retailer)
+            add_customer!(network, customer)
+            add_product!(network, product)
+            add_lane!(network, l)
+            add_lane!(network, l2)
+            add_lane!(network, l3)
+            add_lane!(network, l4)
 
-        initial_states = [State(; demand = [Demand(customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:30]
+            add_demand!(network, customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)
 
-        optimize!(network, policies, initial_states...)
+            return network
+        end
+        
+        initial_states = [n() for i in 1:30]
+
+        optimize!(policies, initial_states...)
         true
     end
 end

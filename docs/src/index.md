@@ -22,9 +22,9 @@ pkg> add SupplyChainSimulation
 
 ## Getting started
 
-The first step to use SupplyChainSimulation is to define the supply chain. This is done by specifying the supply chain network, including product, suppliers, storage locations, and customers.
+The first step to use SupplyChainSimulation is to define the supply chain components. This is done by specifying the products, suppliers, storage locations, and customers.
 
-In the example below we define a network with one product, one supplier, one storage location, and one customer.
+In the example below we define one product, one supplier, one storage location, and one customer.
 
 ```julia
 horizon = 20
@@ -38,30 +38,39 @@ customer = Customer("customer")
 
 l1 = Lane(storage, customer)
 l2 = Lane(supplier, storage)
-
-network = SupplyChain(horizon)
-add_supplier!(network, supplier)
-add_storage!(network, storage)
-add_customer!(network, customer)
-add_product!(network, product)
-add_lane!(network, l1)
-add_lane!(network, l2)
 ```
 
-The second step is to define the starting state. The initial state represents the inventory situation at the start of the simulation. The state also has information about the future: what demand we expect and what policies we want to use when computing orders. More than one initial state can be defined to represent potential different situations that have to be simulated or optimized. For example we could have several demand scenarios. In our example, we will create 10 such scenarios with different demand from the customer. In the example we use an order up to policy that will place an order to replenish the inventory back to a given value.
+The second step is to define the starting states. The initial states represent the supply chain network at the start of the simulation. More than one initial state can be defined to represent potential different situations that have to be simulated or optimized. For example we could have several demand scenarios. In our example, we will create 10 such scenarios with different demand from the customer. 
+
+```julia
+n() = begin
+    network = SupplyChain(horizon)
+    add_supplier!(network, supplier)
+    add_storage!(network, storage)
+    add_customer!(network, customer)
+    add_product!(network, product)
+    add_lane!(network, l1)
+    add_lane!(network, l2)
+
+    add_demand!(network, customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)
+
+    return network
+end
+initial_states = [n() for i in 1:10]
+```
+
+The third step is to define the policies that we want to use. In this example we use an order up to policy that will place an order to replenish the inventory back to a given value.
 
 ```julia
 policy = OnHandUptoOrderingPolicy(0)
-    policies = Dict((l2, product) => policy)
-
-    initial_states = [State(; demand = [Demand(customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:10]
+policies = Dict((l2, product) => policy)
 ```
 
-The third step is to run the simulation or the optimization (depending on whether you already know the policies you want to use or whether you want to find the best policies). In our example we will search the best policy by running the optimizer.
+The next step is to run the simulation or the optimization (depending on whether you already know the policies you want to use or whether you want to find the best policies). In our example we will search the best policy by running the optimizer.
 
 ```julia
-optimize!(network, policies, initial_states...)
-final_states = [simulate(network, policies, initial_state) for initial_state in initial_states]
+optimize!(policies, initial_states...)
+final_states = [simulate(initial_state, policies) for initial_state in initial_states]
 ```
 
 The final step is to analyze the results. There are various function we can call to get information such as the orders that have been placed, the inventory on hand at any time, and more. There are also plotting functions which provide the information in a graphical way. In our example we will plot the amount of inventory at the storage location over time.
@@ -145,20 +154,26 @@ customer = Customer("customer")
 l1 = Lane(storage, customer)
 l2 = Lane(supplier, storage, fixed_cost=10)
 
-network = SupplyChain(horizon)
-add_supplier!(network, supplier)
-add_storage!(network, storage)
-add_customer!(network, customer)
-add_product!(network, product)
-add_lane!(network, l1)
-add_lane!(network, l2)
+n() = begin
+    network = SupplyChain(horizon)
+    add_supplier!(network, supplier)
+    add_storage!(network, storage)
+    add_customer!(network, customer)
+    add_product!(network, product)
+    add_lane!(network, l1)
+    add_lane!(network, l2)
+
+    add_demand!(network, customer, product, repeat([10.0], horizon); sales_price=1.0, lost_sales_cost=1.0)
+
+    return network
+end
 
 policy = NetSSOrderingPolicy(0, 0)
 policies = Dict((l2, product) => policy)
 
-initial_states = [State(; demand = [Demand(customer, product, repeat([10.0], horizon); sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:1]
+initial_states = [n() for i in 1:1]
 
-optimize!(network, policies, initial_states...)
+optimize!(policies, initial_states...)
 
 println(policy)
 ```
@@ -182,20 +197,26 @@ customer = Customer("customer")
 l1 = Lane(storage, customer)
 l2 = Lane(supplier, storage; fixed_cost=10, time=2)
 
-network = SupplyChain(horizon)
-add_supplier!(network, supplier)
-add_storage!(network, storage)
-add_customer!(network, customer)
-add_product!(network, product)
-add_lane!(network, l1)
-add_lane!(network, l2)
+n() = begin
+    network = SupplyChain(horizon)
+    add_supplier!(network, supplier)
+    add_storage!(network, storage)
+    add_customer!(network, customer)
+    add_product!(network, product)
+    add_lane!(network, l1)
+    add_lane!(network, l2)
+
+    add_demand!(network, customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)
+
+    return network
+end
 
 policy = NetSSOrderingPolicy(0, 0)
 policies = Dict((l2, product) => policy)
 
-initial_states = [State(; demand = [Demand(customer, product, rand(Poisson(10), horizon) * 1.0; ; sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:20]
+initial_states = [n() for i in 1:20]
 
-optimize!(network, policies, initial_states...)
+optimize!(policies, initial_states...)
 
 println(policy)
 ```
@@ -235,21 +256,27 @@ policies = Dict(
                 (l3, product) => policy3,
                 (l4, product) => policy4)
 
-network = SupplyChain(horizon)
-add_supplier!(network, supplier)
-add_storage!(network, factory)
-add_storage!(network, wholesaler)
-add_storage!(network, retailer)
-add_customer!(network, customer)
-add_product!(network, product)
-add_lane!(network, l)
-add_lane!(network, l2)
-add_lane!(network, l3)
-add_lane!(network, l4)
+n() = begin
+    network = SupplyChain(horizon)
+    add_supplier!(network, supplier)
+    add_storage!(network, factory)
+    add_storage!(network, wholesaler)
+    add_storage!(network, retailer)
+    add_customer!(network, customer)
+    add_product!(network, product)
+    add_lane!(network, l)
+    add_lane!(network, l2)
+    add_lane!(network, l3)
+    add_lane!(network, l4)
 
-initial_states = [State(; demand = [Demand(customer, product, rand(Poisson(10), horizon) * 1.0; ; sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:30]
+    add_demand!(network, customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)
 
-optimize!(network, policies, initial_states...)
+    return network
+end
+
+initial_states = [n() for i in 1:30]
+
+optimize!(policies, initial_states...)
 ```
 
 The optimizer will then run and return the best policies.

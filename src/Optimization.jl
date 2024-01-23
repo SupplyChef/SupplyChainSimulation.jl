@@ -2,7 +2,7 @@
 using Distributions
 using Dates
 
-function minimize!(env::Env, lane_policies, policies, initial_states::Array{State, 1}, x::Array{Float64, 1}; cost_function)
+function minimize!(lane_policies, policies, envs::Array{Env, 1}, initial_states::Array{State, 1}, x::Array{Float64, 1}; cost_function)
     i = 1
     for policy in policies
         set_parameters!(policy, x[i:i+length(get_parameters(policy))-1])
@@ -10,9 +10,9 @@ function minimize!(env::Env, lane_policies, policies, initial_states::Array{Stat
     end
 
     value = 0
-    for initial_state in initial_states
+    for i in 1:length(initial_states)
         #println(initial_state)
-        final_state = simulate(env, lane_policies, initial_state)
+        final_state = simulate(envs[i], lane_policies, initial_states[i])
 
         #println(final_state)
 
@@ -27,17 +27,17 @@ end
 
     Optimizes the inventory policies in the supply chain by simulating the inventory movement starting from the initial states and costing the results with the cost function.
 """
-function optimize!(supplychain::SupplyChain, lane_policies::Dict{Tuple{Lane, Product}, <:InventoryOrderingPolicy}, initial_states...; params::Dict{Symbol, Float64}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s))
-    env = Env(supplychain, initial_states, lane_policies)
-    #println(env)
-
+function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s))
+    initial_states = State.(supplychains)
+    envs = [Env(supplychain, initial_states, lane_policies) for supplychain in supplychains]
+    
     policies = unique([lane_policies[k] for k in keys(lane_policies)])
     #println(policies)
 
     x0 = vcat([get_parameters(policy) for policy in policies]...)
     x0 = convert(Array{Float64, 1}, x0)
-    println(x0)
-    res1 = SupplyChainSimulation.bboptimize(x -> minimize!(env, lane_policies, policies, collect(initial_states), x; cost_function=cost_function), 
+    
+    res1 = SupplyChainSimulation.bboptimize(x -> minimize!(lane_policies, policies, collect(envs), collect(initial_states), x; cost_function=cost_function), 
                      x0, 
                     merge(Dict(:MaxFuncEvals => 15000,
                          :MaxStepsWithoutProgress => 1500, 

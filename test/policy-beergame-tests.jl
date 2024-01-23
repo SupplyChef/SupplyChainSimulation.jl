@@ -25,20 +25,26 @@ function beer_game(;scenario_count=30, optimize=true)
     policy3 = BackwardCoverageOrderingPolicy([0.0, 0.0])
     policy4 = BackwardCoverageOrderingPolicy([0.0, 0.0])
 
-    network = SupplyChain(horizon)
-    
-    add_supplier!(network, supplier)
-    add_storage!(network, retailer)
-    add_storage!(network, wholesaler)
-    add_storage!(network, factory)
-    add_customer!(network, customer)
-    add_product!(network, product)
-    add_lane!(network, l)
-    add_lane!(network, l2)
-    add_lane!(network, l3)
-    add_lane!(network, l4)
+    n() = begin
+        network = SupplyChain(horizon)
+        
+        add_supplier!(network, supplier)
+        add_storage!(network, retailer)
+        add_storage!(network, wholesaler)
+        add_storage!(network, factory)
+        add_customer!(network, customer)
+        add_product!(network, product)
+        add_lane!(network, l)
+        add_lane!(network, l2)
+        add_lane!(network, l3)
+        add_lane!(network, l4)
 
-    initial_states = [State(; demand = [Demand(customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:scenario_count]
+        add_demand!(network, customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)
+
+        return network
+    end
+
+    initial_states = [n() for i in 1:scenario_count]
     println(initial_states)
 
     policies = Dict((l2, product) => policy2,
@@ -46,14 +52,14 @@ function beer_game(;scenario_count=30, optimize=true)
                     (l4, product) => policy4)
     
     if optimize
-        optimize!(network, policies, initial_states...)
+        optimize!(policies, initial_states...)
     end
 
     println(policy2)
     println(policy3)
     println(policy4)
 
-    final_states = [simulate(network, policies, initial_state) for initial_state in initial_states]
+    final_states = [simulate(initial_state, policies) for initial_state in initial_states]
     return final_states
 end
 
@@ -96,20 +102,20 @@ end
         add_lane!(network, l3)
         add_lane!(network, l4)
 
-        initial_state = State(; demand = [Demand(customer, product, repeat([10.0], horizon); sales_price=1.0, lost_sales_cost=1.0)])
+        add_demand!(network, customer, product, repeat([10.0], horizon); sales_price=1.0, lost_sales_cost=1.0)
 
         policies = Dict(
                         (l2, product) => policy2,
                         (l3, product) => policy3,
                         (l4, product) => policy4)
 
-        optimize!(network, policies, initial_state)
+        optimize!(policies, network)
 
         println(policy2)
         println(policy3)
         println(policy4)
 
-        final_state = simulate(network, policies, initial_state)
+        final_state = simulate(network, policies)
 
         println("lost sales: $(get_total_lost_sales(final_state))")
         println("sales: $(get_total_sales(final_state))")
@@ -142,33 +148,39 @@ end
         policy3 = NetUptoOrderingPolicy(0)
         policy4 = NetUptoOrderingPolicy(0)
 
-        network = SupplyChain(horizon)
+        n() = begin
+            network = SupplyChain(horizon)
         
-        add_supplier!(network, supplier)
-        add_storage!(network, retailer)
-        add_storage!(network, wholesaler)
-        add_storage!(network, factory)
-        add_customer!(network, customer)
-        add_product!(network, product)
-        add_lane!(network, l)
-        add_lane!(network, l2)
-        add_lane!(network, l3)
-        add_lane!(network, l4)
+            add_supplier!(network, supplier)
+            add_storage!(network, retailer)
+            add_storage!(network, wholesaler)
+            add_storage!(network, factory)
+            add_customer!(network, customer)
+            add_product!(network, product)
+            add_lane!(network, l)
+            add_lane!(network, l2)
+            add_lane!(network, l3)
+            add_lane!(network, l4)
 
-        initial_states = [State(; demand = [Demand(customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:30]
+            add_demand!(network, customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)
+
+            return network
+        end
+
+        initial_states = [n() for i in 1:30]
 
         policies = Dict(
                         (l2,product) => policy2,
                         (l3, product) => policy3,
                         (l4, product) => policy4)
 
-        optimize!(network, policies, initial_states...)
+        optimize!(policies, initial_states...)
 
         println(policy2)
         println(policy3)
         println(policy4)
 
-        final_states = [simulate(network, policies, initial_state) for initial_state in initial_states]
+        final_states = [simulate(initial_state, policies) for initial_state in initial_states]
 
         println("lost sales: $(get_total_lost_sales(final_states[1]))")
         println("sales: $(get_total_sales(final_states[1]))")

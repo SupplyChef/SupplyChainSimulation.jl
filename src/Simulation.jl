@@ -66,7 +66,7 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
     end
 end
 
-function send_inventory!(state::State, env::Env, location, product::Product, time::Int)
+function send_inventory!(state::State, env::Env, location::Node, product::Product, time::Int)
     #println("send_inventory $location $product $time")
     if !haskey(state.pending_outbound_order_lines, (location, product))
         return
@@ -78,7 +78,7 @@ function send_inventory!(state::State, env::Env, location, product::Product, tim
     #@debug order_lines
 
     #println("send_inventory order_lines $order_lines")
-    fulfilled_order_lines = Set{OrderLine}()
+    fulfilled_order_lines = OrderLine[]
     for order_line in order_lines
         if order_line.due_date < time
             push!(fulfilled_order_lines, order_line)
@@ -117,7 +117,8 @@ function send_inventory!(state::State, env::Env, location, product::Product, tim
 end
 
 # Place orders
-function place_orders(state::State, env::Env, location::Customer, product::Product, time::Int64)
+function place_orders(state::State, env::Env, location::Customer, product::Product, time::Int64, orders::Array{OrderLine, 1})
+    empty!(orders)
     quantity = Int(state.demand[(location, product)].demand[time])
     if quantity > 0
         trips = env.supplying_trips[location]
@@ -126,21 +127,21 @@ function place_orders(state::State, env::Env, location::Customer, product::Produ
 
         order = OrderLine(time, trip.route.origin, location, product, quantity, time, missing) # customers orders are due immediately
         #@debug "Ordered at $time, $location, $product, $quantity"
+        push!(orders, order)
         push!(state.placed_orders, order)
-        
-        return [order]
+        return
     else
-        return OrderLine[]
+        return
     end
 end
     
-function place_orders(state::State, env::Env, location, product::Product, time::Int)
-    orders = OrderLine[]
+function place_orders(state::State, env::Env, location, product::Product, time::Int, orders::Array{OrderLine, 1})
+    empty!(orders)
     for trip in get_inbound_trips(env, location, time)
         #println(policies)
         policy = get(trip.policies, product, nothing)
         if !isnothing(policy)
-            quantity = get_order(policy, state, env, location, trip.route, product, time) 
+            quantity = Int(get_order(policy, state, env, location, trip.route, product, time))
             if quantity > 0
                 order = OrderLine(time, trip.route.origin, location, product, quantity, typemax(Int64), trip)
                 @debug "Ordered at $time, $location, $product, $quantity from $(trip.route.origin) with lead time $(trip.route.times[1])"
@@ -150,7 +151,6 @@ function place_orders(state::State, env::Env, location, product::Product, time::
             end
         end
     end
-    return orders
 end
 
 # Receive orders
@@ -170,7 +170,8 @@ function receive_order!(state::State, env::Env, order::OrderLine)
 end
 
 # Simulate
-function simulate(supplychain::SupplyChain, policies, initial_state::State)
+function simulate(supplychain::SupplyChain, policies::Dict{Tuple{Lane, Product}, <:InventoryOrderingPolicy})
+    initial_state = State(supplychain)
     return simulate(Env(supplychain, [initial_state], policies), policies, initial_state)
 end
 
@@ -179,7 +180,9 @@ end
 
     Simulates the supply chain for horizon steps, starting from the initial state.
 """
-function simulate(env::Env, policies, initial_state::State)
+function simulate(env::Env, policies, initial_state)
+    orders = OrderLine[]
+
     for storage in env.supplychain.storages
         for product in env.supplychain.products
             if get_initial_inventory(storage, product) > 0
@@ -213,7 +216,7 @@ function simulate(env::Env, policies, initial_state::State)
 
         for location in reverse(env.sorted_locations)
             for product in env.supplychain.products
-                orders = place_orders(state, env, location, product, time)
+                place_orders(state, env, location, product, time, orders)
                 receive_orders!(state, env, orders)
             end
         end

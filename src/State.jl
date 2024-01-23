@@ -2,9 +2,12 @@ import Base.push!
 import Base.delete!
 
 """
-Contains information about the current state of the simulation, including inventory positions and pending orders.
+Contains information about the historical and current state of the simulation, including inventory positions and pending orders.
 """
 mutable struct State
+    supply_chain::SupplyChain
+    demand::Dict{Tuple{Customer, Product}, Demand}
+
     on_hand_inventory::Dict{Tuple{Storage, Product}, Int64}
 
     in_transit_inventory::Dict{Tuple{<:Node, Product}, Array{Int64, 1}}
@@ -15,23 +18,23 @@ mutable struct State
     filled_orders::Set{OrderLine}
     placed_orders::Set{OrderLine}
 
-    demand::Dict{Tuple{Customer, Product}, Demand}
-
     historical_on_hand::Array{Dict{Tuple{Storage, Product}, Int64}, 1}
     historical_orders::Array{Set{OrderLine}, 1}
     historical_transportation::Set{Trip}
-    historical_filled_orders::Array{Set{OrderLine}}
+    historical_filled_orders::Array{Set{OrderLine}, 1}
     #historical_pending_outbound_order_lines::Array{Dict{Node, Set{OrderLine}}}
 
-    function State(;pending_outbound_order_lines=Dict{Storage, Array{OrderLine, 1}}(), 
-                    demand::Array{Demand, 1})
-        state = new(Dict{Tuple{Storage, Product}, Int64}(), 
+    function State(supply_chain; pending_outbound_order_lines=Dict{Storage, Array{OrderLine, 1}}())
+        demand = Dict((d.customer, d.product) => d for d in supply_chain.demand)
+
+        state = new(supply_chain,
+                   demand,
+                   Dict{Tuple{Storage, Product}, Int64}(), 
                    Dict{Tuple{<:Node, Product}, Array{Int64, 1}}(), 
                    Dict{Tuple{<:Node, Product}, Set{OrderLine}}(),
                    Dict{Tuple{<:Node, Product}, Set{OrderLine}}(),
                    Set{OrderLine}(),
                    Set{OrderLine}(),
-                   Dict{Tuple{Customer, Product}, Demand}((d.customer, d.product) => d for d in demand), 
                    [], 
                    OrderLine[],
                    Set{Trip}(), 
@@ -65,7 +68,7 @@ function delete_order_line!(state::State, order_line::OrderLine)
     Base.delete!(state.pending_inbound_order_lines[(order_line.destination, order_line.product)], order_line)
 end
 
-function delete_order_lines!(state::State, order_lines::Set{OrderLine})
+function delete_order_lines!(state::State, order_lines)
     for order_line in order_lines
         delete_order_line!(state, order_line)
     end
@@ -75,7 +78,7 @@ function set_on_hand_inventory!(state::State, to::Node, product::Product, quanti
     state.on_hand_inventory[(to, product)] = Int(quantity)
 end
 
-function add_on_hand_inventory!(state::State, to::Node, product::Product, quantity::Int64)
+function add_on_hand_inventory!(state::State, to::Storage, product::Product, quantity::Int64)
     state.on_hand_inventory[(to, product)] = get(state.on_hand_inventory, (to, product), 0) + quantity
 end
 
@@ -100,10 +103,11 @@ end
     Gets the number of units of a product in transit to a location at a given time.
 """
 function get_in_transit_inventory(state::State, to::N, product::Product, time::Int64)::Int64 where N <: Node
-    if !haskey(state.in_transit_inventory, (to, product))
+    in_transit_inventory = get(state.in_transit_inventory, (to, product), nothing)
+    if isnothing(in_transit_inventory)
         return 0
     end
-    return state.in_transit_inventory[(to, product)][time]
+    return in_transit_inventory[time]
 end
 
 function get_in_transit_inventories(state::State, to::N, product::Product)::Array{Int64, 1} where N <: Node
@@ -119,7 +123,8 @@ end
     Gets the number of steps in the simulation.
 """
 function get_horizon(state::State)
-    return maximum(length.(map(d -> d.demand, values(state.demand))))
+    #return maximum(length.(map(d -> d.demand, collect(state.supply_chain.demand))))
+    return state.supply_chain.horizon
 end
 
 function snapshot_state!(state::State, time)

@@ -15,28 +15,33 @@
     policy = OnHandUptoOrderingPolicy(0)
     policy2 = ForwardCoverageOrderingPolicy(0)
 
-    network = SupplyChain(horizon)
-        
-    add_storage!(network, storage)
-    add_storage!(network, storage2)
-    add_customer!(network, customer)
-    add_product!(network, product)
-    add_lane!(network, l)
-    add_lane!(network, l2)
+    n() = begin
+        network = SupplyChain(horizon)
+            
+        add_storage!(network, storage)
+        add_storage!(network, storage2)
+        add_customer!(network, customer)
+        add_product!(network, product)
+        add_lane!(network, l)
+        add_lane!(network, l2)
 
-    demand = Poisson(10)
+        demand = Poisson(10)
 
-    initial_states = [State(; pending_outbound_order_lines = Dict(storage => Set{OrderLine}(), storage2 => Set{OrderLine}()),
-                              demand = [Demand(customer, product, rand(demand, horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)]) for i in 1:10]
+        add_demand!(network, customer, product, rand(demand, horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)
+
+        return network
+    end
+
+    initial_states = [n() for i in 1:10]
 
     policies = Dict((l, product) => policy, (l2, product) => policy2)
                             
-    optimize!(network, policies, initial_states...)
+    optimize!(policies, initial_states...)
 
     println(policy)
     println(policy2)
 
-    final_state = simulate(network, policies, initial_states[1])
+    final_state = simulate(initial_states[1], policies)
 
     println("lost sales: $(get_total_lost_sales(final_state))")
     println("sales: $(get_total_sales(final_state))")
@@ -64,31 +69,37 @@ end
     policy2 = ForwardCoverageOrderingPolicy(0)
     policies = Dict((l0, product) => policy2)
 
-    network = SupplyChain(horizon)
-        
-    add_storage!(network, storage)
-    add_storage!(network, storage2)
-    for customer in customers
-        add_customer!(network, customer)
-    end
-    add_product!(network, product)
-    for l in lanes
-        add_lane!(network, l)
-    end
-    add_lane!(network, l0)
+    n() = begin
+        network = SupplyChain(horizon)
+            
+        add_storage!(network, storage)
+        add_storage!(network, storage2)
+        for customer in customers
+            add_customer!(network, customer)
+        end
+        add_product!(network, product)
+        for l in lanes
+            add_lane!(network, l)
+        end
+        add_lane!(network, l0)
 
-    demand = Poisson(10)
+        demand = Poisson(10)
+        for i in 1:store_count
+            add_demand!(network, customers[i], product, rand(demand, horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)
+        end
 
-    initial_states = [State(; pending_outbound_order_lines = Dict(storage => Set{OrderLine}(), storage2 => Set{OrderLine}()),
-                              demand = [Demand(customers[i], product, rand(demand, horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0) for i in 1:store_count]) for j in 1:10]
+        return network
+    end
+
+    initial_states = [n() for j in 1:10]
 
     #println(network)
-    optimize!(network, policies, initial_states...; cost_function=s->get_total_lost_sales(s) + 0.00001 * get_total_orders(s))
+    optimize!(policies, initial_states...; cost_function=s->get_total_lost_sales(s) + 0.00001 * get_total_orders(s))
 
     println(policy)
     println(policy2)
 
-    final_state = simulate(network, policies, initial_states[1])
+    final_state = simulate(initial_states[1], policies)
 
     println("demand: $(get_total_demand(final_state))")
     println("lost sales: $(get_total_lost_sales(final_state))")

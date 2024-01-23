@@ -17,7 +17,7 @@ end
     Gets the total sales (in unit) for the state.
 """
 function get_total_sales(state)
-    sales = 0
+    sales = 0.0
     for ol in filter(ol -> isa(ol.destination, Customer), collect(Base.Iterators.flatten(state.historical_filled_orders)))
         sales += ol.quantity * state.demand[(ol.destination, ol.product)].sales_price
     end
@@ -34,7 +34,7 @@ function get_total_lost_sales(state)
     fulfilled_orders = Set(filter(ol -> isa(ol.destination, Customer), collect(Base.Iterators.flatten(state.historical_filled_orders))))
     unfulfilled_orders = setdiff(all_orders, fulfilled_orders)
 
-    lost_sales = 0
+    lost_sales = 0.0
     for ol in unfulfilled_orders
         lost_sales += ol.quantity * state.demand[(ol.destination, ol.product)].lost_sales_cost
     end

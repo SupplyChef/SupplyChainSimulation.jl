@@ -18,7 +18,7 @@ function set_parameters!(policy::QuantityOrderingPolicy, values::Array{Float64, 
     policy.orders .= Int.(round.(values))
 end
 
-function get_order(policy::QuantityOrderingPolicy, state, env, location, lane, product, time)
+function get_order(policy::QuantityOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
     order = max(0, policy.orders[time])
     return order
 end
@@ -44,7 +44,7 @@ function set_parameters!(policy::ProductQuantityOrderingPolicy, values::Array{Fl
     policy.order = Int(round(values[1]))
 end
 
-function get_order(policy::ProductQuantityOrderingPolicy, state, env, location, lane, product, time)
+function get_order(policy::ProductQuantityOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
     if time == policy.period
         order = max(0, policy.order)
         return order
@@ -74,7 +74,7 @@ function set_parameters!(policy::OnHandUptoOrderingPolicy, values::Array{Float64
     policy.upto = Int(round(values[1]))
 end
 
-function get_order(policy::OnHandUptoOrderingPolicy, state::State, env, location, lane, product, time)
+function get_order(policy::OnHandUptoOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
     return max(0, policy.upto - state.on_hand_inventory[(location, product)])
 end
 
@@ -99,7 +99,7 @@ function set_parameters!(policy::NetUptoOrderingPolicy, values::Array{Float64, 1
     policy.upto = Int(round(values[1]))
 end
 
-function get_order(policy::NetUptoOrderingPolicy, state::State, env, location, lane, product, time)
+function get_order(policy::NetUptoOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
     return max(0, policy.upto - get_net_inventory(state, location, product, time))
 end
 
@@ -125,7 +125,7 @@ function set_parameters!(policy::NetSSOrderingPolicy, values::Array{Float64, 1})
     policy.S = Int(round(values[2]))
 end
 
-function get_order(policy::NetSSOrderingPolicy, state::State, env, location, lane, product, time)
+function get_order(policy::NetSSOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
     net_inventory = get_net_inventory(state, location, product, time)
     #println("net inventory @ $time: $net_inventory")
     if net_inventory >= policy.s
@@ -155,7 +155,7 @@ function set_parameters!(policy::ForwardCoverageOrderingPolicy, values::Array{Fl
     policy.cover = values[1]
 end
 
-function get_order(policy::ForwardCoverageOrderingPolicy, state::State, env, location, lane, product, time)
+function get_order(policy::ForwardCoverageOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
     net_inventory = get_net_inventory(state, location, product, time)
     mean_demand = get_mean_demand(env, location, product, time)
 
@@ -197,7 +197,7 @@ function set_parameters!(policy::BackwardCoverageOrderingPolicy, values::Array{F
     policy.cover = values
 end
 
-function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env, location, lane, product, time)
+function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
     net_inventory = get_net_inventory(state, location, product, time)
     
     past_orders = get_past_inbound_orders(state, location, product, time, length(policy.cover))
@@ -239,10 +239,14 @@ function set_parameters!(policy::SingleOrderOrderingPolicy, values::Array{Float6
     policy.quantity = Int(round(values[2]))
 end
 
-function get_order(policy::SingleOrderOrderingPolicy, state::State, env, location, lane, product, time)
+function get_order(policy::SingleOrderOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
     if time == policy.period
         return policy.quantity
     else
         return 0
     end
+end
+
+function get_order(policy::InventoryOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
+    return 0
 end

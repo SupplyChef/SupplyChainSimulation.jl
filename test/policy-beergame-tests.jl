@@ -3,7 +3,7 @@ using Random
 function beer_game(;scenario_count=30, optimize=true)
     Random.seed!(3)
     
-    product = Product("product")
+    product = SupplyChainModeling.Product("product")
 
     customer = Customer("customer")
     retailer = Storage("retailer")

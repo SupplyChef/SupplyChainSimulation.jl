@@ -67,7 +67,7 @@ function plot_orders(state::State, locations::Array{L, 1}, product::Product) whe
                    yaxis_title="Unit")
 
     plot([scatter(;x=1:get_horizon(state), 
-                  y=[get_past_inbound_orders(state, location, product, t + 1, 1)[1] for t in 1:get_horizon(state)],
+                  y=[get_past_outbound_orders(state, location, product, t + 1, 1)[1] for t in 1:get_horizon(state)],
                   name=location.name,
                   mode="lines") for location in locations],
         layout)

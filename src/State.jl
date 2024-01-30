@@ -178,14 +178,17 @@ function get_outbound_orders(state::State, location::Node, product::Product, tim
     )
 end
 
-function get_past_inbound_orders(state::State, location::Node, product::Product, time::Int64, step_back::Int64)::Array{Union{Missing, Int64}, 1}
+function get_past_outbound_orders(state::State, location::Node, product::Product, time::Int64, step_back::Int64)::Array{Union{Missing, Int64}, 1}
     past_orders = zeros(Union{Missing, Int64}, step_back)
     for t in 1:step_back
         if (time+1) - t < 1
             past_orders[t] = missing
         else
-            order_lines = filter(o -> o.creation_time == time - t && o.product == product && o.origin == location, state.historical_orders[(time+1) - t])
-            past_orders[t] = sum(ol -> ol.quantity, order_lines; init=0)
+            #order_lines = filter(o -> o.creation_time == time - t && o.product == product && o.origin == location, state.historical_orders[(time+1) - t])
+            #past_orders[t] = sum(ol -> ol.quantity, order_lines; init=0)
+            past_orders[t] = sum(ol -> (ol.creation_time == time - t && ol.product == product && ol.origin == location) ? ol.quantity : 0, 
+                                state.historical_orders[(time+1) - t]
+                                ; init=0)
         end
     end
     past_orders

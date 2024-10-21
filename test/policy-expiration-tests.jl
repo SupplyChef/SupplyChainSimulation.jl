@@ -100,5 +100,7 @@ using Distributions
         println("sales: $(get_total_sales(final_states[1]))")
         println("demand: $(get_total_demand(final_states[1]))")
         println("holding costs: $(get_total_holding_costs(final_states[1]))")
+
+        true
     end
 end

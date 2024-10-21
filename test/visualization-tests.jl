@@ -42,5 +42,7 @@ using Distributions
         final_states = [simulate(initial_state, policies) for initial_state in initial_states]
 
         plot_inventory_movement(final_states[1], product)
+
+        true
     end
 end

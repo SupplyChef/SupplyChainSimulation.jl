@@ -1,8 +1,10 @@
 using Distributions
+using Random
 
 @testset "Policies" begin
     @test begin
         horizon = 20
+        Random.seed!(3)
 
         product = Product("product")
 
@@ -44,13 +46,15 @@ using Distributions
         println("sales: $(get_total_sales(final_states[1]))")
         println("demand: $(get_total_demand(final_states[1]))")
         println("holding costs: $(get_total_holding_costs(final_states[1]))")
-        true
+        
+        get_total_lost_sales(final_states[1]) == 0 && get_total_sales(final_states[1]) == 188
     end
 
     @test begin
         horizon = 20
+        Random.seed!(3)
         
-        product = Product("product")
+        product = SupplyChainModeling.Product("product")
 
         customer = Customer("c")
         storage = Storage("s")
@@ -102,6 +106,7 @@ using Distributions
 
     @test begin
         horizon = 20
+        Random.seed!(3)
 
         product = Product("product")
 
@@ -151,6 +156,7 @@ using Distributions
 
     @test begin
         horizon = 20
+        Random.seed!(3)
 
         product = Product("product")
 
@@ -212,6 +218,7 @@ using Distributions
         supplier = Supplier("supp")
 
         horizon = 20
+        Random.seed!(3)
         
         l11 = Lane(storage1, customer1; unit_cost=0)
         l22 = Lane(storage2, customer2; unit_cost=0)
@@ -265,6 +272,7 @@ using Distributions
 
     @test begin #quantity policy
         horizon = 20
+        Random.seed!(3)
         
         product = Product("product")
     
@@ -312,6 +320,7 @@ using Distributions
 
     @test begin #eoq
         horizon = 50
+        Random.seed!(3)
 
         product = Product("product")
 
@@ -359,6 +368,7 @@ using Distributions
 
     @test begin #safety stock
         horizon = 50
+        Random.seed!(3)
 
         product = SupplyChainModeling.Product("product")
 

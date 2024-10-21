@@ -45,7 +45,7 @@ function beer_game(;scenario_count=30, optimize=true)
     end
 
     initial_states = [n() for i in 1:scenario_count]
-    println(initial_states)
+    #println(initial_states)
 
     policies = Dict((l2, product) => policy2,
                     (l3, product) => policy3,
@@ -55,9 +55,9 @@ function beer_game(;scenario_count=30, optimize=true)
         optimize!(policies, initial_states...)
     end
 
-    println(policy2)
-    println(policy3)
-    println(policy4)
+    #println(policy2)
+    #println(policy3)
+    #println(policy4)
 
     final_states = [simulate(initial_state, policies) for initial_state in initial_states]
     return final_states
@@ -111,9 +111,9 @@ end
 
         optimize!(policies, network)
 
-        println(policy2)
-        println(policy3)
-        println(policy4)
+        #println(policy2)
+        #println(policy3)
+        #println(policy4)
 
         final_state = simulate(network, policies)
 
@@ -176,9 +176,9 @@ end
 
         optimize!(policies, initial_states...)
 
-        println(policy2)
-        println(policy3)
-        println(policy4)
+        #println(policy2)
+        #println(policy3)
+        #println(policy4)
 
         final_states = [simulate(initial_state, policies) for initial_state in initial_states]
 
@@ -194,6 +194,7 @@ end
         println("lost sales: $(get_total_lost_sales(final_states[1]))")
         println("sales: $(get_total_sales(final_states[1]))")
         println("demand: $(get_total_demand(final_states[1]))")
-        true
+        
+        get_total_lost_sales(final_states[1]) == 157.0 && get_total_sales(final_states[1]) == 1774.0 && get_total_demand(final_states[1]) == 1931.0
     end
 end

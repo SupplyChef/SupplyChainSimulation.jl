@@ -34,6 +34,8 @@ export get_total_demand
 export get_total_sales
 export get_total_lost_sales
 export get_total_holding_costs
+export get_on_hand_inventory
+export remove_on_hand_inventory!
 
 export get_trips
 

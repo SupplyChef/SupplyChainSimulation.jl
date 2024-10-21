@@ -2,7 +2,7 @@
 function receive_inventory!(state::State, env::Env, location::Storage, product, time)
     #println(state)
     quantity = get_in_transit_inventory(state, location, product, time)
-    add_on_hand_inventory!(state, location, product, quantity)
+    add_on_hand_inventory!(state, location, product, quantity, time)
     add_in_transit_inventory!(state, location, product, time, -quantity)
     @debug "Received at $time, $location, $product, $quantity"
 end
@@ -85,8 +85,8 @@ function send_inventory!(state::State, env::Env, location::Node, product::Produc
             continue
         end
         
-        #println("send_inventory on_hand $(state.on_hand_inventory[location][order_line.product]) vs $(order_line.quantity)")
-        if order_line.quantity <= state.on_hand_inventory[(location, product)]
+        #println("send_inventory on_hand $(get_on_hand_inventory(state, location, order_line.product) vs $(order_line.quantity)")
+        if order_line.quantity <= get_on_hand_inventory(state, location, product)
             if ismissing(order_line.trip) || order_line.trip.departure < time
                 @debug "replacing trip $(order_line.trip)"
                 trips = env.supplying_trips[order_line.destination]
@@ -99,7 +99,7 @@ function send_inventory!(state::State, env::Env, location::Node, product::Produc
             end
 
             send_inventory!(state, env, order_line.trip,  order_line.destination, order_line.product, order_line.quantity, time)
-            state.on_hand_inventory[(location, product)] -= order_line.quantity
+            remove_on_hand_inventory!(state, location, product, order_line.quantity)
             
             push!(fulfilled_order_lines, order_line)
             
@@ -107,7 +107,7 @@ function send_inventory!(state::State, env::Env, location::Node, product::Produc
 
             push!(state.filled_orders, order_line)
 
-            if state.on_hand_inventory[(location, product)] == 0
+            if get_on_hand_inventory(state, location, product) == 0
                 break
             end
         end
@@ -186,7 +186,7 @@ function simulate(env::Env, policies, initial_state)
     for storage in env.supplychain.storages
         for product in env.supplychain.products
             if get_initial_inventory(storage, product) > 0
-                set_on_hand_inventory!(initial_state, storage, product, get_initial_inventory(storage, product))
+                set_on_hand_inventory!(initial_state, storage, product, get_initial_inventory(storage, product), 1)
             end
         end
     end
@@ -225,6 +225,14 @@ function simulate(env::Env, policies, initial_state)
             for product in env.supplychain.products
                 receive_inventory!(state, env, location, product, time)
                 send_inventory!(state, env, location, product, time)
+            end
+        end
+
+        for location in env.sorted_locations
+            if isa(location, Storage)
+                for product in env.supplychain.products
+                    expire_on_hand_inventory(state, location, product, time)
+                end
             end
         end
 

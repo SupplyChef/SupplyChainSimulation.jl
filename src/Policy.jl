@@ -75,7 +75,7 @@ function set_parameters!(policy::OnHandUptoOrderingPolicy, values::Array{Float64
 end
 
 function get_order(policy::OnHandUptoOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
-    return max(0, policy.upto - state.on_hand_inventory[(location, product)])
+    return max(0, policy.upto - get_on_hand_inventory(state, location, product))
 end
 
 """

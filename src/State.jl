@@ -8,7 +8,7 @@ mutable struct State
     supply_chain::SupplyChain
     demand::Dict{Tuple{Customer, Product}, Demand}
 
-    on_hand_inventory::Dict{Tuple{Storage, Product}, Int64}
+    on_hand_inventory::Dict{Tuple{Storage, Product}, Dict{Int64, Int64}}
 
     in_transit_inventory::Dict{Tuple{<:Node, Product}, Array{Int64, 1}}
 
@@ -74,16 +74,44 @@ function delete_order_lines!(state::State, order_lines)
     end
 end
 
-function set_on_hand_inventory!(state::State, to::Node, product::Product, quantity)
-    state.on_hand_inventory[(to, product)] = Int(quantity)
+function set_on_hand_inventory!(state::State, to::Node, product::Product, quantity, time)
+    if !haskey(state.on_hand_inventory, (to, product))
+        state.on_hand_inventory[(to, product)] = Dict{Int64, Int64}()
+    end
+    state.on_hand_inventory[(to, product)][time] = Int(quantity)
 end
 
-function add_on_hand_inventory!(state::State, to::Storage, product::Product, quantity::Int64)
-    state.on_hand_inventory[(to, product)] = get(state.on_hand_inventory, (to, product), 0) + quantity
+function add_on_hand_inventory!(state::State, to::Storage, product::Product, quantity::Int64, time)
+    if !haskey(state.on_hand_inventory, (to, product))
+        state.on_hand_inventory[(to, product)] = Dict{Int64, Int64}()
+    end
+    state.on_hand_inventory[(to, product)][time] = get(state.on_hand_inventory[(to, product)], time, 0) + quantity
+end
+
+function remove_on_hand_inventory!(state::State, to::Storage, product::Product, quantity::Int64)
+    for t in sort(collect(keys(state.on_hand_inventory[(to, product)])))
+        if quantity <= 0
+            break
+        end
+        removed_quantity = min(quantity, state.on_hand_inventory[(to, product)][t])
+        state.on_hand_inventory[(to, product)][t] = state.on_hand_inventory[(to, product)][t] - removed_quantity
+        quantity = quantity - removed_quantity
+    end
 end
 
 function get_on_hand_inventory(state::State, to::Node, product::Product)::Int64
-    return get(state.on_hand_inventory, (to, product), 0)
+    return sum(values(state.on_hand_inventory[(to, product)]); init=0)
+end
+
+function expire_on_hand_inventory(state::State, to::Storage, product::Product, time)
+    max_age = get_maximum_age(to, product)
+    for t in sort(collect(keys(state.on_hand_inventory[(to, product)])))
+        if (t <= time - max_age) && (state.on_hand_inventory[(to, product)][t] > 0)
+            #println("Expiring $(state.on_hand_inventory[(to, product)][t]) of $t")
+            state.on_hand_inventory[(to, product)][t] = 0
+        end
+    end
+    return
 end
 
 function add_in_transit_inventory!(state::State, to::N, product::Product, time::Int64, quantity::Int64) where N <: Node
@@ -128,7 +156,7 @@ function get_horizon(state::State)
 end
 
 function snapshot_state!(state::State, time)
-    push!(state.historical_on_hand, copy(state.on_hand_inventory))
+    push!(state.historical_on_hand, Dict{Tuple{Storage, Product}, Int64}(k => sum(values(state.on_hand_inventory[k]); init=0.0) for k in keys(state.on_hand_inventory)))
     push!(state.historical_filled_orders, copy(state.filled_orders))
     empty!(state.filled_orders)
     #state.filled_orders = Set{OrderLine}()

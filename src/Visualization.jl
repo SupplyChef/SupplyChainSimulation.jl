@@ -89,14 +89,14 @@ function plot_inventory_movement(state::State, product::Product)
 
     for i in 1:length(state.historical_filled_orders)
         for ol in filter(ol -> ol.product == product, state.historical_filled_orders[i])
-            source = "$(ol.order.origin.name)@$i"
+            source = "$(ol.origin.name)@$i"
             if !haskey(mapping, source)
                 mapping[source] = index
                 push!(labels, source)
                 index = index + 1
             end
 
-            destination = "$(ol.order.destination.name)@$(i+get_leadtime(ol.trip.route, ol.order.destination))"
+            destination = "$(ol.destination.name)@$(i+get_leadtime(ol.trip.route, ol.destination))"
             if !haskey(mapping, destination)
                 mapping[destination] = index
                 push!(labels, destination)
@@ -112,14 +112,14 @@ function plot_inventory_movement(state::State, product::Product)
     for i in 1:length(state.historical_on_hand)-1
         for location in keys(state.historical_on_hand[i])
             if true #get(state.historical_on_hand[i][location], product, 0) > 0
-                source = "$(location.name)@$i"
+                source = "$(location[1].name)@$i"
                 if !haskey(mapping, source)
                     mapping[source] = index
                     push!(labels, source)
                     index = index + 1
                 end
 
-                destination = "$(location.name)@$(i+1)"
+                destination = "$(location[1].name)@$(i+1)"
                 if !haskey(mapping, destination)
                     mapping[destination] = index
                     push!(labels, destination)
@@ -128,7 +128,7 @@ function plot_inventory_movement(state::State, product::Product)
 
                 push!(sources, mapping[source])
                 push!(targets, mapping[destination])
-                push!(values, state.historical_on_hand[i][location][product] + 0.01)
+                push!(values, state.historical_on_hand[i][(location[1], product)] + 0.01)
             end
         end
     end

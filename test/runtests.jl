@@ -170,7 +170,7 @@ end
         policies = Dict((l, product) => OnHandUptoOrderingPolicy(0))
         final_state = simulate(network, policies)
 
-        final_state.on_hand_inventory[(storage, product)] == 10 && 
+        get_on_hand_inventory(final_state, storage, product) == 10 && 
         length(collect(Base.Iterators.flatten(final_state.historical_orders))) == 0 && 
         length(collect(Base.Iterators.flatten(final_state.historical_filled_orders))) == 0
     end
@@ -202,10 +202,10 @@ end
 
         println(get_total_holding_costs(final_state))
 
-        @info final_state.on_hand_inventory[(storage, product)]
+        @info get_on_hand_inventory(final_state, storage, product)
         @info length(collect(Base.Iterators.flatten(final_state.historical_orders)))
         @info length(collect(Base.Iterators.flatten(final_state.historical_filled_orders)))
-        final_state.on_hand_inventory[(storage, product)] == 0 && 
+        get_on_hand_inventory(final_state, storage, product) == 0 && 
         length(collect(Base.Iterators.flatten(final_state.historical_orders))) == 2 && 
         length(collect(Base.Iterators.flatten(final_state.historical_filled_orders))) == 2
     end
@@ -315,3 +315,5 @@ include("policy-tests.jl")
 include("policy-cover-tests.jl")
 include("policy-ss-tests.jl")
 include("policy-beergame-tests.jl")
+include("policy-expiration-tests.jl")
+include("visualization-tests.jl")

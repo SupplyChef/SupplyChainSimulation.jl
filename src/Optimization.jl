@@ -1,5 +1,5 @@
 
-using Distributions
+#import Distributions
 using Dates
 
 function minimize!(lane_policies, policies, envs::Array{Env, 1}, initial_states::Array{State, 1}, x::Array{Float64, 1}; cost_function)
@@ -137,7 +137,7 @@ function bboptimize(f, x0, params)
             println("** $i, $(Dates.now() - start), $best_f, $best_x")
         end
 
-        if i % 50 == 0
+        if i % 200 == 0
             println("$i, $(Dates.now() - start), $(Dates.now() - latest), $best_f")#, $best_x")
             latest = Dates.now()
         end

@@ -1,6 +1,6 @@
 using SupplyChainModeling
 
-using Distributions:Poisson
+using Distributions: Poisson
 using Test
 
 using SupplyChainSimulation

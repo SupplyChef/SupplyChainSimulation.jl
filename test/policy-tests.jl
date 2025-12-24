@@ -1,4 +1,4 @@
-using Distributions
+using Distributions: Poisson
 using Random
 
 @testset "Policies" begin

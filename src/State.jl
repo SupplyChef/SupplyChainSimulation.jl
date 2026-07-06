@@ -103,7 +103,7 @@ function remove_on_hand_inventory!(state::State, to::Storage, product::Product, 
 end
 
 function get_on_hand_inventory(state::State, to::Node, product::Product)::Int64
-    return sum(values(state.on_hand_inventory[(to, product)]); init=0)
+    return sum(values(get(state.on_hand_inventory, (to, product), Dict{Int64, Int64}())); init=0)
 end
 
 function expire_on_hand_inventory(state::State, to::Storage, product::Product, time)

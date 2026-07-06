@@ -12,6 +12,8 @@ mutable struct State
 
     in_transit_inventory::Dict{Tuple{<:Node, Product}, Array{Int64, 1}}
 
+    overflow_inventory::Dict{Tuple{Storage, Product}, Array{Int64, 1}}
+
     pending_outbound_order_lines::Dict{Tuple{<:Node, Product}, Set{OrderLine}}
     pending_inbound_order_lines::Dict{Tuple{<:Node, Product}, Set{OrderLine}}
 
@@ -29,8 +31,9 @@ mutable struct State
 
         state = new(supply_chain,
                    demand,
-                   Dict{Tuple{Storage, Product}, Int64}(), 
-                   Dict{Tuple{<:Node, Product}, Array{Int64, 1}}(), 
+                   Dict{Tuple{Storage, Product}, Int64}(),
+                   Dict{Tuple{<:Node, Product}, Array{Int64, 1}}(),
+                   Dict{Tuple{Storage, Product}, Array{Int64, 1}}(),
                    Dict{Tuple{<:Node, Product}, Set{OrderLine}}(),
                    Dict{Tuple{<:Node, Product}, Set{OrderLine}}(),
                    Set{OrderLine}(),
@@ -143,6 +146,33 @@ function get_in_transit_inventories(state::State, to::N, product::Product)::Arra
         return [0]
     end
     return state.in_transit_inventory[(to, product)]
+end
+
+"""
+    record_overflow!(state::State, to::Storage, product::Product, time::Int64, quantity::Int64)
+
+Records that `quantity` units of `product` could not be received into `to`'s on-hand
+inventory at `time` because it would have exceeded `maximum_units`, and are being held
+in temporary overflow storage instead (see `get_total_overflow_costs`).
+"""
+function record_overflow!(state::State, to::Storage, product::Product, time::Int64, quantity::Int64)
+    if !haskey(state.overflow_inventory, (to, product))
+        state.overflow_inventory[(to, product)] = zeros(Int64, get_horizon(state))
+    end
+    state.overflow_inventory[(to, product)][time] = quantity
+end
+
+"""
+    get_overflow_inventory(state::State, to::Storage, product::Product, time::Int64)::Int64
+
+Gets the number of units of `product` held in temporary overflow storage at `to` at `time`.
+"""
+function get_overflow_inventory(state::State, to::Storage, product::Product, time::Int64)::Int64
+    overflow = get(state.overflow_inventory, (to, product), nothing)
+    if isnothing(overflow)
+        return 0
+    end
+    return overflow[time]
 end
 
 """

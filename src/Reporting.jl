@@ -101,3 +101,17 @@ end
 function get_shipments(state)
     state.historical_filled_orders
 end
+
+"""
+    get_total_overflow_costs(state)
+
+Gets the total cost of inventory that exceeded a storage's maximum_units and had to be
+held in temporary overflow storage (see `record_overflow!`), rather than being lost.
+"""
+function get_total_overflow_costs(state)
+    overflow_costs = 0.0
+    for ((location, product), amounts) in state.overflow_inventory
+        overflow_costs += sum(amounts) * get_overflow_cost(location, product)
+    end
+    return overflow_costs
+end

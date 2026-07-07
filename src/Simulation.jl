@@ -2,9 +2,32 @@
 function receive_inventory!(state::State, env::Env, location::Storage, product, time)
     #println(state)
     quantity = get_in_transit_inventory(state, location, product, time)
-    add_on_hand_inventory!(state, location, product, quantity, time)
+    max_capacity = get_maximum_storage(location, product)
+
+    if isinf(max_capacity)
+        add_on_hand_inventory!(state, location, product, quantity, time)
+        add_in_transit_inventory!(state, location, product, time, -quantity)
+        @debug "Received at $time, $location, $product, $quantity"
+        return
+    end
+
+    capacity_remaining = max(0, Int(round(max_capacity)) - get_on_hand_inventory(state, location, product))
+    accepted = min(quantity, capacity_remaining)
+    overflow = quantity - accepted
+
+    add_on_hand_inventory!(state, location, product, accepted, time)
     add_in_transit_inventory!(state, location, product, time, -quantity)
-    @debug "Received at $time, $location, $product, $quantity"
+
+    if overflow > 0
+        record_overflow!(state, location, product, time, overflow)
+        if time < get_horizon(state)
+            # excess is delayed, not lost: it waits and is retried the next period
+            add_in_transit_inventory!(state, location, product, time + 1, overflow)
+        end
+        @debug "Capacity exceeded at $time, $location, $product: accepted $accepted, overflowed $overflow"
+    end
+
+    @debug "Received at $time, $location, $product, $accepted"
 end
 
 function receive_inventory!(state::State, env::Env, location::Customer, product, time)
@@ -143,6 +166,10 @@ function place_orders(state::State, env::Env, location, product::Product, time::
         if !isnothing(policy)
             quantity = Int(get_order(policy, state, env, location, trip.route, product, time))
             if quantity > 0
+                minimum_quantity = trip.route.minimum_quantity
+                if minimum_quantity > 0 && quantity < minimum_quantity
+                    quantity = Int(ceil(minimum_quantity))
+                end
                 order = OrderLine(time, trip.route.origin, location, product, quantity, typemax(Int64), trip)
                 @debug "Ordered at $time, $location, $product, $quantity from $(trip.route.origin) with lead time $(trip.route.times[1])"
                 

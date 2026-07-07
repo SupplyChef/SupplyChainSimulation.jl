@@ -9,3 +9,14 @@
 SupplyChainSimulation.jl is a package for modeling and simulating supply chains.
 
 Learn more by reading the [documentation](https://SupplyChef.github.io/SupplyChainSimulation.jl/dev).
+
+## Performance benchmarks
+
+A scale/performance benchmark suite lives in `benchmark/` (separate from the correctness
+test suite in `test/`). Run it with:
+
+```
+julia --project=benchmark benchmark/benchmarks.jl
+```
+
+Pass `--small` for a quick local smoke test with a much smaller synthetic network.

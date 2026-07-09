@@ -1,5 +1,5 @@
 using Random
-using Distributions: Normal, quantile
+using Distributions: Normal, quantile, pdf
 
 @testset "Safety stock correctness (closed-form validation)" begin
 
@@ -65,11 +65,20 @@ using Distributions: Normal, quantile
     achieved_fill_rate = total_filled / total_ordered
     println("Target service level: $target_service_level, achieved fill rate across $scenario_count scenarios: $achieved_fill_rate")
 
-    # A buffer sized exactly at the textbook formula should land close to the target
-    # service level - not exactly (it's a finite ensemble of a stochastic system, and the
-    # normal approximation to the demand distribution isn't exact for the clamped-at-zero
-    # demand used here), but within a few points, not wildly off.
-    abs(achieved_fill_rate - target_service_level) < 0.03
+    # This isn't quite an apples-to-apples check: `order_up_to` is sized off a *cycle
+    # service level* z-factor (probability of no stockout in the protection period), but
+    # what's measured here is *fill rate* (fraction of ordered units actually filled) -
+    # and those two are known to differ systematically, not just by simulation noise. The
+    # standard order-fill-rate approximation for a periodic-review base-stock policy
+    # (Silver, Pyke & Peterson, "Inventory and Production Management", ch. 7) is
+    # `fill_rate ~ 1 - sigma_L * L(z) / Q`, where `L` is the standard normal loss function
+    # and `Q` is the order quantity per review period (~mean_demand here, review period 1).
+    # Plugging in these parameters (sigma_L = demand_std*sqrt(protection_period) = 10,
+    # L(z=1.645) ~ 0.0208, Q ~ mean_demand = 20) predicts fill_rate ~ 1 - 10*0.0208/20 ~
+    # 0.99 - a few points above the 95% cycle-service-level target, not a bug. So the
+    # tolerance below is centered on that expected gap, not just on the target itself.
+    expected_fill_rate = 1 - (demand_std * sqrt(protection_period)) * (pdf(Normal(), z) - z * (1 - target_service_level)) / mean_demand
+    abs(achieved_fill_rate - expected_fill_rate) < 0.03
 end
 
 end

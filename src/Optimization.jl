@@ -31,7 +31,16 @@ function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}
     initial_states = State.(supplychains)
     envs = [Env(supplychain, initial_states, lane_policies) for supplychain in supplychains]
     
-    policies = unique([lane_policies[k] for k in keys(lane_policies)])
+    # Iterate lane_policies in a deterministic order (by lane/product name)
+    # rather than raw Dict key order: keys(lane_policies) iterates in hash
+    # bucket order, which for id-hashed Lane/Product keys depends on
+    # construction order across the whole process, not just this network's
+    # structure. Since this order determines which slice of the optimizer's
+    # parameter vector gets assigned to which policy (see minimize! above),
+    # letting it vary non-reproducibly changes which local optimum the
+    # search converges to.
+    sorted_keys = sort(collect(keys(lane_policies)); by = k -> (string(k[1]), k[2].name))
+    policies = unique([lane_policies[k] for k in sorted_keys])
     #println(policies)
 
     x0 = vcat([get_parameters(policy) for policy in policies]...)

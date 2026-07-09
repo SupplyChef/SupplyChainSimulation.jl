@@ -1,5 +1,4 @@
 using Random
-using Statistics
 using Distributions: Normal, quantile
 
 @testset "Safety stock correctness (closed-form validation)" begin

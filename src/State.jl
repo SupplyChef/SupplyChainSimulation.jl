@@ -20,6 +20,11 @@ mutable struct State
     filled_orders::Set{OrderLine}
     placed_orders::Set{OrderLine}
 
+    # Running total of order quantity by (origin, product, creation_time), kept in sync
+    # with placed_orders via record_placed_order! - lets get_past_outbound_orders do an
+    # O(1) lookup per lag instead of rescanning the whole period's order set.
+    outbound_order_quantity::Dict{Tuple{Node, Product, Int64}, Int64}
+
     historical_on_hand::Array{Dict{Tuple{Storage, Product}, Int64}, 1}
     historical_orders::Array{Set{OrderLine}, 1}
     historical_transportation::Set{Trip}
@@ -38,7 +43,8 @@ mutable struct State
                    Dict{Tuple{<:Node, Product}, Set{OrderLine}}(),
                    Set{OrderLine}(),
                    Set{OrderLine}(),
-                   [], 
+                   Dict{Tuple{Node, Product, Int64}, Int64}(),
+                   [],
                    OrderLine[],
                    Set{Trip}(), 
                    [])
@@ -64,6 +70,12 @@ function add_order_line!(state::State, order_line::OrderLine)
 
     Base.push!(state.pending_outbound_order_lines[t1], order_line)
     Base.push!(state.pending_inbound_order_lines[t2], order_line)
+end
+
+function record_placed_order!(state::State, order::OrderLine)
+    Base.push!(state.placed_orders, order)
+    key = (order.origin, order.product, order.creation_time)
+    state.outbound_order_quantity[key] = get(state.outbound_order_quantity, key, 0) + order.quantity
 end
 
 function delete_order_line!(state::State, order_line::OrderLine)
@@ -242,11 +254,7 @@ function get_past_outbound_orders(state::State, location::Node, product::Product
         if (time+1) - t < 1
             past_orders[t] = missing
         else
-            #order_lines = filter(o -> o.creation_time == time - t && o.product == product && o.origin == location, state.historical_orders[(time+1) - t])
-            #past_orders[t] = sum(ol -> ol.quantity, order_lines; init=0)
-            past_orders[t] = sum(ol -> (ol.creation_time == time - t && ol.product == product && ol.origin == location) ? ol.quantity : 0, 
-                                state.historical_orders[(time+1) - t]
-                                ; init=0)
+            past_orders[t] = get(state.outbound_order_quantity, (location, product, time - t), 0)
         end
     end
     past_orders

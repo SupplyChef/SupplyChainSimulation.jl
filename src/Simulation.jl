@@ -151,7 +151,7 @@ function place_orders(state::State, env::Env, location::Customer, product::Produ
         order = OrderLine(time, trip.route.origin, location, product, quantity, time, missing) # customers orders are due immediately
         #@debug "Ordered at $time, $location, $product, $quantity"
         push!(orders, order)
-        push!(state.placed_orders, order)
+        record_placed_order!(state, order)
         return
     else
         return
@@ -174,7 +174,7 @@ function place_orders(state::State, env::Env, location, product::Product, time::
                 @debug "Ordered at $time, $location, $product, $quantity from $(trip.route.origin) with lead time $(trip.route.times[1])"
                 
                 push!(orders, order)
-                push!(state.placed_orders, order)
+                record_placed_order!(state, order)
             end
         end
     end

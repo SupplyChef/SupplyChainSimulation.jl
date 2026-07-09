@@ -58,9 +58,12 @@ end
 
 # Send inventory
 function send_inventory!(state::State, env::Env, location::Supplier, product::Product, time::Int)
-    order_lines = collect(get(state.pending_outbound_order_lines, (location, product), OrderLine[]))
-    sort!(order_lines, by=ol -> ol.due_date)
-    sort!(order_lines, by=ol -> ol.creation_time)
+    if !haskey(state.pending_outbound_order_lines, (location, product))
+        return
+    end
+
+    order_lines = collect(state.pending_outbound_order_lines[(location, product)])
+    sort!(order_lines, by=ol -> (ol.creation_time, ol.due_date))
     #@debug order_lines
 
     for order_line in order_lines
@@ -96,8 +99,7 @@ function send_inventory!(state::State, env::Env, location::Node, product::Produc
     end
 
     order_lines = collect(state.pending_outbound_order_lines[(location, product)])
-    sort!(order_lines, by=ol -> ol.due_date)
-    sort!(order_lines, by=ol -> ol.creation_time)
+    sort!(order_lines, by=ol -> (ol.creation_time, ol.due_date))
     #@debug order_lines
 
     #println("send_inventory order_lines $order_lines")
@@ -234,6 +236,10 @@ function simulate(env::Env, policies, initial_state)
     state = deepcopy(initial_state)
     snapshot_state!(state, 0)
 
+    # env.sorted_locations never changes across periods, so reverse it once
+    # instead of allocating a fresh reversed copy every period.
+    reversed_sorted_locations = reverse(env.sorted_locations)
+
     for time in 1:env.supplychain.horizon
         for location in env.sorted_locations
             for product in env.supplychain.products
@@ -241,7 +247,7 @@ function simulate(env::Env, policies, initial_state)
             end
         end
 
-        for location in reverse(env.sorted_locations)
+        for location in reversed_sorted_locations
             for product in env.supplychain.products
                 place_orders(state, env, location, product, time, orders)
                 receive_orders!(state, env, orders)

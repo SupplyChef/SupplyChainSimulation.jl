@@ -92,13 +92,17 @@ function add_on_hand_inventory!(state::State, to::Storage, product::Product, qua
 end
 
 function remove_on_hand_inventory!(state::State, to::Storage, product::Product, quantity::Int64)
-    for t in sort(collect(keys(state.on_hand_inventory[(to, product)])))
+    ages = state.on_hand_inventory[(to, product)]
+    # FIFO: must consume oldest inventory (smallest age/arrival time) first, so
+    # this ordering is required, not just habit - sort! (in place) instead of
+    # sort avoids the extra defensive copy sort() makes of its input.
+    for t in sort!(collect(keys(ages)))
         if quantity <= 0
             break
         end
-        removed_quantity = min(quantity, state.on_hand_inventory[(to, product)][t])
-        state.on_hand_inventory[(to, product)][t] = state.on_hand_inventory[(to, product)][t] - removed_quantity
-        quantity = quantity - removed_quantity
+        removed_quantity = min(quantity, ages[t])
+        ages[t] -= removed_quantity
+        quantity -= removed_quantity
     end
 end
 
@@ -108,10 +112,16 @@ end
 
 function expire_on_hand_inventory(state::State, to::Storage, product::Product, time)
     max_age = get_maximum_age(to, product)
-    for t in sort(collect(keys(state.on_hand_inventory[(to, product)])))
-        if (t <= time - max_age) && (state.on_hand_inventory[(to, product)][t] > 0)
-            #println("Expiring $(state.on_hand_inventory[(to, product)][t]) of $t")
-            state.on_hand_inventory[(to, product)][t] = 0
+    ages = get(state.on_hand_inventory, (to, product), nothing)
+    if isnothing(ages)
+        return
+    end
+    # Order doesn't matter here (unlike remove_on_hand_inventory!'s FIFO
+    # consumption): every bucket past max_age gets zeroed regardless of which
+    # order they're visited in, so no need to collect+sort the keys.
+    for (t, on_hand) in ages
+        if (t <= time - max_age) && (on_hand > 0)
+            ages[t] = 0
         end
     end
     return
@@ -186,13 +196,22 @@ function get_horizon(state::State)
 end
 
 function snapshot_state!(state::State, time)
-    push!(state.historical_on_hand, Dict{Tuple{Storage, Product}, Int64}(k => sum(values(state.on_hand_inventory[k]); init=0.0) for k in keys(state.on_hand_inventory)))
-    push!(state.historical_filled_orders, copy(state.filled_orders))
-    empty!(state.filled_orders)
-    #state.filled_orders = Set{OrderLine}()
-    push!(state.historical_orders, copy(state.placed_orders))
-    empty!(state.placed_orders)
-    #state.placed_orders = Set{OrderLine}()
+    on_hand_snapshot = Dict{Tuple{Storage, Product}, Int64}()
+    sizehint!(on_hand_snapshot, length(state.on_hand_inventory))
+    for (k, ages) in state.on_hand_inventory
+        on_hand_snapshot[k] = sum(values(ages); init=0)
+    end
+    push!(state.historical_on_hand, on_hand_snapshot)
+
+    # state.filled_orders/placed_orders are only ever mutated via push! on the
+    # field itself, so handing the current Set to history and replacing the
+    # field with a fresh one is equivalent to copy+empty! without the O(n)
+    # element-by-element copy.
+    push!(state.historical_filled_orders, state.filled_orders)
+    state.filled_orders = Set{OrderLine}()
+
+    push!(state.historical_orders, state.placed_orders)
+    state.placed_orders = Set{OrderLine}()
     #push!(state.historical_pending_outbound_order_lines, Dict(k => copy(v) for (k, v) in state.order_line_tracker.pending_inbound_order_lines))
     #println("On hand at $time, $(state.on_hand_inventory)")
 end

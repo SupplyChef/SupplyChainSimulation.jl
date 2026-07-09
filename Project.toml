@@ -17,13 +17,16 @@ Dates = "1.8, 1.9, 1.10, 1.11, 1.12"
 Distributions = "0.25"
 Graphs = "1.9.0"
 PlotlyJS = "0.18.10"
-SupplyChainModeling = "0.2"
+SupplyChainModeling = "0.2, 0.3"
 UUIDs = "1.8, 1.9, 1.10, 1.11, 1.12"
 julia = "1.8, 1.9, 1.10, 1.11, 1.12"
 
-# TEMPORARY: points at the unreleased SupplyChainModeling branch adding
-# maximum_units/overflow_unit_cost support (needed for capacity
-# enforcement below). Remove this section and bump the SupplyChainModeling
-# compat bound once that branch is merged and released as a new version.
+# TEMPORARY: points at the unreleased SupplyChainModeling branch that
+# switches Product/Node hash/== to id-based instead of name-based (see
+# SupplyChainModeling.jl PR #4). The previous pin
+# (claude/supplychainsim-product-strategy-vt1s5a) was merged and its branch
+# deleted, which broke CI. Remove this section and bump the
+# SupplyChainModeling compat bound once this new branch is merged and
+# released as a new version.
 [sources]
-SupplyChainModeling = {url = "https://github.com/SupplyChef/SupplyChainModeling.jl", rev = "claude/supplychainsim-product-strategy-vt1s5a"}
+SupplyChainModeling = {url = "https://github.com/SupplyChef/SupplyChainModeling.jl", rev = "claude/integer-indexing-simulation-pvnr4d"}

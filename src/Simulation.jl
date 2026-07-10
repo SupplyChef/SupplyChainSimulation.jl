@@ -207,33 +207,19 @@ end
 """
     simulate(env::Env, policies, initial_state::State)
 
-    Simulates the supply chain for horizon steps, starting from the initial state.
+    Simulates the supply chain for horizon steps, starting from `initial_state`.
+
+    `initial_state` must already reflect the desired starting condition, as produced
+    by `State(supply_chain)` or by `reset!(state)`. It is simulated *in place* and
+    returned rather than copied, so callers that want to run multiple simulations
+    from the same starting point (e.g. `optimize!` evaluating many policy
+    candidates) can reuse the same `State` via `reset!` instead of paying for a
+    `deepcopy` of the whole (read-only) supply chain network on every evaluation.
 """
 function simulate(env::Env, policies, initial_state)
     orders = OrderLine[]
 
-    for storage in env.supplychain.storages
-        for product in env.supplychain.products
-            if get_initial_inventory(storage, product) > 0
-                set_on_hand_inventory!(initial_state, storage, product, get_initial_inventory(storage, product), 1)
-            end
-        end
-    end
-
-    for lane in env.supplychain.lanes
-        if !isnothing(lane.initial_arrivals)
-            for (product, arrivals) in lane.initial_arrivals
-                for i in 1:length(lane.destinations)
-                    for j in 1:length(arrivals[i])
-                        add_in_transit_inventory!(initial_state, lane.destinations[i], product, j, arrivals[i][j])
-                    end
-                end
-            end
-        end
-    end
-
-    #println(initial_state)
-    state = deepcopy(initial_state)
+    state = initial_state
     snapshot_state!(state, 0)
 
     # env.sorted_locations never changes across periods, so reverse it once

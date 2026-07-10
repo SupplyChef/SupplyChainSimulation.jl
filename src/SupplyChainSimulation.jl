@@ -7,6 +7,7 @@ export Order
 export OrderLine
 
 export State
+export reset!
 
 export InventoryOrderingPolicy
 export OnHandUptoOrderingPolicy

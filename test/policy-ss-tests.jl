@@ -1,6 +1,8 @@
+using Random
+
 @test begin #sS policy
     horizon = 20
-    
+
     product = Product("product")
 
     customer = Customer("c")
@@ -8,7 +10,7 @@
     add_product!(storage, product; unit_holding_cost=0.1)
     storage2 = Storage("s2")
     add_product!(storage2, product; initial_inventory=20 * horizon)
-    
+
     l = Lane(storage, customer)
     l2 = Lane(storage2, storage)
 
@@ -42,8 +44,14 @@
 end
 
 @test begin #sS policy
+    # optimize! (via bboptimize) draws from the global RNG stream, so without
+    # an explicit seed this test's outcome depends on how much randomness
+    # every earlier test in the run happened to consume - not reproducible
+    # in any real sense. Pin it like policy-beergame-tests.jl already does.
+    Random.seed!(1)
+
     horizon = 20
-    
+
     product = Product("product")
 
     customer = Customer("c")
@@ -58,7 +66,7 @@ end
     policy2 = NetSSOrderingPolicy(0, 0)
 
     network = SupplyChain(horizon)
-        
+
     add_storage!(network, storage)
     add_storage!(network, storage2)
     add_customer!(network, customer)

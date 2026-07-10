@@ -13,12 +13,29 @@ struct Env
         trips = get_trips(supplychain, policies)
         sorted_locations = get_sorted_locations(supplychain)
 
-        return new(supplychain, 
+        # Group trips by destination in a single pass instead of, for each
+        # location, filtering the entire trip list with is_destination: that
+        # pattern is O(locations * lanes * horizon) since |trips| already
+        # scales with lanes * horizon, and every trip is revisited once per
+        # location. Each trip only needs to be pushed into the (typically
+        # 1-2) destinations it actually has.
+        supplying_trips = Dict{Node, Array{Trip, 1}}(location => Trip[] for location in get_locations(supplychain))
+        for trip in trips
+            for destination in trip.route.destinations
+                if haskey(supplying_trips, destination)
+                    push!(supplying_trips[destination], trip)
+                end
+            end
+        end
+        for trips_for_location in values(supplying_trips)
+            sort!(trips_for_location, by=t -> t.departure)
+        end
+
+        return new(supplychain,
                    collect(initial_states),
-                   sorted_locations, 
+                   sorted_locations,
                    collect(supplychain.products),
-                   Dict(location => sort(collect(filter(trip -> is_destination(location, trip.route), trips)), 
-                                         by=t->t.departure) for location in get_locations(supplychain)))
+                   supplying_trips)
     end
 end
 

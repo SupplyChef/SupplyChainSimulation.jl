@@ -1,4 +1,11 @@
+using Random
+
 @test begin #cover policy
+    # optimize! draws from the global RNG stream; without an explicit seed
+    # this test's outcome (including which values get exercised) isn't
+    # reproducible from run to run - see policy-ss-tests.jl for the same fix.
+    Random.seed!(1)
+
     horizon = 20
 
     product = Product("product")
@@ -51,6 +58,8 @@
 end
 
 @test begin #cover policy
+    Random.seed!(2)
+
     store_count = 100
     horizon = 20
 

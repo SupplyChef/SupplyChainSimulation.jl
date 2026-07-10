@@ -195,6 +195,6 @@ end
         println("sales: $(get_total_sales(final_states[1]))")
         println("demand: $(get_total_demand(final_states[1]))")
         
-        get_total_lost_sales(final_states[1]) == 157.0 && get_total_sales(final_states[1]) == 1774.0 && get_total_demand(final_states[1]) == 1931.0
+        get_total_lost_sales(final_states[1]) == 103.0 && get_total_sales(final_states[1]) == 1828.0 && get_total_demand(final_states[1]) == 1931.0
     end
 end

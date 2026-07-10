@@ -11,7 +11,10 @@ function minimize!(lane_policies, policies, envs::Array{Env, 1}, initial_states:
 
     value = 0
     for i in 1:length(initial_states)
-        #println(initial_state)
+        # Reset the state's mutable containers in place rather than paying for a
+        # fresh deepcopy of the (read-only) supply chain on every evaluation -
+        # simulate() then simulates initial_states[i] directly and returns it.
+        reset!(initial_states[i])
         final_state = simulate(envs[i], lane_policies, initial_states[i])
 
         #println(final_state)

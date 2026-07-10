@@ -44,12 +44,69 @@ mutable struct State
                    [])
                    #,[])
                    
+        reset!(state)
+
         for order_line in collect(Base.Iterators.flatten(values(pending_outbound_order_lines)))
             add_order_line!(state, order_line)
         end
 
         return state
     end
+end
+
+"""
+    reset!(state::State)
+
+Resets `state`'s mutable containers (on-hand/in-transit/overflow inventory, pending
+order lines, filled/placed orders, and history) back to the pristine condition of a
+freshly constructed `State` for the same supply chain: only the initial on-hand
+inventory and in-transit arrivals configured on the supply chain, with no pending
+orders and no history.
+
+`state.supply_chain` and `state.demand` are read-only for the duration of a
+simulation and are left untouched. This lets the same `State` be re-simulated many
+times - as `optimize!` does across thousands of policy evaluations - by resetting
+its mutable containers in place instead of `deepcopy`-ing the (potentially large,
+read-only) supply chain network on every evaluation.
+
+Any order lines passed via the `pending_outbound_order_lines` keyword at
+construction time are a one-time seed and are not restored by `reset!`.
+"""
+function reset!(state::State)
+    empty!(state.on_hand_inventory)
+    empty!(state.in_transit_inventory)
+    empty!(state.overflow_inventory)
+    empty!(state.pending_outbound_order_lines)
+    empty!(state.pending_inbound_order_lines)
+    empty!(state.filled_orders)
+    empty!(state.placed_orders)
+    empty!(state.historical_on_hand)
+    empty!(state.historical_orders)
+    empty!(state.historical_transportation)
+    empty!(state.historical_filled_orders)
+
+    for storage in state.supply_chain.storages
+        for product in state.supply_chain.products
+            initial_inventory = get_initial_inventory(storage, product)
+            if initial_inventory > 0
+                set_on_hand_inventory!(state, storage, product, initial_inventory, 1)
+            end
+        end
+    end
+
+    for lane in state.supply_chain.lanes
+        if !isnothing(lane.initial_arrivals)
+            for (product, arrivals) in lane.initial_arrivals
+                for i in 1:length(lane.destinations)
+                    for j in 1:length(arrivals[i])
+                        add_in_transit_inventory!(state, lane.destinations[i], product, j, arrivals[i][j])
+                    end
+                end
+            end
+        end
+    end
+
+    return state
 end
 
 function add_order_line!(state::State, order_line::OrderLine)

@@ -172,7 +172,14 @@ function get_order(policy::ForwardCoverageOrderingPolicy, state::State, env::Env
             cover = 0
         end
     end
-    order = max(0, Int(ceil(coverage - net_inventory)))
+    # coverage - net_inventory can come out NaN/Inf for degenerate optimizer
+    # candidates (e.g. mean_demand summing to values that make later float
+    # arithmetic non-finite); guard rather than let Int(ceil(...)) throw.
+    deficit = coverage - net_inventory
+    if !isfinite(deficit)
+        @warn "ForwardCoverageOrderingPolicy.get_order: non-finite deficit, falling back to order=0" cover=policy.cover coverage net_inventory maxlog=50
+    end
+    order = isfinite(deficit) ? max(0, ceil(Int, deficit)) : 0
     #println("cover $(policy.cover); mean demand $mean_demand; coverage $coverage; net inventory $net_inventory; order $order; time $time")
     return order
 end
@@ -218,7 +225,14 @@ function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env::En
 
     coverage = coverage + policy.cover[end]
 
-    order = max(0, Int(ceil(coverage - net_inventory)))
+    # coverage - net_inventory can come out NaN/Inf for degenerate optimizer
+    # candidates (e.g. weights/sum(policy.cover) dividing by ~0); guard
+    # rather than let Int(ceil(...)) throw.
+    deficit = coverage - net_inventory
+    if !isfinite(deficit)
+        @warn "BackwardCoverageOrderingPolicy.get_order: non-finite deficit, falling back to order=0" cover=policy.cover coverage weights net_inventory maxlog=50
+    end
+    order = isfinite(deficit) ? max(0, ceil(Int, deficit)) : 0
     @debug "Computing order at $time, $location, $product, order: $order, past outbound orders: $past_orders, cover: $coverage, net inventory: $net_inventory"
     return order
 end

@@ -167,6 +167,8 @@ end
 
         add_demand!(network, customer, product, [0.0, 0.0]; sales_price=1.0, lost_sales_cost=1.0)
 
+        # (l, product)'s policy is inert here: place_orders(::Customer, ...)
+        # derives quantity purely from state.demand and never consults it.
         policies = Dict((l, product) => OnHandUptoOrderingPolicy(0))
         final_state = simulate(network, policies)
 
@@ -197,6 +199,8 @@ end
 
         add_demand!(network, customer, product, [10.0, 10.0]; sales_price=1.0, lost_sales_cost=1.0)
 
+        # (l, product)'s policy is inert here: place_orders(::Customer, ...)
+        # derives quantity purely from state.demand and never consults it.
         policies = Dict((l, product) => OnHandUptoOrderingPolicy(0))
         final_state = simulate(network, policies)
 
@@ -261,12 +265,6 @@ end
         println("sales: $(get_total_sales(final_states[1]))")
         println("demand: $(get_total_demand(final_states[1]))")
         println("holding costs: $(get_total_holding_costs(final_states[1]))")
-        true
-    end
-end
-
-@testset "EOQ" begin
-    @test begin 
         true
     end
 end

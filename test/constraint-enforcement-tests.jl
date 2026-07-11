@@ -22,6 +22,8 @@
 
         add_demand!(network, customer, product, [0.0, 0.0]; sales_price=1.0, lost_sales_cost=1.0)
 
+        # (l, product)'s policy is inert here: place_orders(::Customer, ...)
+        # derives quantity purely from state.demand and never consults it.
         policies = Dict((l, product) => OnHandUptoOrderingPolicy(0))
         final_state = simulate(network, policies)
 

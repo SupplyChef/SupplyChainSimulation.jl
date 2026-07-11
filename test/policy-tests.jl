@@ -65,11 +65,13 @@ using Random
         l = Lane(storage, customer; unit_cost=0)
         l2 = Lane(storage2, storage; unit_cost=0)
 
-        policy = OnHandUptoOrderingPolicy(0)
+        # No policy is attached to (l, product): customer-facing lanes never
+        # consult a policy - place_orders(::Customer, ...) derives quantity
+        # purely from state.demand - so it would be inert.
         policy2 = OnHandUptoOrderingPolicy(0)
 
         network = SupplyChain(horizon)
-        
+
         add_storage!(network, storage)
         add_storage!(network, storage2)
         add_customer!(network, customer)
@@ -79,7 +81,7 @@ using Random
 
         add_demand!(network, customer, product, repeat([10.0], horizon); sales_price=1.0, lost_sales_cost=1.0)
 
-        policies = Dict((l, product) => policy, (l2, product) => policy2)
+        policies = Dict((l2, product) => policy2)
         optimize!(policies, network)
 
         println(policy2)
@@ -91,17 +93,20 @@ using Random
         println("demand: $(get_total_demand(final_state))")
         println("holding costs: $(get_total_holding_costs(final_state))")
 
-        set_parameters!(policy, [0.0])
         set_parameters!(policy2, [20.0])
         println(policy2)
-        
+
         final_state = simulate(network, policies)
 
         println("lost sales: $(get_total_lost_sales(final_state))")
         println("sales: $(get_total_sales(final_state))")
         println("demand: $(get_total_demand(final_state))")
         println("holding costs: $(get_total_holding_costs(final_state))")
-        true
+
+        # l2 has zero lead time and demand is a deterministic 10/period;
+        # an on-hand-upto-20 policy should comfortably cover 10/period
+        # demand every period with no lost sales.
+        get_total_lost_sales(final_state) == 0 && get_total_sales(final_state) == 10 * horizon
     end
 
     @test begin

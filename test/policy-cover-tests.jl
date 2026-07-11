@@ -19,12 +19,15 @@ using Random
     l = Lane(storage, customer; unit_cost=0)
     l2 = Lane(storage2, storage; unit_cost=0, time=2)
 
-    policy = OnHandUptoOrderingPolicy(0)
+    # Note: no policy is attached to (l, product). Customer-facing lanes never
+    # consult a policy - place_orders(::Customer, ...) derives quantity purely
+    # from state.demand - so a policy keyed to l would be inert and would only
+    # waste optimize!'s search budget on a parameter with no effect.
     policy2 = ForwardCoverageOrderingPolicy(0)
 
     n() = begin
         network = SupplyChain(horizon)
-            
+
         add_storage!(network, storage)
         add_storage!(network, storage2)
         add_customer!(network, customer)
@@ -41,11 +44,10 @@ using Random
 
     initial_states = [n() for i in 1:10]
 
-    policies = Dict((l, product) => policy, (l2, product) => policy2)
-                            
+    policies = Dict((l2, product) => policy2)
+
     optimize!(policies, initial_states...)
 
-    println(policy)
     println(policy2)
 
     final_state = simulate(initial_states[1], policies)
@@ -54,7 +56,11 @@ using Random
     println("sales: $(get_total_sales(final_state))")
     println("demand: $(get_total_demand(final_state))")
     println("holding costs: $(get_total_holding_costs(final_state))")
-    true
+
+    # storage2 has ample inventory (20 * horizon) relative to ~10/period
+    # demand, so an optimized cover policy should fulfil the large majority
+    # of demand - not leave the destination starved for the whole horizon.
+    get_total_sales(final_state) > 0 && get_total_lost_sales(final_state) < get_total_demand(final_state)
 end
 
 @test begin #cover policy
@@ -74,7 +80,6 @@ end
     lanes = [Lane(storage, customers[i]; unit_cost=0) for i in 1:store_count]
     l0 = Lane(storage2, storage; unit_cost=0, time=2)
 
-    policy = OnHandUptoOrderingPolicy(0)
     policy2 = ForwardCoverageOrderingPolicy(0)
     policies = Dict((l0, product) => policy2)
 
@@ -105,7 +110,6 @@ end
     #println(network)
     optimize!(policies, initial_states...; cost_function=s->get_total_lost_sales(s) + 0.00001 * get_total_orders(s))
 
-    println(policy)
     println(policy2)
 
     final_state = simulate(initial_states[1], policies)
@@ -114,5 +118,8 @@ end
     println("lost sales: $(get_total_lost_sales(final_state))")
     println("sales: $(get_total_sales(final_state))")
     println("holding costs: $(get_total_holding_costs(final_state))")
-    true
+
+    # storage2 has ample inventory (200000 * horizon) relative to demand, so
+    # minimizing lost sales should leave the large majority of demand filled.
+    get_total_sales(final_state) > 0 && get_total_lost_sales(final_state) < get_total_demand(final_state)
 end

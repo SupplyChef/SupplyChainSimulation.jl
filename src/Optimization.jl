@@ -86,14 +86,9 @@ function bboptimize(f, x0, params)
     last_progress = 0
     
     pool_size = 6
-    # Seed one pool slot with the caller-provided starting guess (x0) instead
-    # of leaving the whole pool uniform-random over the full search range:
-    # otherwise a reasonable starting policy only influences the search
-    # indirectly, as a distant best_x term in the mutation formula below, and
-    # is never itself a member of the population being evolved/mutated.
-    candidate_pool = vcat([copy(x0)], [rand(length(x0)) .* (params[:SearchRange][2] - params[:SearchRange][1]) .+ params[:SearchRange][1] for i in 1:pool_size-1])
+    candidate_pool = [rand(length(x0)) .* (params[:SearchRange][2] - params[:SearchRange][1]) .+ params[:SearchRange][1] for i in 1:pool_size]
     #println(candidate_pool)
-    pool_f = vcat([best_f], [f(candidate) for candidate in candidate_pool[2:end]])
+    pool_f = [f(candidate) for candidate in candidate_pool]
     #println(pool_f)
 
     t = max(0.1, min(0.9, 6 / length(x0)))

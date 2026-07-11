@@ -5,7 +5,11 @@ struct Env
     supplychain::SupplyChain
     initial_states::Array{State, 1}
 
-    sorted_locations::Array{<:Node, 1}
+    # Concretely Vector{Node} (not `Array{<:Node, 1}`, a UnionAll): the latter
+    # made the field itself abstractly typed, forcing dynamic dispatch on
+    # every access even though the stored vector's element type never
+    # changes for a given Env.
+    sorted_locations::Vector{Node}
     sorted_products::Array{Product, 1}
 
     # (location, period)-indexed departure table: departures[location][period]

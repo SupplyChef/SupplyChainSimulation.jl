@@ -9,6 +9,8 @@ export OrderLine
 export State
 export reset!
 
+export Env
+
 export SimMetrics
 export get_metrics
 

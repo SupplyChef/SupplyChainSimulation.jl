@@ -1,5 +1,14 @@
+using Random
+
 @testset "Docs" begin
     @test begin
+        # optimize! draws from the global RNG stream; without an explicit
+        # seed this test's outcome isn't reproducible from run to run - see
+        # policy-cover-tests.jl/policy-ss-tests.jl for the same fix. This
+        # flakiness once surfaced an InexactError in add_in_transit_inventory!
+        # whose root cause is still open - see issue #8.
+        Random.seed!(1)
+
         horizon = 20
   
         product = Product("product")
@@ -36,6 +45,8 @@
     end
 
     @test begin
+        Random.seed!(2)
+
         horizon = 50
 
         product = Product("product")
@@ -45,7 +56,7 @@
         add_product!(storage, product; unit_holding_cost=0.1)
 
         customer = Customer("customer")
-        
+
         l1 = Lane(storage, customer)
         l2 = Lane(supplier, storage, fixed_cost=10)
 
@@ -74,6 +85,8 @@
     end
 
     @test begin
+        Random.seed!(3)
+
         horizon = 50
 
         product = Product("product")
@@ -112,6 +125,8 @@
     end
 
     @test begin
+        Random.seed!(4)
+
         product = Product("product")
 
         customer = Customer("customer")

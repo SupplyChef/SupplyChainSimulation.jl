@@ -196,7 +196,13 @@ function get_order(policy::ForwardCoverageOrderingPolicy, state::State, env::Env
     if !isfinite(deficit)
         @warn "ForwardCoverageOrderingPolicy.get_order: non-finite deficit, falling back to order=0" cover=policy.cover coverage net_inventory maxlog=50
     end
-    order = isfinite(deficit) ? max(0, ceil(Int, deficit)) : 0
+    # isfinite alone doesn't rule out a deficit so large that ceil(Int, ...)
+    # itself throws InexactError (Int64 overflow) - a degenerate optimizer
+    # candidate (e.g. cover pinned near the top of its search range across a
+    # network with large aggregate demand) can reach one without ever
+    # producing a NaN/Inf. 1e15 is far above any real order quantity, so this
+    # doesn't change behavior for finite, in-range deficits.
+    order = (isfinite(deficit) && deficit < 1e15) ? max(0, ceil(Int, deficit)) : 0
     #println("cover $(policy.cover); mean demand $mean_demand; coverage $coverage; net inventory $net_inventory; order $order; time $time")
     return order
 end
@@ -258,7 +264,10 @@ function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env::En
     if !isfinite(deficit)
         @warn "BackwardCoverageOrderingPolicy.get_order: non-finite deficit, falling back to order=0" cover=policy.cover coverage weights net_inventory maxlog=50
     end
-    order = isfinite(deficit) ? max(0, ceil(Int, deficit)) : 0
+    # See the identical guard in ForwardCoverageOrderingPolicy.get_order:
+    # isfinite doesn't rule out a deficit too large for ceil(Int, ...) to
+    # represent without overflowing.
+    order = (isfinite(deficit) && deficit < 1e15) ? max(0, ceil(Int, deficit)) : 0
     @debug "Computing order at $time, $location, $product, order: $order, past outbound orders: $past_orders, cover: $coverage, net inventory: $net_inventory"
     return order
 end

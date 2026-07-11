@@ -74,17 +74,15 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
 
         if ismissing(order_line.trip) || order_line.trip.departure < time
             @debug "replacing trip $(order_line.trip)"
-            trips = env.supplying_trips[order_line.destination]
-            trip_index = findfirst(t -> (t.departure >= time) && (t.departure + t.route.times[1] <= order_line.due_date), trips)
-            if isnothing(trip_index) 
+            trip = find_next_departure(env, order_line.destination, time, order_line.due_date)
+            if isnothing(trip)
                 continue
             end
-            trip = trips[trip_index]
             order_line.trip = trip
         end
 
         send_inventory!(state, env, order_line.trip, order_line.destination, order_line.product, order_line.quantity, time)
-            
+
         delete_order_line!(state, order_line)
             
         push!(state.historical_transportation, order_line.trip)
@@ -114,12 +112,10 @@ function send_inventory!(state::State, env::Env, location::Node, product::Produc
         if order_line.quantity <= get_on_hand_inventory(state, location, product)
             if ismissing(order_line.trip) || order_line.trip.departure < time
                 @debug "replacing trip $(order_line.trip)"
-                trips = env.supplying_trips[order_line.destination]
-                trip_index = findfirst(t -> (t.departure >= time) && (t.departure + t.route.times[1] <= order_line.due_date), trips)
-                if isnothing(trip_index) 
+                trip = find_next_departure(env, order_line.destination, time, order_line.due_date)
+                if isnothing(trip)
                     continue
                 end
-                trip = trips[trip_index]
                 order_line.trip = trip
             end
 
@@ -146,9 +142,7 @@ function place_orders(state::State, env::Env, location::Customer, product::Produ
     empty!(orders)
     quantity = Int(state.demand[(location, product)].demand[time])
     if quantity > 0
-        trips = env.supplying_trips[location]
-        trip_index = findfirst(t -> t.departure >= time, trips)
-        trip = trips[trip_index]
+        trip = find_next_departure(env, location, time)
 
         order = OrderLine(time, trip.route.origin, location, product, quantity, time, missing) # customers orders are due immediately
         #@debug "Ordered at $time, $location, $product, $quantity"

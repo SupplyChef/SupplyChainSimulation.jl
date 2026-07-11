@@ -22,7 +22,47 @@ mutable struct OrderLine{O<:Node, D<:Node}
 end
 
 function get_inbound_trips(env, location, time)
-    return Iterators.filter(trip -> trip.departure == time, env.supplying_trips[location])
+    return env.departures[location][time]
+end
+
+"""
+    find_next_departure(env, destination, time)
+
+Finds the earliest trip bound for `destination` that departs at or after
+`time`, or `nothing` if none remain within the horizon. Walks forward through
+`env.departures[destination]` (indexed directly by period) instead of
+filtering the full, unbounded list of trips ever bound for `destination`.
+"""
+function find_next_departure(env, destination::Node, time::Int64)
+    periods = env.departures[destination]
+    for t in time:length(periods)
+        trips_at_t = periods[t]
+        if !isempty(trips_at_t)
+            return trips_at_t[1]
+        end
+    end
+    return nothing
+end
+
+"""
+    find_next_departure(env, destination, time, due_date)
+
+Finds the earliest trip bound for `destination` that departs at or after
+`time` and still arrives by `due_date`, or `nothing` if none do. Only scans
+the `[time, due_date]` window of `env.departures[destination]`, instead of
+the full, unbounded list of trips ever bound for `destination`.
+"""
+function find_next_departure(env, destination::Node, time::Int64, due_date::Int64)
+    periods = env.departures[destination]
+    last_period = min(due_date, length(periods))
+    for t in time:last_period
+        for trip in periods[t]
+            if t + trip.route.times[1] <= due_date
+                return trip
+            end
+        end
+    end
+    return nothing
 end
 
 """

@@ -214,7 +214,13 @@ end
 
 function add_in_transit_inventory!(state::State, to::N, product::Product, time::Int64, quantity::Int64) where N <: Node
     if !haskey(state.in_transit_inventory, (to, product))
-        state.in_transit_inventory[(to, product)] = zeros(get_horizon(state))
+        # zeros(n) (no explicit type) allocates a Vector{Float64}, requiring
+        # an implicit convert to the field's declared Array{Int64, 1} on
+        # assignment below - one that happens to succeed today only because
+        # every entry starts out an exact 0.0, and silently depends on that
+        # continuing to hold. Allocating the right element type directly
+        # avoids relying on that at all.
+        state.in_transit_inventory[(to, product)] = zeros(Int64, get_horizon(state))
     end
     state.in_transit_inventory[(to, product)][time] += quantity
 end

@@ -319,10 +319,13 @@ end
 
         for time in 1:horizon
             for step_back in 1:5
-                @test get_past_outbound_orders(final_state, retailer, product, time, step_back) ==
-                      historical_orders_scan(final_state, retailer, product, time, step_back)
-                @test get_past_outbound_orders(final_state, wholesaler, product, time, step_back) ==
-                      historical_orders_scan(final_state, wholesaler, product, time, step_back)
+                # isequal, not == : both sides legitimately contain `missing`
+                # for periods before the simulation started, and missing == missing
+                # is itself `missing` (not `true`), which @test can't accept.
+                @test isequal(get_past_outbound_orders(final_state, retailer, product, time, step_back),
+                               historical_orders_scan(final_state, retailer, product, time, step_back))
+                @test isequal(get_past_outbound_orders(final_state, wholesaler, product, time, step_back),
+                               historical_orders_scan(final_state, wholesaler, product, time, step_back))
             end
         end
     end

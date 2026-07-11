@@ -128,7 +128,10 @@ end
 
     policies = Dict((l2, product) => policy2)
     
-    optimize!(policies, initial_states...)
+    # Unlike the two exact-value tests above (which assert straight off
+    # optimize!'s raw convergence), this one only asserts `true`, so the
+    # record_history=false fast path is safe here.
+    optimize!(policies, initial_states...; cost_function=metrics_cost_function, record_history=false)
 
     println(policy2)
 

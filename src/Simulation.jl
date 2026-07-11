@@ -56,6 +56,76 @@ function send_inventory!(state::State, env::Env, trip::Trip, destination::Custom
     @debug "Sent at $time, $(trip.route.origin), $destination, $product, $quantity with lead time $(trip.route.times[1])"
 end
 
+# Metrics: fill/drop sites
+"""
+    record_fill!(state::State, env::Env, order_line::OrderLine)
+
+Incrementally updates `state.metrics` for an `order_line` that has just been
+fulfilled (its trip has been assigned and the shipment sent), and, if
+`env.record_history` is set, mirrors the same fact into
+`state.historical_transportation` for later reporting/visualization.
+
+Must be called exactly once per fulfilled order line - matches the site of
+each `push!(state.filled_orders, order_line)` in `send_inventory!`.
+"""
+function record_fill!(state::State, env::Env, order_line::OrderLine)
+    trip = order_line.trip
+    metrics = state.metrics
+
+    metrics.trip_unit_costs += trip.route.unit_cost * order_line.quantity
+    if trip ∉ metrics.seen_trips
+        push!(metrics.seen_trips, trip)
+        metrics.trip_fixed_costs += get_fixed_cost(trip.route)
+    end
+    if order_line.destination isa Customer
+        metrics.sales += order_line.quantity * state.demand[(order_line.destination, order_line.product)].sales_price
+    end
+
+    if env.record_history
+        push!(state.historical_transportation, trip)
+    end
+end
+
+"""
+    record_drop!(state::State, order_line::OrderLine)
+
+Incrementally updates `state.metrics` for an `order_line` that has expired
+(its due date passed) without being fulfilled - a lost sale, if it was bound
+for a customer. Non-customer-bound order lines (e.g. internal replenishment)
+never contribute to lost sales, matching `get_total_lost_sales`'s
+`isa(ol.destination, Customer)` filter.
+
+Must be called exactly once per dropped order line: either at the explicit
+`due_date < time` expiry site in `send_inventory!`, or, for order lines still
+pending when the horizon ends (which never reach that check - see
+`flush_pending_as_lost!`), once at the end of `simulate`.
+"""
+function record_drop!(state::State, order_line::OrderLine)
+    if order_line.destination isa Customer
+        state.metrics.lost_sales += order_line.quantity * state.demand[(order_line.destination, order_line.product)].lost_sales_cost
+    end
+end
+
+"""
+    record_placement!(state::State, env::Env, order_line::OrderLine)
+
+Records `order_line` into `state.outbound_order_quantities` (see
+`get_past_outbound_orders`), if `env.needs_outbound_order_index` - i.e. only
+if some policy in this run actually declared `required_lookback(policy) > 0`
+(see `Policy.jl`). A no-op otherwise: nothing reads this index, so nothing
+gets allocated or written into it.
+
+Must be called exactly once per order line, at the `push!(state.placed_orders, order)`
+site in each `place_orders` method.
+"""
+function record_placement!(state::State, env::Env, order_line::OrderLine)
+    if env.needs_outbound_order_index
+        key = (order_line.origin, order_line.product)
+        quantities = get!(() -> zeros(Int64, get_horizon(state)), state.outbound_order_quantities, key)
+        quantities[order_line.creation_time] += order_line.quantity
+    end
+end
+
 # Send inventory
 function send_inventory!(state::State, env::Env, location::Supplier, product::Product, time::Int)
     if !haskey(state.pending_outbound_order_lines, (location, product))
@@ -68,6 +138,7 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
 
     for order_line in order_lines
         if order_line.due_date < time
+            record_drop!(state, order_line)
             delete_order_line!(state, order_line)
             continue
         end
@@ -84,8 +155,8 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
         send_inventory!(state, env, order_line.trip, order_line.destination, order_line.product, order_line.quantity, time)
 
         delete_order_line!(state, order_line)
-            
-        push!(state.historical_transportation, order_line.trip)
+
+        record_fill!(state, env, order_line)
         push!(state.filled_orders, order_line)
     end
 end
@@ -104,10 +175,11 @@ function send_inventory!(state::State, env::Env, location::Node, product::Produc
     fulfilled_order_lines = OrderLine[]
     for order_line in order_lines
         if order_line.due_date < time
+            record_drop!(state, order_line)
             push!(fulfilled_order_lines, order_line)
             continue
         end
-        
+
         #println("send_inventory on_hand $(get_on_hand_inventory(state, location, order_line.product) vs $(order_line.quantity)")
         if order_line.quantity <= get_on_hand_inventory(state, location, product)
             if ismissing(order_line.trip) || order_line.trip.departure < time
@@ -121,11 +193,10 @@ function send_inventory!(state::State, env::Env, location::Node, product::Produc
 
             send_inventory!(state, env, order_line.trip,  order_line.destination, order_line.product, order_line.quantity, time)
             remove_on_hand_inventory!(state, location, product, order_line.quantity)
-            
-            push!(fulfilled_order_lines, order_line)
-            
-            push!(state.historical_transportation, order_line.trip)
 
+            push!(fulfilled_order_lines, order_line)
+
+            record_fill!(state, env, order_line)
             push!(state.filled_orders, order_line)
 
             if get_on_hand_inventory(state, location, product) == 0
@@ -148,6 +219,9 @@ function place_orders(state::State, env::Env, location::Customer, product::Produ
         #@debug "Ordered at $time, $location, $product, $quantity"
         push!(orders, order)
         push!(state.placed_orders, order)
+        record_placement!(state, env, order)
+        state.metrics.orders += quantity
+        state.metrics.demand += quantity * state.demand[(location, product)].sales_price
         return
     else
         return
@@ -171,6 +245,8 @@ function place_orders(state::State, env::Env, location, product::Product, time::
                 
                 push!(orders, order)
                 push!(state.placed_orders, order)
+                record_placement!(state, env, order)
+                state.metrics.orders += quantity
             end
         end
     end
@@ -214,7 +290,7 @@ function simulate(env::Env, policies, initial_state)
     orders = OrderLine[]
 
     state = initial_state
-    snapshot_state!(state, 0)
+    snapshot_state!(state, 0, env.record_history)
 
     # env.sorted_locations never changes across periods, so reverse it once
     # instead of allocating a fresh reversed copy every period.
@@ -249,8 +325,37 @@ function simulate(env::Env, policies, initial_state)
             end
         end
 
-        snapshot_state!(state, time)
+        snapshot_state!(state, time, env.record_history)
     end
 
+    flush_pending_as_lost!(state)
+
     return state
+end
+
+"""
+    flush_pending_as_lost!(state::State)
+
+A customer order line's `due_date` equals the period it was created in (see
+`place_orders(..., ::Customer, ...)`), and the explicit drop site in
+`send_inventory!` only recognizes it as expired - and calls `record_drop!` -
+once `due_date < time`. An order line created in the very last period of the
+horizon never sees a later period, so that check never fires for it: it
+simply stays in `pending_outbound_order_lines` forever.
+
+`get_total_lost_sales` doesn't notice this gap because it isn't
+event-driven: it diffs the set of every order ever placed against the set of
+every order ever filled, so a never-filled last-period order line shows up
+as lost regardless of whether anything explicitly marked it as dropped.
+`state.metrics.lost_sales`, being event-driven, needs this equivalent
+one-time sweep over whatever is still pending when the horizon ends, so it
+accounts for exactly the same order lines - no more, no less: anything
+already recorded via the due_date < time path was already deleted from
+pending_outbound_order_lines, so there is no overlap/double-count between
+that path and this one.
+"""
+function flush_pending_as_lost!(state::State)
+    for order_line in Base.Iterators.flatten(values(state.pending_outbound_order_lines))
+        record_drop!(state, order_line)
+    end
 end

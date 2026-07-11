@@ -90,7 +90,9 @@ using Distributions: rand, Poisson
         initial_states = [n(i) for i in 1:2]
 
         policies = Dict((l2, product) => policy2, (l3, product) => policy3)
-        optimize!(policies, initial_states...)
+        # Unlike the exact-value test above, this one only asserts `true`,
+        # so the record_history=false fast path is safe here.
+        optimize!(policies, initial_states...; cost_function=metrics_cost_function, record_history=false)
 
         #println(policy)
 

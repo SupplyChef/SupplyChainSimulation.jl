@@ -30,7 +30,28 @@ struct Env
     # the same demand figures across repeated identical queries.
     mean_demand_cache::Dict{Tuple{Node, Product, Int64}, Float64}
 
-    function Env(supplychain::SupplyChain, initial_states, policies)
+    # Whether simulate() should archive the per-period history
+    # (historical_on_hand/historical_orders/historical_filled_orders/
+    # historical_transportation) that Reporting.jl's get_total_* functions
+    # scan after a run. Cost/quantity totals are always available via
+    # state.metrics regardless of this flag (see SimMetrics) - this only
+    # controls the extra per-period bookkeeping that exists purely to
+    # support that after-the-fact scanning (and visualization, which reads
+    # the same arrays), so it can be turned off wherever nothing needs it,
+    # e.g. optimize!'s thousands of throwaway policy evaluations.
+    record_history::Bool
+
+    # Whether simulate() should maintain State's outbound_order_quantities
+    # index (see get_past_outbound_orders). Unlike record_history above,
+    # this isn't a caller-facing toggle: it's derived from the policies
+    # actually in play, via required_lookback (see Policy.jl). It stays
+    # false - no per-order bookkeeping at all - unless some policy here
+    # (currently only BackwardCoverageOrderingPolicy) actually declares it
+    # needs to look backward, so every other policy pays nothing for a
+    # capability it never uses.
+    needs_outbound_order_index::Bool
+
+    function Env(supplychain::SupplyChain, initial_states, policies; record_history::Bool=true)
         trips = get_trips(supplychain, policies)
         locations = get_locations(supplychain)
 
@@ -69,7 +90,9 @@ struct Env
                    collect(supplychain.products),
                    departures,
                    downstream_customers,
-                   Dict{Tuple{Node, Product, Int64}, Float64}())
+                   Dict{Tuple{Node, Product, Int64}, Float64}(),
+                   record_history,
+                   any(p -> required_lookback(p) > 0, values(policies)))
     end
 end
 

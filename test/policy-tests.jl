@@ -82,7 +82,10 @@ using Random
         add_demand!(network, customer, product, repeat([10.0], horizon); sales_price=1.0, lost_sales_cost=1.0)
 
         policies = Dict((l2, product) => policy2)
-        optimize!(policies, network)
+        # No BackwardCoverageOrderingPolicy and no exact-value assertion tied
+        # directly to optimize!'s raw output here, so the record_history=false
+        # fast path is safe.
+        optimize!(policies, network; cost_function=metrics_cost_function, record_history=false)
 
         println(policy2)
 
@@ -138,7 +141,10 @@ using Random
 
         policies = Dict((l2, product) => policy2)
 
-        optimize!(policies, network)
+        # No BackwardCoverageOrderingPolicy and no exact-value assertion tied
+        # directly to optimize!'s raw output here, so the record_history=false
+        # fast path is safe.
+        optimize!(policies, network; cost_function=metrics_cost_function, record_history=false)
 
         println(policy2)
 
@@ -193,7 +199,10 @@ using Random
 
         policies = Dict((l2, product) => policy2)
                                 
-        optimize!(policies, network)
+        # No BackwardCoverageOrderingPolicy and no exact-value assertion tied
+        # directly to optimize!'s raw output here, so the record_history=false
+        # fast path is safe.
+        optimize!(policies, network; cost_function=metrics_cost_function, record_history=false)
 
         println("Optimized policy: $policy2")
 
@@ -260,7 +269,10 @@ using Random
                       (l1, product) => policy1,
                       (l2, product) => policy2)
 
-        optimize!(policies, network)
+        # No BackwardCoverageOrderingPolicy and no exact-value assertion tied
+        # directly to optimize!'s raw output here, so the record_history=false
+        # fast path is safe.
+        optimize!(policies, network; cost_function=metrics_cost_function, record_history=false)
 
         println(policy)
         println(policy1)
@@ -310,7 +322,10 @@ using Random
         initial_states = [n() for i in 1:10]
     
         policies = Dict((l2, product) => policy2)
-        optimize!(policies, initial_states...)
+        # No BackwardCoverageOrderingPolicy and no exact-value assertion tied
+        # directly to optimize!'s raw output here, so the record_history=false
+        # fast path is safe.
+        optimize!(policies, initial_states...; cost_function=metrics_cost_function, record_history=false)
     
         println(policy2)
     
@@ -358,7 +373,10 @@ using Random
 
         policies = Dict((l2, product) => policy)
         
-        optimize!(policies, initial_states...)
+        # No BackwardCoverageOrderingPolicy and no exact-value assertion tied
+        # directly to optimize!'s raw output here, so the record_history=false
+        # fast path is safe.
+        optimize!(policies, initial_states...; cost_function=metrics_cost_function, record_history=false)
 
         println(policy)
 
@@ -405,7 +423,10 @@ using Random
         initial_states = [n() for i in 1:20]
 
         policies = Dict((l2, product) => policy)
-        optimize!(policies, initial_states...)
+        # No BackwardCoverageOrderingPolicy and no exact-value assertion tied
+        # directly to optimize!'s raw output here, so the record_history=false
+        # fast path is safe.
+        optimize!(policies, initial_states...; cost_function=metrics_cost_function, record_history=false)
 
         println(policy)
 

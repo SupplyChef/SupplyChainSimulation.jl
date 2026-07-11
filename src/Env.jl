@@ -30,7 +30,24 @@ struct Env
     # the same demand figures across repeated identical queries.
     mean_demand_cache::Dict{Tuple{Node, Product, Int64}, Float64}
 
-    function Env(supplychain::SupplyChain, initial_states, policies)
+    # Whether simulate() should archive the per-period history
+    # (historical_on_hand/historical_orders/historical_filled_orders/
+    # historical_transportation) that Reporting.jl's get_total_* functions
+    # scan after a run. Cost/quantity totals are always available via
+    # state.metrics regardless of this flag (see SimMetrics) - this only
+    # controls the extra per-period bookkeeping that exists purely to
+    # support that after-the-fact scanning (and visualization, which reads
+    # the same arrays), so it can be turned off wherever nothing needs it,
+    # e.g. optimize!'s thousands of throwaway policy evaluations.
+    record_history::Bool
+
+    function Env(supplychain::SupplyChain, initial_states, policies; record_history::Bool=true)
+        if !record_history && any(p -> p isa BackwardCoverageOrderingPolicy, values(policies))
+            throw(ArgumentError("record_history=false is incompatible with BackwardCoverageOrderingPolicy: " *
+                                 "its get_order reads state.historical_orders to look back over past periods, " *
+                                 "so disabling history recording would silently change its ordering decisions."))
+        end
+
         trips = get_trips(supplychain, policies)
         locations = get_locations(supplychain)
 
@@ -69,7 +86,8 @@ struct Env
                    collect(supplychain.products),
                    departures,
                    downstream_customers,
-                   Dict{Tuple{Node, Product, Int64}, Float64}())
+                   Dict{Tuple{Node, Product, Int64}, Float64}(),
+                   record_history)
     end
 end
 

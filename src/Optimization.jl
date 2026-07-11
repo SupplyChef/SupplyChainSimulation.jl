@@ -2,6 +2,29 @@
 #import Distributions
 using Dates
 
+"""
+    metrics_cost_function(s::State)
+
+An alternative to hand-rolling `s -> -get_total_sales(s) + get_total_lost_sales(s) + ...`
+as a `cost_function` for `optimize!`: reads `s.metrics` (see `SimMetrics`) instead of
+scanning `s`'s `historical_*` arrays the way the equivalent `get_total_*` functions in
+Reporting.jl do. Since `SimMetrics` is always kept up to date regardless of
+`Env.record_history`, this is the cost function to pass (together with
+`record_history=false`) to get `optimize!`'s full per-trial-simulation speedup.
+
+Not `optimize!`'s default: its default is left exactly as it always was (scanning
+history, with `record_history` defaulting to `true`) so existing callers - including
+ones whose `cost_function` reads `get_total_*` directly - see byte-for-byte identical
+behavior. Summing the same costs in a different order (event order here, Set/Dict
+iteration order for the `get_total_*` scan) is only equal up to floating-point
+rounding, not bit-for-bit, and `optimize!`'s search is sensitive enough to that
+- many float comparisons deciding which candidate "wins" over thousands of
+evaluations - that swapping the default out from under existing callers could shift
+what they converge to. Opt in explicitly once you don't need exact reproducibility
+against a pre-existing baseline.
+"""
+metrics_cost_function(s) = -s.metrics.sales + s.metrics.lost_sales + s.metrics.holding_costs + s.metrics.trip_fixed_costs + s.metrics.trip_unit_costs + 0.001 * s.metrics.orders
+
 function minimize!(lane_policies, policies, envs::Array{Env, 1}, initial_states::Array{State, 1}, x::Array{Float64, 1}; cost_function)
     i = 1
     for policy in policies
@@ -26,14 +49,28 @@ function minimize!(lane_policies, policies, envs::Array{Env, 1}, initial_states:
 end
 
 """
-    optimize!(supplychain::SupplyChain, lane_policies, initial_states...; cost_function)
+    optimize!(supplychain::SupplyChain, lane_policies, initial_states...; cost_function, record_history)
 
     Optimizes the inventory policies in the supply chain by simulating the inventory movement starting from the initial states and costing the results with the cost function.
+
+    `record_history` controls whether each of the (typically thousands of) trial
+    simulations `optimize!` runs archives its full per-period history (see
+    `Env.record_history`). It defaults to `true`, matching every trial simulation's
+    behavior before `record_history` existed, so existing callers - including custom
+    `cost_function`s that call the history-scanning `get_total_*` functions in
+    Reporting.jl - keep working unchanged. Pass `record_history=false` once your
+    `cost_function` only reads `state.metrics` (see `SimMetrics` and
+    `metrics_cost_function`) to skip that per-trial bookkeeping. Combining
+    `record_history=false` with a `BackwardCoverageOrderingPolicy` in `lane_policies`
+    is rejected outright (see `Env`): that policy reads `state.historical_orders` to
+    make its ordering decisions *during* simulation, not just for reporting
+    afterwards, so disabling history recording would silently corrupt it rather than
+    just affect reporting.
 """
-function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s))
+function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s), record_history::Bool=true)
     initial_states = State.(supplychains)
-    envs = [Env(supplychain, initial_states, lane_policies) for supplychain in supplychains]
-    
+    envs = [Env(supplychain, initial_states, lane_policies; record_history=record_history) for supplychain in supplychains]
+
     # Iterate lane_policies in a deterministic order (by lane/product name)
     # rather than raw Dict key order: keys(lane_policies) iterates in hash
     # bucket order, which for id-hashed Lane/Product keys depends on

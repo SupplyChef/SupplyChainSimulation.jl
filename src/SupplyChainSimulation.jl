@@ -9,6 +9,9 @@ export OrderLine
 export State
 export reset!
 
+export SimMetrics
+export get_metrics
+
 export InventoryOrderingPolicy
 export OnHandUptoOrderingPolicy
 export NetUptoOrderingPolicy
@@ -21,6 +24,7 @@ export set_parameters!
 export get_downstream_customers
 export simulate
 export optimize!
+export metrics_cost_function
 
 export get_sorted_locations
 export get_inbound_orders
@@ -56,6 +60,7 @@ using SupplyChainModeling
 abstract type InventoryOrderingPolicy end
 
 include("Model.jl")
+include("Metrics.jl")
 include("State.jl")
 include("Env.jl")
 include("Policy.jl")

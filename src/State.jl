@@ -26,6 +26,11 @@ mutable struct State
     historical_filled_orders::Array{Set{OrderLine}, 1}
     #historical_pending_outbound_order_lines::Array{Dict{Node, Set{OrderLine}}}
 
+    # Incrementally-updated running totals, kept in sync with the
+    # historical_* arrays above regardless of Env.record_history - see
+    # SimMetrics.
+    metrics::SimMetrics
+
     function State(supply_chain; pending_outbound_order_lines=Dict{Storage, Array{OrderLine, 1}}())
         demand = Dict((d.customer, d.product) => d for d in supply_chain.demand)
 
@@ -38,10 +43,11 @@ mutable struct State
                    Dict{Tuple{<:Node, Product}, Set{OrderLine}}(),
                    Set{OrderLine}(),
                    Set{OrderLine}(),
-                   [], 
+                   [],
                    OrderLine[],
-                   Set{Trip}(), 
-                   [])
+                   Set{Trip}(),
+                   [],
+                   SimMetrics())
                    #,[])
                    
         reset!(state)
@@ -84,6 +90,7 @@ function reset!(state::State)
     empty!(state.historical_orders)
     empty!(state.historical_transportation)
     empty!(state.historical_filled_orders)
+    reset!(state.metrics)
 
     for storage in state.supply_chain.storages
         for product in state.supply_chain.products
@@ -107,6 +114,16 @@ function reset!(state::State)
     end
 
     return state
+end
+
+"""
+    get_metrics(state::State)::SimMetrics
+
+Gets the running cost/quantity totals accumulated so far for `state`. See
+`SimMetrics`.
+"""
+function get_metrics(state::State)::SimMetrics
+    return state.metrics
 end
 
 function add_order_line!(state::State, order_line::OrderLine)
@@ -226,7 +243,15 @@ function record_overflow!(state::State, to::Storage, product::Product, time::Int
     if !haskey(state.overflow_inventory, (to, product))
         state.overflow_inventory[(to, product)] = zeros(Int64, get_horizon(state))
     end
+    # This slot is overwritten, not accumulated (receive_inventory! can call
+    # record_overflow! more than once for the same (to, product, time) in a
+    # period), so the metrics update must track the delta rather than adding
+    # the new quantity outright - otherwise a corrected/overwritten value
+    # would be double-counted relative to get_total_overflow_costs, which
+    # only ever sees the final value left in the slot.
+    previous_quantity = state.overflow_inventory[(to, product)][time]
     state.overflow_inventory[(to, product)][time] = quantity
+    state.metrics.overflow_costs += (quantity - previous_quantity) * get_overflow_cost(to, product)
 end
 
 """
@@ -252,23 +277,53 @@ function get_horizon(state::State)
     return state.supply_chain.horizon
 end
 
-function snapshot_state!(state::State, time)
-    on_hand_snapshot = Dict{Tuple{Storage, Product}, Int64}()
-    sizehint!(on_hand_snapshot, length(state.on_hand_inventory))
-    for (k, ages) in state.on_hand_inventory
-        on_hand_snapshot[k] = sum(values(ages); init=0)
+"""
+    snapshot_state!(state::State, time, record_history::Bool)
+
+Closes out period `time`: charges holding cost for everything currently on
+hand (always, regardless of `record_history` - this is the incremental
+counterpart of `get_total_holding_costs`'s history scan, see `SimMetrics`),
+and, only when `record_history` is `true`, archives a per-period on-hand
+snapshot plus this period's filled/placed orders into `state`'s `historical_*`
+arrays for later reporting/visualization.
+
+When `record_history` is `false` the archiving - including the Dict copy of
+on-hand inventory and the per-period Set handoffs - is skipped entirely, and
+`state.filled_orders`/`state.placed_orders` are just cleared in place for the
+next period instead of being swapped for fresh, permanently-retained Sets.
+"""
+function snapshot_state!(state::State, time, record_history::Bool)
+    on_hand_snapshot = record_history ? Dict{Tuple{Storage, Product}, Int64}() : nothing
+    if record_history
+        sizehint!(on_hand_snapshot, length(state.on_hand_inventory))
     end
-    push!(state.historical_on_hand, on_hand_snapshot)
+    for (k, ages) in state.on_hand_inventory
+        (location, product) = k
+        on_hand = sum(values(ages); init=0)
+        if on_hand != 0
+            state.metrics.holding_costs += on_hand * get(location.unit_holding_cost, product, 0)
+        end
+        if record_history
+            on_hand_snapshot[k] = on_hand
+        end
+    end
 
-    # state.filled_orders/placed_orders are only ever mutated via push! on the
-    # field itself, so handing the current Set to history and replacing the
-    # field with a fresh one is equivalent to copy+empty! without the O(n)
-    # element-by-element copy.
-    push!(state.historical_filled_orders, state.filled_orders)
-    state.filled_orders = Set{OrderLine}()
+    if record_history
+        push!(state.historical_on_hand, on_hand_snapshot)
 
-    push!(state.historical_orders, state.placed_orders)
-    state.placed_orders = Set{OrderLine}()
+        # state.filled_orders/placed_orders are only ever mutated via push! on the
+        # field itself, so handing the current Set to history and replacing the
+        # field with a fresh one is equivalent to copy+empty! without the O(n)
+        # element-by-element copy.
+        push!(state.historical_filled_orders, state.filled_orders)
+        state.filled_orders = Set{OrderLine}()
+
+        push!(state.historical_orders, state.placed_orders)
+        state.placed_orders = Set{OrderLine}()
+    else
+        empty!(state.filled_orders)
+        empty!(state.placed_orders)
+    end
     #push!(state.historical_pending_outbound_order_lines, Dict(k => copy(v) for (k, v) in state.order_line_tracker.pending_inbound_order_lines))
     #println("On hand at $time, $(state.on_hand_inventory)")
 end

@@ -60,12 +60,13 @@ end
     `cost_function`s that call the history-scanning `get_total_*` functions in
     Reporting.jl - keep working unchanged. Pass `record_history=false` once your
     `cost_function` only reads `state.metrics` (see `SimMetrics` and
-    `metrics_cost_function`) to skip that per-trial bookkeeping. Combining
-    `record_history=false` with a `BackwardCoverageOrderingPolicy` in `lane_policies`
-    is rejected outright (see `Env`): that policy reads `state.historical_orders` to
-    make its ordering decisions *during* simulation, not just for reporting
-    afterwards, so disabling history recording would silently corrupt it rather than
-    just affect reporting.
+    `metrics_cost_function`) to skip that per-trial bookkeeping.
+
+    This is independent of `BackwardCoverageOrderingPolicy`: it reads
+    `state.outbound_order_quantities` instead of the history-scanning
+    `get_total_*` functions, and that index is maintained regardless of
+    `record_history` (see `required_lookback`/`Env.needs_outbound_order_index`),
+    so `record_history=false` is safe with that policy too.
 """
 function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s), record_history::Bool=true)
     initial_states = State.(supplychains)

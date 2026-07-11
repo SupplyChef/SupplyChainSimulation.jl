@@ -21,6 +21,7 @@ export NetSSOrderingPolicy
 export ForwardCoverageOrderingPolicy
 export BackwardCoverageOrderingPolicy
 export QuantityOrderingPolicy
+export required_lookback
 
 export set_parameters!
 export get_downstream_customers
@@ -31,6 +32,7 @@ export metrics_cost_function
 export get_sorted_locations
 export get_inbound_orders
 export get_outbound_orders
+export get_past_outbound_orders
 export get_net_inventory
 export get_holding_costs
 

@@ -243,7 +243,7 @@ end
                   cost_function=metrics_cost_function, record_history=false)
     end
 
-    @testset "record_history=false rejects BackwardCoverageOrderingPolicy" begin
+    @testset "needs_outbound_order_index is only set when a policy declares required_lookback > 0" begin
         product = Product("product")
         customer = Customer("c")
         storage = Storage("s")
@@ -257,10 +257,120 @@ end
         add_demand!(network, customer, product, [1.0, 1.0, 1.0]; sales_price=1.0, lost_sales_cost=1.0)
 
         initial_state = State(network)
-        policies = Dict((l, product) => BackwardCoverageOrderingPolicy([1.0, 1.0]))
 
-        @test_throws ArgumentError Env(network, [initial_state], policies; record_history=false)
-        # But it's fine (and the default) with history recording left on.
-        @test Env(network, [initial_state], policies).record_history == true
+        no_lookback_policies = Dict((l, product) => NetSSOrderingPolicy(0, 0))
+        @test Env(network, [initial_state], no_lookback_policies).needs_outbound_order_index == false
+
+        lookback_policies = Dict((l, product) => BackwardCoverageOrderingPolicy([1.0, 1.0]))
+        @test Env(network, [initial_state], lookback_policies).needs_outbound_order_index == true
+
+        # required_lookback's default (0 - no history needed) applies to
+        # every existing policy type except BackwardCoverageOrderingPolicy.
+        for policy in [OnHandUptoOrderingPolicy(0), NetUptoOrderingPolicy(0), NetSSOrderingPolicy(0, 0),
+                       ForwardCoverageOrderingPolicy(0.0), QuantityOrderingPolicy(zeros(3))]
+            @test required_lookback(policy) == 0
+        end
+        @test required_lookback(BackwardCoverageOrderingPolicy([1.0, 1.0, 1.0])) == 3
+    end
+
+    @testset "get_past_outbound_orders matches the old historical_orders-scanning implementation" begin
+        # The replaced implementation, kept here only to cross-check the
+        # rewritten one's boundary conditions (in particular: creation_time
+        # == 0 reads back as 0, not missing, since historical_orders[1] is
+        # the always-empty pre-period-1 snapshot - creation_time < 0 is what
+        # was actually out of bounds and returned missing).
+        function historical_orders_scan(state, location, product, time, step_back)
+            past_orders = zeros(Union{Missing, Int64}, step_back)
+            for t in 1:step_back
+                if (time + 1) - t < 1
+                    past_orders[t] = missing
+                else
+                    past_orders[t] = sum(ol -> (ol.creation_time == time - t && ol.product == product && ol.origin == location) ? ol.quantity : 0,
+                                          state.historical_orders[(time + 1) - t]; init=0)
+                end
+            end
+            return past_orders
+        end
+
+        Random.seed!(13)
+        horizon = 20
+
+        product = Product("product")
+        customer = Customer("customer")
+        retailer = Storage("retailer")
+        add_product!(retailer, product; initial_inventory=15)
+        wholesaler = Storage("wholesaler")
+        add_product!(wholesaler, product; initial_inventory=200)
+
+        l1 = Lane(retailer, customer; unit_cost=0)
+        l2 = Lane(wholesaler, retailer; unit_cost=0)
+
+        network = SupplyChain(horizon)
+        add_storage!(network, retailer)
+        add_storage!(network, wholesaler)
+        add_customer!(network, customer)
+        add_product!(network, product)
+        add_lane!(network, l1)
+        add_lane!(network, l2)
+        add_demand!(network, customer, product, rand(Poisson(5), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)
+
+        policies = Dict((l2, product) => BackwardCoverageOrderingPolicy([1.0, 1.0, 1.0, 1.0]))
+        final_state = simulate(network, policies)  # record_history defaults true, so historical_orders is populated too
+
+        for time in 1:horizon
+            for step_back in 1:5
+                @test get_past_outbound_orders(final_state, retailer, product, time, step_back) ==
+                      historical_orders_scan(final_state, retailer, product, time, step_back)
+                @test get_past_outbound_orders(final_state, wholesaler, product, time, step_back) ==
+                      historical_orders_scan(final_state, wholesaler, product, time, step_back)
+            end
+        end
+    end
+
+    @testset "BackwardCoverageOrderingPolicy's decisions don't depend on record_history" begin
+        # outbound_order_quantities is populated independently of
+        # record_history (it's gated by needs_outbound_order_index instead),
+        # so BackwardCoverageOrderingPolicy must make byte-for-byte identical
+        # ordering decisions whether or not full history is being recorded -
+        # unlike before this policy stopped depending on historical_orders,
+        # when record_history=false was rejected for it outright.
+        Random.seed!(17)
+        horizon = 20
+
+        product = Product("product")
+        customer = Customer("customer")
+        retailer = Storage("retailer")
+        add_product!(retailer, product; initial_inventory=15)
+        wholesaler = Storage("wholesaler")
+        add_product!(wholesaler, product; initial_inventory=200)
+
+        l1 = Lane(retailer, customer; unit_cost=0)
+        l2 = Lane(wholesaler, retailer; unit_cost=0)
+
+        network = SupplyChain(horizon)
+        add_storage!(network, retailer)
+        add_storage!(network, wholesaler)
+        add_customer!(network, customer)
+        add_product!(network, product)
+        add_lane!(network, l1)
+        add_lane!(network, l2)
+        add_demand!(network, customer, product, rand(Poisson(5), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)
+
+        policies = Dict((l2, product) => BackwardCoverageOrderingPolicy([1.0, 1.0, 1.0, 1.0]))
+
+        state_with_history = State(network)
+        env_with_history = Env(network, [state_with_history], policies; record_history=true)
+        @test env_with_history.needs_outbound_order_index == true
+        final_with_history = simulate(env_with_history, policies, state_with_history)
+
+        state_without_history = State(network)
+        env_without_history = Env(network, [state_without_history], policies; record_history=false)
+        @test env_without_history.needs_outbound_order_index == true
+        final_without_history = simulate(env_without_history, policies, state_without_history)
+
+        @test final_with_history.metrics.orders == final_without_history.metrics.orders
+        @test final_with_history.metrics.sales == final_without_history.metrics.sales
+        @test final_with_history.metrics.lost_sales == final_without_history.metrics.lost_sales
+        @test final_with_history.metrics.holding_costs == final_without_history.metrics.holding_costs
     end
 end

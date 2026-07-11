@@ -106,6 +106,26 @@ function record_drop!(state::State, order_line::OrderLine)
     end
 end
 
+"""
+    record_placement!(state::State, env::Env, order_line::OrderLine)
+
+Records `order_line` into `state.outbound_order_quantities` (see
+`get_past_outbound_orders`), if `env.needs_outbound_order_index` - i.e. only
+if some policy in this run actually declared `required_lookback(policy) > 0`
+(see `Policy.jl`). A no-op otherwise: nothing reads this index, so nothing
+gets allocated or written into it.
+
+Must be called exactly once per order line, at the `push!(state.placed_orders, order)`
+site in each `place_orders` method.
+"""
+function record_placement!(state::State, env::Env, order_line::OrderLine)
+    if env.needs_outbound_order_index
+        key = (order_line.origin, order_line.product)
+        quantities = get!(() -> zeros(Int64, get_horizon(state)), state.outbound_order_quantities, key)
+        quantities[order_line.creation_time] += order_line.quantity
+    end
+end
+
 # Send inventory
 function send_inventory!(state::State, env::Env, location::Supplier, product::Product, time::Int)
     if !haskey(state.pending_outbound_order_lines, (location, product))
@@ -199,6 +219,7 @@ function place_orders(state::State, env::Env, location::Customer, product::Produ
         #@debug "Ordered at $time, $location, $product, $quantity"
         push!(orders, order)
         push!(state.placed_orders, order)
+        record_placement!(state, env, order)
         state.metrics.orders += quantity
         state.metrics.demand += quantity * state.demand[(location, product)].sales_price
         return
@@ -224,6 +245,7 @@ function place_orders(state::State, env::Env, location, product::Product, time::
                 
                 push!(orders, order)
                 push!(state.placed_orders, order)
+                record_placement!(state, env, order)
                 state.metrics.orders += quantity
             end
         end

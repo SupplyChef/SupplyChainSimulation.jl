@@ -1,4 +1,21 @@
 """
+    required_lookback(policy::InventoryOrderingPolicy)::Int
+
+The number of past periods' outbound order quantities (see
+`get_past_outbound_orders`) `policy` needs to make its ordering decisions,
+or `0` (the default, for every policy except `BackwardCoverageOrderingPolicy`)
+if it doesn't look at history at all.
+
+`Env` uses this at construction time to decide whether `State` needs to
+maintain `outbound_order_quantities` for the run: recording it is skipped
+entirely - no allocation, no per-order bookkeeping - unless some policy in
+play actually declares a nonzero requirement here. Override this for any
+future policy that needs to look backward the way
+`BackwardCoverageOrderingPolicy` does.
+"""
+required_lookback(policy::InventoryOrderingPolicy)::Int = 0
+
+"""
 Orders a given quantity specific to each time period.
 """
 mutable struct QuantityOrderingPolicy <: InventoryOrderingPolicy
@@ -203,6 +220,15 @@ end
 function set_parameters!(policy::BackwardCoverageOrderingPolicy, values::Array{Float64, 1})
     policy.cover = values
 end
+
+"""
+    required_lookback(policy::BackwardCoverageOrderingPolicy)::Int
+
+`get_order` below looks back `length(policy.cover)` periods via
+`get_past_outbound_orders`, so that's exactly how far `Env` needs to keep
+`outbound_order_quantities` for this policy's `(location, product)`.
+"""
+required_lookback(policy::BackwardCoverageOrderingPolicy)::Int = length(policy.cover)
 
 function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
     net_inventory = get_net_inventory(state, location, product, time)

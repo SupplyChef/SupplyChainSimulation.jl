@@ -31,6 +31,15 @@ mutable struct State
     # SimMetrics.
     metrics::SimMetrics
 
+    # Quantity ordered per (origin, product, creation_time), maintained only
+    # when Env.needs_outbound_order_index is set (i.e. some policy actually
+    # declares required_lookback(policy) > 0 - see Policy.jl). Lets
+    # get_past_outbound_orders answer "how much did this location ship out
+    # at period t" with a direct array read instead of rescanning
+    # historical_orders' per-period Sets (which hold every order placed by
+    # every location, not just the one being asked about) for a match.
+    outbound_order_quantities::Dict{Tuple{<:Node, Product}, Vector{Int64}}
+
     function State(supply_chain; pending_outbound_order_lines=Dict{Storage, Array{OrderLine, 1}}())
         demand = Dict((d.customer, d.product) => d for d in supply_chain.demand)
 
@@ -47,7 +56,8 @@ mutable struct State
                    OrderLine[],
                    Set{Trip}(),
                    [],
-                   SimMetrics())
+                   SimMetrics(),
+                   Dict{Tuple{<:Node, Product}, Vector{Int64}}())
                    #,[])
                    
         reset!(state)
@@ -91,6 +101,7 @@ function reset!(state::State)
     empty!(state.historical_transportation)
     empty!(state.historical_filled_orders)
     reset!(state.metrics)
+    empty!(state.outbound_order_quantities)
 
     for storage in state.supply_chain.storages
         for product in state.supply_chain.products
@@ -367,17 +378,34 @@ function get_outbound_orders(state::State, location::Node, product::Product, tim
     )
 end
 
+"""
+    get_past_outbound_orders(state::State, location::Node, product::Product, time::Int64, step_back::Int64)::Array{Union{Missing, Int64}, 1}
+
+Gets, for each of the `step_back` periods before `time`, the quantity of
+`product` that was ordered *from* `location` (i.e. `location` was the
+`origin`) - `missing` for any period before the simulation started.
+
+Reads `state.outbound_order_quantities`, which is only populated when some
+policy declares `required_lookback(policy) > 0` (see `Policy.jl`/`Env`); for
+a `location`/`product` nothing was ever recorded for (either because no such
+policy is in play, or simply because no order ever originated there), every
+period reads back as `0`, matching what an exhaustive scan would have found.
+"""
 function get_past_outbound_orders(state::State, location::Node, product::Product, time::Int64, step_back::Int64)::Array{Union{Missing, Int64}, 1}
     past_orders = zeros(Union{Missing, Int64}, step_back)
+    quantities = get(state.outbound_order_quantities, (location, product), nothing)
     for t in 1:step_back
-        if (time+1) - t < 1
+        creation_time = time - t
+        if creation_time < 0
             past_orders[t] = missing
+        elseif creation_time == 0 || isnothing(quantities)
+            # creation_time == 0 predates period 1 (nothing is ever placed
+            # then), same as the pre-simulation snapshot the old
+            # historical_orders-scanning implementation read as empty here -
+            # not `missing`, unlike creation_time < 0 above.
+            past_orders[t] = 0
         else
-            #order_lines = filter(o -> o.creation_time == time - t && o.product == product && o.origin == location, state.historical_orders[(time+1) - t])
-            #past_orders[t] = sum(ol -> ol.quantity, order_lines; init=0)
-            past_orders[t] = sum(ol -> (ol.creation_time == time - t && ol.product == product && ol.origin == location) ? ol.quantity : 0, 
-                                state.historical_orders[(time+1) - t]
-                                ; init=0)
+            past_orders[t] = quantities[creation_time]
         end
     end
     past_orders

@@ -41,13 +41,17 @@ struct Env
     # e.g. optimize!'s thousands of throwaway policy evaluations.
     record_history::Bool
 
-    function Env(supplychain::SupplyChain, initial_states, policies; record_history::Bool=true)
-        if !record_history && any(p -> p isa BackwardCoverageOrderingPolicy, values(policies))
-            throw(ArgumentError("record_history=false is incompatible with BackwardCoverageOrderingPolicy: " *
-                                 "its get_order reads state.historical_orders to look back over past periods, " *
-                                 "so disabling history recording would silently change its ordering decisions."))
-        end
+    # Whether simulate() should maintain State's outbound_order_quantities
+    # index (see get_past_outbound_orders). Unlike record_history above,
+    # this isn't a caller-facing toggle: it's derived from the policies
+    # actually in play, via required_lookback (see Policy.jl). It stays
+    # false - no per-order bookkeeping at all - unless some policy here
+    # (currently only BackwardCoverageOrderingPolicy) actually declares it
+    # needs to look backward, so every other policy pays nothing for a
+    # capability it never uses.
+    needs_outbound_order_index::Bool
 
+    function Env(supplychain::SupplyChain, initial_states, policies; record_history::Bool=true)
         trips = get_trips(supplychain, policies)
         locations = get_locations(supplychain)
 
@@ -87,7 +91,8 @@ struct Env
                    departures,
                    downstream_customers,
                    Dict{Tuple{Node, Product, Int64}, Float64}(),
-                   record_history)
+                   record_history,
+                   any(p -> required_lookback(p) > 0, values(policies)))
     end
 end
 

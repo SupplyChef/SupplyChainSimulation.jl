@@ -255,7 +255,11 @@ end
         policies = Dict((l2, product) => policy)
 
         initial_states = [n() for i in 1:10]
-        optimize!(policies, initial_states...)
+        # Newsvendor's cost only depends on state.metrics either way, and
+        # the assertion below is just `true` (no exact numeric outcome
+        # depends on optimize!'s trajectory), so this is a safe candidate
+        # for the record_history=false fast path (see SimMetrics/Env).
+        optimize!(policies, initial_states...; cost_function=metrics_cost_function, record_history=false)
 
         println(policy)
 

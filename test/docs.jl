@@ -39,7 +39,10 @@ using Random
         policy = OnHandUptoOrderingPolicy(0)
         policies = Dict((l2, product) => policy)
 
-        optimize!(policies, initial_states...)
+        # None of docs.jl's tests use BackwardCoverageOrderingPolicy or
+        # assert an exact numeric outcome tied to optimize!'s trajectory,
+        # so the record_history=false fast path is safe here.
+        optimize!(policies, initial_states...; cost_function=metrics_cost_function, record_history=false)
         final_states = [simulate(initial_state, policies) for initial_state in initial_states]
         true
     end
@@ -78,7 +81,10 @@ using Random
         policies = Dict((l2, product) => policy)
 
         initial_states = [n() for i in 1:1]
-        optimize!(policies, initial_states...)
+        # None of docs.jl's tests use BackwardCoverageOrderingPolicy or
+        # assert an exact numeric outcome tied to optimize!'s trajectory,
+        # so the record_history=false fast path is safe here.
+        optimize!(policies, initial_states...; cost_function=metrics_cost_function, record_history=false)
 
         println(policy)
         true
@@ -118,7 +124,10 @@ using Random
 
         initial_states = [n() for i in 1:20]
 
-        optimize!(policies, initial_states...)
+        # None of docs.jl's tests use BackwardCoverageOrderingPolicy or
+        # assert an exact numeric outcome tied to optimize!'s trajectory,
+        # so the record_history=false fast path is safe here.
+        optimize!(policies, initial_states...; cost_function=metrics_cost_function, record_history=false)
 
         println(policy)
         true
@@ -173,7 +182,10 @@ using Random
         
         initial_states = [n() for i in 1:30]
 
-        optimize!(policies, initial_states...)
+        # None of docs.jl's tests use BackwardCoverageOrderingPolicy or
+        # assert an exact numeric outcome tied to optimize!'s trajectory,
+        # so the record_history=false fast path is safe here.
+        optimize!(policies, initial_states...; cost_function=metrics_cost_function, record_history=false)
         true
     end
 end

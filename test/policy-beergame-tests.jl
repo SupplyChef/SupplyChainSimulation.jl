@@ -109,7 +109,9 @@ end
                         (l3, product) => policy3,
                         (l4, product) => policy4)
 
-        optimize!(policies, network)
+        # NetUptoOrderingPolicy doesn't read history, and this test only
+        # asserts `true`, so the record_history=false fast path is safe here.
+        optimize!(policies, network; cost_function=metrics_cost_function, record_history=false)
 
         #println(policy2)
         #println(policy3)
@@ -174,7 +176,10 @@ end
                         (l3, product) => policy3,
                         (l4, product) => policy4)
 
-        optimize!(policies, initial_states...)
+        # NetUptoOrderingPolicy (unlike beer_game()'s BackwardCoverageOrderingPolicy
+        # above) doesn't read history, and this test only asserts `true`, so
+        # the record_history=false fast path is safe here.
+        optimize!(policies, initial_states...; cost_function=metrics_cost_function, record_history=false)
 
         #println(policy2)
         #println(policy3)

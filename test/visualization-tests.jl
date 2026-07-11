@@ -35,7 +35,12 @@ using Distributions: rand, Poisson
         initial_states = [n() for i in 1:10]
 
         policies = Dict((l2, product) => policy)
-        optimize!(policies, initial_states...)
+        # optimize!'s internal trial simulations don't need history (no
+        # BackwardCoverageOrderingPolicy here, and the assertion below is
+        # just `true`); the separate simulate() call right after always
+        # gets full history regardless (Env's own default), so
+        # plot_inventory_movement below is unaffected.
+        optimize!(policies, initial_states...; cost_function=metrics_cost_function, record_history=false)
 
         #println(policy)
 

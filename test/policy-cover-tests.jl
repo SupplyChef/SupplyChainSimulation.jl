@@ -46,7 +46,10 @@ using Random
 
     policies = Dict((l2, product) => policy2)
 
-    optimize!(policies, initial_states...)
+    # ForwardCoverageOrderingPolicy doesn't read history, and the assertion
+    # below is a robust inequality (not an exact value tied to optimize!'s
+    # raw trajectory), so the record_history=false fast path is safe here.
+    optimize!(policies, initial_states...; cost_function=metrics_cost_function, record_history=false)
 
     println(policy2)
 
@@ -108,7 +111,13 @@ end
     initial_states = [n() for j in 1:10]
 
     #println(network)
-    optimize!(policies, initial_states...; cost_function=s->get_total_lost_sales(s) + 0.00001 * get_total_orders(s))
+    # This is the largest network in the suite (100 customers/lanes), so it's
+    # the best demonstration of the record_history=false path: the custom
+    # cost function is rewritten to read s.metrics (kept up to date
+    # regardless of record_history) instead of scanning s's historical_*
+    # arrays via get_total_lost_sales/get_total_orders, which would silently
+    # go stale (return 0) with history recording off.
+    optimize!(policies, initial_states...; cost_function=s -> s.metrics.lost_sales + 0.00001 * s.metrics.orders, record_history=false)
 
     println(policy2)
 

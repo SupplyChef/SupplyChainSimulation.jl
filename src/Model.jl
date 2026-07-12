@@ -84,7 +84,11 @@ function create_graph(supplychain::SupplyChain)
         i += 1
     end
 
-    for route in unique(map(trip -> trip.route, collect(get_trips(supplychain.lanes, supplychain.horizon))))
+    # Every Trip's route is just the Lane it was built from (see
+    # Model-Transportation.jl), and lanes are already unique - materializing
+    # a Trip per (lane, period) via get_trips only to immediately discard
+    # everything but trip.route was a redundant O(lanes * horizon) pass.
+    for route in supplychain.lanes
         for destination in get_destinations(route)
             Graphs.add_edge!(graph, mapping[route.origin], mapping[destination])
         end

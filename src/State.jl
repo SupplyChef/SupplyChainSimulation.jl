@@ -10,6 +10,17 @@ mutable struct State
 
     on_hand_inventory::Dict{Tuple{Storage, Product}, Dict{Int64, Int64}}
 
+    # Ages (simulation periods) that currently have an on_hand_inventory
+    # bucket for a given (storage, product), kept in ascending order.
+    # Inventory is only ever added at the current, monotonically increasing
+    # simulation time (see add_on_hand_inventory!/set_on_hand_inventory!),
+    # so a newly-seen age is always >= every age already recorded here - it
+    # can just be appended, no sort needed. remove_on_hand_inventory! reads
+    # this directly for its FIFO (oldest-first) consumption order instead of
+    # collect()-ing and sort!()-ing on_hand_inventory's Dict keys on every
+    # call.
+    on_hand_ages_order::Dict{Tuple{Storage, Product}, Vector{Int64}}
+
     # Running total per (storage, product) of everything in the
     # on_hand_inventory age buckets above, kept in sync by every mutation
     # site (add/remove/set/expire/reset). get_on_hand_inventory is called
@@ -59,6 +70,7 @@ mutable struct State
         state = new(supply_chain,
                    demand,
                    Dict{Tuple{Storage, Product}, Dict{Int64, Int64}}(),
+                   Dict{Tuple{Storage, Product}, Vector{Int64}}(),
                    Dict{Tuple{Storage, Product}, Int64}(),
                    Dict{Tuple{Node, Product}, Array{Int64, 1}}(),
                    Dict{Tuple{Storage, Product}, Array{Int64, 1}}(),
@@ -104,6 +116,7 @@ construction time are a one-time seed and are not restored by `reset!`.
 """
 function reset!(state::State)
     empty!(state.on_hand_inventory)
+    empty!(state.on_hand_ages_order)
     empty!(state.on_hand_totals)
     empty!(state.in_transit_inventory)
     empty!(state.overflow_inventory)
@@ -180,12 +193,18 @@ end
 function set_on_hand_inventory!(state::State, to::Node, product::Product, quantity, time)
     ages = get!(() -> Dict{Int64, Int64}(), state.on_hand_inventory, (to, product))
     previous = get(ages, time, 0)
+    if !haskey(ages, time)
+        push!(get!(() -> Int64[], state.on_hand_ages_order, (to, product)), time)
+    end
     ages[time] = Int(quantity)
     state.on_hand_totals[(to, product)] = get(state.on_hand_totals, (to, product), 0) + Int(quantity) - previous
 end
 
 function add_on_hand_inventory!(state::State, to::Storage, product::Product, quantity::Int64, time)
     ages = get!(() -> Dict{Int64, Int64}(), state.on_hand_inventory, (to, product))
+    if !haskey(ages, time)
+        push!(get!(() -> Int64[], state.on_hand_ages_order, (to, product)), time)
+    end
     ages[time] = get(ages, time, 0) + quantity
     state.on_hand_totals[(to, product)] = get(state.on_hand_totals, (to, product), 0) + quantity
 end
@@ -193,10 +212,13 @@ end
 function remove_on_hand_inventory!(state::State, to::Storage, product::Product, quantity::Int64)
     ages = state.on_hand_inventory[(to, product)]
     removed_total = 0
-    # FIFO: must consume oldest inventory (smallest age/arrival time) first, so
-    # this ordering is required, not just habit - sort! (in place) instead of
-    # sort avoids the extra defensive copy sort() makes of its input.
-    for t in sort!(collect(keys(ages)))
+    # FIFO: must consume oldest inventory (smallest age/arrival time) first.
+    # on_hand_ages_order already holds every age ever seen for this
+    # (storage, product) in ascending order (ages only ever get added at the
+    # current, monotonically increasing simulation time), so it can be
+    # iterated directly instead of collect()-ing and sort!()-ing
+    # on_hand_inventory's Dict keys on every call.
+    for t in get(state.on_hand_ages_order, (to, product), Int64[])
         if quantity <= 0
             break
         end

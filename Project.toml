@@ -21,12 +21,15 @@ SupplyChainModeling = "0.2, 0.3"
 UUIDs = "1.8, 1.9, 1.10, 1.11, 1.12"
 julia = "1.8, 1.9, 1.10, 1.11, 1.12"
 
-# TEMPORARY: points at the unreleased SupplyChainModeling branch that
-# switches Product/Node hash/== to id-based instead of name-based (see
-# SupplyChainModeling.jl PR #4). The previous pin
-# (claude/supplychainsim-product-strategy-vt1s5a) was merged and its branch
-# deleted, which broke CI. Remove this section and bump the
-# SupplyChainModeling compat bound once this new branch is merged and
-# released as a new version.
+# TEMPORARY: merging to SupplyChainModeling's main branch and registering a
+# new package version are separate steps, and only the latter is visible to
+# normal compat-bound resolution - so main can (and currently does) contain
+# merged features, like the capacity/overflow-cost support from PR #2 and
+# the hash-caching work from PR #5, that the actually-registered version
+# doesn't have yet. The previous pin here (claude/integer-indexing-simulation-pvnr4d)
+# pointed at a PR that was closed without merging; main already includes
+# everything that branch would have added, achieved instead via cheaper
+# name-hash caching rather than id-based identity. Remove this section and
+# bump the SupplyChainModeling compat bound once a new version is registered.
 [sources]
-SupplyChainModeling = {url = "https://github.com/SupplyChef/SupplyChainModeling.jl", rev = "claude/integer-indexing-simulation-pvnr4d"}
+SupplyChainModeling = {url = "https://github.com/SupplyChef/SupplyChainModeling.jl", rev = "main"}

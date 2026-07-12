@@ -10,12 +10,25 @@ mutable struct State
 
     on_hand_inventory::Dict{Tuple{Storage, Product}, Dict{Int64, Int64}}
 
-    in_transit_inventory::Dict{Tuple{<:Node, Product}, Array{Int64, 1}}
+    # Running total per (storage, product) of everything in the
+    # on_hand_inventory age buckets above, kept in sync by every mutation
+    # site (add/remove/set/expire/reset). get_on_hand_inventory is called
+    # per pending order line inside send_inventory! and by every
+    # inventory-position-based policy, and previously re-summed the age
+    # buckets (allocating a default Dict on misses) on each call.
+    on_hand_totals::Dict{Tuple{Storage, Product}, Int64}
+
+    # NOTE: these Dict fields are deliberately typed with the abstract
+    # Tuple{Node, Product} key rather than `Tuple{<:Node, Product}`: the
+    # UnionAll made the *field itself* abstractly typed, so every access
+    # went through dynamic dispatch even though the stored dict never
+    # changes type.
+    in_transit_inventory::Dict{Tuple{Node, Product}, Array{Int64, 1}}
 
     overflow_inventory::Dict{Tuple{Storage, Product}, Array{Int64, 1}}
 
-    pending_outbound_order_lines::Dict{Tuple{<:Node, Product}, Set{OrderLine}}
-    pending_inbound_order_lines::Dict{Tuple{<:Node, Product}, Set{OrderLine}}
+    pending_outbound_order_lines::Dict{Tuple{Node, Product}, Set{OrderLine}}
+    pending_inbound_order_lines::Dict{Tuple{Node, Product}, Set{OrderLine}}
 
     filled_orders::Set{OrderLine}
     placed_orders::Set{OrderLine}
@@ -38,18 +51,19 @@ mutable struct State
     # at period t" with a direct array read instead of rescanning
     # historical_orders' per-period Sets (which hold every order placed by
     # every location, not just the one being asked about) for a match.
-    outbound_order_quantities::Dict{Tuple{<:Node, Product}, Vector{Int64}}
+    outbound_order_quantities::Dict{Tuple{Node, Product}, Vector{Int64}}
 
     function State(supply_chain; pending_outbound_order_lines=Dict{Storage, Array{OrderLine, 1}}())
         demand = Dict((d.customer, d.product) => d for d in supply_chain.demand)
 
         state = new(supply_chain,
                    demand,
+                   Dict{Tuple{Storage, Product}, Dict{Int64, Int64}}(),
                    Dict{Tuple{Storage, Product}, Int64}(),
-                   Dict{Tuple{<:Node, Product}, Array{Int64, 1}}(),
+                   Dict{Tuple{Node, Product}, Array{Int64, 1}}(),
                    Dict{Tuple{Storage, Product}, Array{Int64, 1}}(),
-                   Dict{Tuple{<:Node, Product}, Set{OrderLine}}(),
-                   Dict{Tuple{<:Node, Product}, Set{OrderLine}}(),
+                   Dict{Tuple{Node, Product}, Set{OrderLine}}(),
+                   Dict{Tuple{Node, Product}, Set{OrderLine}}(),
                    Set{OrderLine}(),
                    Set{OrderLine}(),
                    [],
@@ -57,7 +71,7 @@ mutable struct State
                    Set{Trip}(),
                    [],
                    SimMetrics(),
-                   Dict{Tuple{<:Node, Product}, Vector{Int64}}())
+                   Dict{Tuple{Node, Product}, Vector{Int64}}())
                    #,[])
                    
         reset!(state)
@@ -90,6 +104,7 @@ construction time are a one-time seed and are not restored by `reset!`.
 """
 function reset!(state::State)
     empty!(state.on_hand_inventory)
+    empty!(state.on_hand_totals)
     empty!(state.in_transit_inventory)
     empty!(state.overflow_inventory)
     empty!(state.pending_outbound_order_lines)
@@ -163,21 +178,21 @@ function delete_order_lines!(state::State, order_lines)
 end
 
 function set_on_hand_inventory!(state::State, to::Node, product::Product, quantity, time)
-    if !haskey(state.on_hand_inventory, (to, product))
-        state.on_hand_inventory[(to, product)] = Dict{Int64, Int64}()
-    end
-    state.on_hand_inventory[(to, product)][time] = Int(quantity)
+    ages = get!(() -> Dict{Int64, Int64}(), state.on_hand_inventory, (to, product))
+    previous = get(ages, time, 0)
+    ages[time] = Int(quantity)
+    state.on_hand_totals[(to, product)] = get(state.on_hand_totals, (to, product), 0) + Int(quantity) - previous
 end
 
 function add_on_hand_inventory!(state::State, to::Storage, product::Product, quantity::Int64, time)
-    if !haskey(state.on_hand_inventory, (to, product))
-        state.on_hand_inventory[(to, product)] = Dict{Int64, Int64}()
-    end
-    state.on_hand_inventory[(to, product)][time] = get(state.on_hand_inventory[(to, product)], time, 0) + quantity
+    ages = get!(() -> Dict{Int64, Int64}(), state.on_hand_inventory, (to, product))
+    ages[time] = get(ages, time, 0) + quantity
+    state.on_hand_totals[(to, product)] = get(state.on_hand_totals, (to, product), 0) + quantity
 end
 
 function remove_on_hand_inventory!(state::State, to::Storage, product::Product, quantity::Int64)
     ages = state.on_hand_inventory[(to, product)]
+    removed_total = 0
     # FIFO: must consume oldest inventory (smallest age/arrival time) first, so
     # this ordering is required, not just habit - sort! (in place) instead of
     # sort avoids the extra defensive copy sort() makes of its input.
@@ -188,11 +203,13 @@ function remove_on_hand_inventory!(state::State, to::Storage, product::Product, 
         removed_quantity = min(quantity, ages[t])
         ages[t] -= removed_quantity
         quantity -= removed_quantity
+        removed_total += removed_quantity
     end
+    state.on_hand_totals[(to, product)] -= removed_total
 end
 
 function get_on_hand_inventory(state::State, to::Node, product::Product)::Int64
-    return sum(values(get(state.on_hand_inventory, (to, product), Dict{Int64, Int64}())); init=0)
+    return get(state.on_hand_totals, (to, product), 0)
 end
 
 function expire_on_hand_inventory(state::State, to::Storage, product::Product, time)
@@ -204,10 +221,15 @@ function expire_on_hand_inventory(state::State, to::Storage, product::Product, t
     # Order doesn't matter here (unlike remove_on_hand_inventory!'s FIFO
     # consumption): every bucket past max_age gets zeroed regardless of which
     # order they're visited in, so no need to collect+sort the keys.
+    expired_total = 0
     for (t, on_hand) in ages
         if (t <= time - max_age) && (on_hand > 0)
             ages[t] = 0
+            expired_total += on_hand
         end
+    end
+    if expired_total > 0
+        state.on_hand_totals[(to, product)] -= expired_total
     end
     return
 end
@@ -242,11 +264,13 @@ function get_in_transit_inventory(state::State, to::N, product::Product, time::I
     return in_transit_inventory[time]
 end
 
+# Shared fallback for get_in_transit_inventories misses. Callers only ever
+# read from the result, so handing every miss the same array (instead of
+# allocating a fresh `[0]` per call) is safe.
+const _no_in_transit = Int64[0]
+
 function get_in_transit_inventories(state::State, to::N, product::Product)::Array{Int64, 1} where N <: Node
-    if !haskey(state.in_transit_inventory, (to, product))
-        return [0]
-    end
-    return state.in_transit_inventory[(to, product)]
+    return get(state.in_transit_inventory, (to, product), _no_in_transit)
 end
 
 """
@@ -312,11 +336,13 @@ next period instead of being swapped for fresh, permanently-retained Sets.
 function snapshot_state!(state::State, time, record_history::Bool)
     on_hand_snapshot = record_history ? Dict{Tuple{Storage, Product}, Int64}() : nothing
     if record_history
-        sizehint!(on_hand_snapshot, length(state.on_hand_inventory))
+        sizehint!(on_hand_snapshot, length(state.on_hand_totals))
     end
-    for (k, ages) in state.on_hand_inventory
+    # on_hand_totals is maintained incrementally by every on-hand mutation
+    # site, so per-key totals are read directly instead of re-summing each
+    # key's age buckets here every period.
+    for (k, on_hand) in state.on_hand_totals
         (location, product) = k
-        on_hand = sum(values(ages); init=0)
         if on_hand != 0
             state.metrics.holding_costs += on_hand * get(location.unit_holding_cost, product, 0)
         end
@@ -366,10 +392,19 @@ end
     Gets the number of units of a product on order to a location (but not yet shipped there) at a given time.
 """
 function get_inbound_orders(state::State, location::Node, product::Product, time::Int64)::Int64
-    sum(ol -> (ol.due_date >= time) ? ol.quantity : 0, 
-        get(state.pending_inbound_order_lines, (location, product), OrderLine[]);
-        init = 0
-    )
+    order_lines = get(state.pending_inbound_order_lines, (location, product), nothing)
+    if isnothing(order_lines)
+        # branching on the miss instead of passing `OrderLine[]` as the
+        # default avoids allocating a throwaway empty Vector per call.
+        return 0
+    end
+    total = 0
+    for ol in order_lines
+        if ol.due_date >= time
+            total += ol.quantity
+        end
+    end
+    return total
 end
 
 """
@@ -378,10 +413,19 @@ end
     Gets the number of units of a product on order at a location (and not yet shipped out) at a given time.
 """
 function get_outbound_orders(state::State, location::Node, product::Product, time::Int64)::Int64
-    sum(ol -> (ol.due_date >= time) ? ol.quantity : 0, 
-        get(state.pending_outbound_order_lines, (location, product), OrderLine[]);
-        init = 0
-    )
+    order_lines = get(state.pending_outbound_order_lines, (location, product), nothing)
+    if isnothing(order_lines)
+        # see get_inbound_orders: branch on the miss instead of allocating a
+        # default empty Vector per call.
+        return 0
+    end
+    total = 0
+    for ol in order_lines
+        if ol.due_date >= time
+            total += ol.quantity
+        end
+    end
+    return total
 end
 
 """

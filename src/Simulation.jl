@@ -173,6 +173,10 @@ function send_inventory!(state::State, env::Env, location::Node, product::Produc
 
     #println("send_inventory order_lines $order_lines")
     fulfilled_order_lines = OrderLine[]
+    # Tracked locally and kept in sync with each remove_on_hand_inventory!
+    # below, instead of re-reading get_on_hand_inventory (a Dict lookup)
+    # twice per order line.
+    available = get_on_hand_inventory(state, location, product)
     for order_line in order_lines
         if order_line.due_date < time
             record_drop!(state, order_line)
@@ -181,7 +185,7 @@ function send_inventory!(state::State, env::Env, location::Node, product::Produc
         end
 
         #println("send_inventory on_hand $(get_on_hand_inventory(state, location, order_line.product) vs $(order_line.quantity)")
-        if order_line.quantity <= get_on_hand_inventory(state, location, product)
+        if order_line.quantity <= available
             if ismissing(order_line.trip) || order_line.trip.departure < time
                 @debug "replacing trip $(order_line.trip)"
                 trip = find_next_departure(env, order_line.destination, time, order_line.due_date)
@@ -193,13 +197,14 @@ function send_inventory!(state::State, env::Env, location::Node, product::Produc
 
             send_inventory!(state, env, order_line.trip,  order_line.destination, order_line.product, order_line.quantity, time)
             remove_on_hand_inventory!(state, location, product, order_line.quantity)
+            available -= order_line.quantity
 
             push!(fulfilled_order_lines, order_line)
 
             record_fill!(state, env, order_line)
             push!(state.filled_orders, order_line)
 
-            if get_on_hand_inventory(state, location, product) == 0
+            if available == 0
                 break
             end
         end
@@ -211,7 +216,8 @@ end
 # Place orders
 function place_orders(state::State, env::Env, location::Customer, product::Product, time::Int64, orders::Array{OrderLine, 1})
     empty!(orders)
-    quantity = Int(state.demand[(location, product)].demand[time])
+    demand = state.demand[(location, product)]
+    quantity = Int(demand.demand[time])
     if quantity > 0
         trip = find_next_departure(env, location, time)
 
@@ -221,7 +227,7 @@ function place_orders(state::State, env::Env, location::Customer, product::Produ
         push!(state.placed_orders, order)
         record_placement!(state, env, order)
         state.metrics.orders += quantity
-        state.metrics.demand += quantity * state.demand[(location, product)].sales_price
+        state.metrics.demand += quantity * demand.sales_price
         return
     else
         return

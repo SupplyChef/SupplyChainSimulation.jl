@@ -52,7 +52,16 @@ function beer_game(;scenario_count=30, optimize=true)
                     (l4, product) => policy4)
     
     if optimize
-        optimize!(policies, initial_states...)
+        # metrics_cost_function + record_history=false is optimize!'s fast
+        # path (see Optimization.jl): state.metrics is kept incrementally
+        # regardless of record_history, so this skips both the per-trial
+        # history bookkeeping and the default cost_function's from-scratch
+        # historical_* rescans on every one of bboptimize's (up to 15000 *
+        # scenario_count) trial simulations. Note this sums the same costs
+        # in a different order than the default (event order vs Set/Dict
+        # iteration order), so it is not guaranteed to converge to bit-
+        # identical policy parameters - see metrics_cost_function's docstring.
+        optimize!(policies, initial_states...; cost_function=metrics_cost_function, record_history=false)
     end
 
     #println(policy2)

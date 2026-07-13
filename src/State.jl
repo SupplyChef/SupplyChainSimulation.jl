@@ -29,17 +29,22 @@ mutable struct State
     # buckets (allocating a default Dict on misses) on each call.
     on_hand_totals::Dict{Tuple{Storage, Product}, Int64}
 
-    # NOTE: these Dict fields are deliberately typed with the abstract
-    # Tuple{Node, Product} key rather than `Tuple{<:Node, Product}`: the
-    # UnionAll made the *field itself* abstractly typed, so every access
-    # went through dynamic dispatch even though the stored dict never
-    # changes type.
-    in_transit_inventory::Dict{Tuple{Node, Product}, Array{Int64, 1}}
+    # NOTE: these Dict fields are deliberately typed with the closed
+    # Tuple{ConcreteNode, Product} key rather than `Tuple{<:Node, Product}`
+    # (a UnionAll, which made the *field itself* abstractly typed) or bare
+    # `Tuple{Node, Product}` (which forces fully-dynamic dispatch at every
+    # consumer, since Node is open-ended) - ConcreteNode lets consumers
+    # union-split into concrete branches instead. See
+    # SupplyChainModeling.ConcreteNode.
+    in_transit_inventory::Dict{Tuple{ConcreteNode, Product}, Array{Int64, 1}}
 
     overflow_inventory::Dict{Tuple{Storage, Product}, Array{Int64, 1}}
 
-    pending_outbound_order_lines::Dict{Tuple{Node, Product}, Vector{OrderLine}}
-    pending_inbound_order_lines::Dict{Tuple{Node, Product}, Vector{OrderLine}}
+    # Vector rather than Set: avoids both Set{OrderLine} hashing overhead and
+    # the collect() copy send_inventory! used to pay every period to iterate
+    # in creation/due-date order - see send_inventory!'s in-place sort!/filter!.
+    pending_outbound_order_lines::Dict{Tuple{ConcreteNode, Product}, Vector{OrderLine}}
+    pending_inbound_order_lines::Dict{Tuple{ConcreteNode, Product}, Vector{OrderLine}}
 
     filled_orders::Set{OrderLine}
     placed_orders::Set{OrderLine}
@@ -48,7 +53,7 @@ mutable struct State
     historical_orders::Array{Set{OrderLine}, 1}
     historical_transportation::Set{Trip}
     historical_filled_orders::Array{Set{OrderLine}, 1}
-    #historical_pending_outbound_order_lines::Array{Dict{Node, Set{OrderLine}}}
+    #historical_pending_outbound_order_lines::Array{Dict{ConcreteNode, Set{OrderLine}}}
 
     # Incrementally-updated running totals, kept in sync with the
     # historical_* arrays above regardless of Env.record_history - see
@@ -62,7 +67,7 @@ mutable struct State
     # at period t" with a direct array read instead of rescanning
     # historical_orders' per-period Sets (which hold every order placed by
     # every location, not just the one being asked about) for a match.
-    outbound_order_quantities::Dict{Tuple{Node, Product}, Vector{Int64}}
+    outbound_order_quantities::Dict{Tuple{ConcreteNode, Product}, Vector{Int64}}
 
     function State(supply_chain; pending_outbound_order_lines=Dict{Storage, Array{OrderLine, 1}}())
         demand = Dict((d.customer, d.product) => d for d in supply_chain.demand)
@@ -72,10 +77,10 @@ mutable struct State
                    Dict{Tuple{Storage, Product}, Dict{Int64, Int64}}(),
                    Dict{Tuple{Storage, Product}, Vector{Int64}}(),
                    Dict{Tuple{Storage, Product}, Int64}(),
-                   Dict{Tuple{Node, Product}, Array{Int64, 1}}(),
+                   Dict{Tuple{ConcreteNode, Product}, Array{Int64, 1}}(),
                    Dict{Tuple{Storage, Product}, Array{Int64, 1}}(),
-                   Dict{Tuple{Node, Product}, Vector{OrderLine}}(),
-                   Dict{Tuple{Node, Product}, Vector{OrderLine}}(),
+                   Dict{Tuple{ConcreteNode, Product}, Vector{OrderLine}}(),
+                   Dict{Tuple{ConcreteNode, Product}, Vector{OrderLine}}(),
                    Set{OrderLine}(),
                    Set{OrderLine}(),
                    [],
@@ -83,7 +88,7 @@ mutable struct State
                    Set{Trip}(),
                    [],
                    SimMetrics(),
-                   Dict{Tuple{Node, Product}, Vector{Int64}}())
+                   Dict{Tuple{ConcreteNode, Product}, Vector{Int64}}())
                    #,[])
                    
         reset!(state)
@@ -210,7 +215,7 @@ function delete_order_lines!(state::State, order_lines)
     end
 end
 
-function set_on_hand_inventory!(state::State, to::Node, product::Product, quantity, time)
+function set_on_hand_inventory!(state::State, to::ConcreteNode, product::Product, quantity, time)
     key = (to, product)
     ages = get(state.on_hand_inventory, key, nothing)
     if isnothing(ages)
@@ -272,7 +277,7 @@ function remove_on_hand_inventory!(state::State, to::Storage, product::Product, 
     state.on_hand_totals[(to, product)] -= removed_total
 end
 
-function get_on_hand_inventory(state::State, to::Node, product::Product)::Int64
+function get_on_hand_inventory(state::State, to::ConcreteNode, product::Product)::Int64
     return get(state.on_hand_totals, (to, product), 0)
 end
 
@@ -303,7 +308,7 @@ function expire_on_hand_inventory(state::State, to::Storage, product::Product, t
     return
 end
 
-function add_in_transit_inventory!(state::State, to::N, product::Product, time::Int64, quantity::Int64) where N <: Node
+function add_in_transit_inventory!(state::State, to::N, product::Product, time::Int64, quantity::Int64) where N <: ConcreteNode
     if !haskey(state.in_transit_inventory, (to, product))
         # zeros(n) (no explicit type) allocates a Vector{Float64}, requiring
         # an implicit convert to the field's declared Array{Int64, 1} on
@@ -316,7 +321,7 @@ function add_in_transit_inventory!(state::State, to::N, product::Product, time::
     state.in_transit_inventory[(to, product)][time] += quantity
 end
 
-function delete_in_transit_inventory!(state::State, to::N, product::Product, time::Int64, quantity::Int64) where N <: Node
+function delete_in_transit_inventory!(state::State, to::N, product::Product, time::Int64, quantity::Int64) where N <: ConcreteNode
     state.in_transit_inventory[(to, product)][time] -= quantity
 end
 
@@ -325,7 +330,7 @@ end
 
     Gets the number of units of a product in transit to a location at a given time.
 """
-function get_in_transit_inventory(state::State, to::N, product::Product, time::Int64)::Int64 where N <: Node
+function get_in_transit_inventory(state::State, to::N, product::Product, time::Int64)::Int64 where N <: ConcreteNode
     in_transit_inventory = get(state.in_transit_inventory, (to, product), nothing)
     if isnothing(in_transit_inventory)
         return 0
@@ -338,7 +343,7 @@ end
 # allocating a fresh `[0]` per call) is safe.
 const _no_in_transit = Int64[0]
 
-function get_in_transit_inventories(state::State, to::N, product::Product)::Array{Int64, 1} where N <: Node
+function get_in_transit_inventories(state::State, to::N, product::Product)::Array{Int64, 1} where N <: ConcreteNode
     return get(state.in_transit_inventory, (to, product), _no_in_transit)
 end
 
@@ -440,7 +445,7 @@ function snapshot_state!(state::State, time, record_history::Bool)
     #println("On hand at $time, $(state.on_hand_inventory)")
 end
 
-function get_net_inventory(state::State, location::Node, product::Product, time::Int64)
+function get_net_inventory(state::State, location::ConcreteNode, product::Product, time::Int64)
     # on-hand + in-transit + on-order from suppliers - on-order from supplied
     on_hand = get_on_hand_inventory(state, location, product)
     in_transit = sum(@view get_in_transit_inventories(state, location, product)[time:end]; init=0)
@@ -460,7 +465,7 @@ end
 
     Gets the number of units of a product on order to a location (but not yet shipped there) at a given time.
 """
-function get_inbound_orders(state::State, location::Node, product::Product, time::Int64)::Int64
+function get_inbound_orders(state::State, location::ConcreteNode, product::Product, time::Int64)::Int64
     order_lines = get(state.pending_inbound_order_lines, (location, product), nothing)
     if isnothing(order_lines)
         # branching on the miss instead of passing `OrderLine[]` as the
@@ -481,7 +486,7 @@ end
 
     Gets the number of units of a product on order at a location (and not yet shipped out) at a given time.
 """
-function get_outbound_orders(state::State, location::Node, product::Product, time::Int64)::Int64
+function get_outbound_orders(state::State, location::ConcreteNode, product::Product, time::Int64)::Int64
     order_lines = get(state.pending_outbound_order_lines, (location, product), nothing)
     if isnothing(order_lines)
         # see get_inbound_orders: branch on the miss instead of allocating a
@@ -498,7 +503,7 @@ function get_outbound_orders(state::State, location::Node, product::Product, tim
 end
 
 """
-    get_past_outbound_orders(state::State, location::Node, product::Product, time::Int64, step_back::Int64)::Array{Union{Missing, Int64}, 1}
+    get_past_outbound_orders(state::State, location::ConcreteNode, product::Product, time::Int64, step_back::Int64)::Array{Union{Missing, Int64}, 1}
 
 Gets, for each of the `step_back` periods before `time`, the quantity of
 `product` that was ordered *from* `location` (i.e. `location` was the
@@ -510,7 +515,7 @@ a `location`/`product` nothing was ever recorded for (either because no such
 policy is in play, or simply because no order ever originated there), every
 period reads back as `0`, matching what an exhaustive scan would have found.
 """
-function get_past_outbound_orders(state::State, location::Node, product::Product, time::Int64, step_back::Int64)::Array{Union{Missing, Int64}, 1}
+function get_past_outbound_orders(state::State, location::ConcreteNode, product::Product, time::Int64, step_back::Int64)::Array{Union{Missing, Int64}, 1}
     past_orders = zeros(Union{Missing, Int64}, step_back)
     quantities = get(state.outbound_order_quantities, (location, product), nothing)
     for t in 1:step_back

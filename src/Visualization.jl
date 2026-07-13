@@ -5,7 +5,7 @@ using PlotlyJS
 
     Plots the inventory on hand of a product at a location over time.
 """
-function plot_inventory_onhand(state::State, location::Node, product::Product)
+function plot_inventory_onhand(state::State, location::ConcreteNode, product::Product)
     #historical_on_hand::Array{Dict{Storage, Dict{Product, Int64}}, 1}
     layout = Layout(title="Inventory on hand",
                    xaxis_title="Period",
@@ -19,7 +19,7 @@ end
 
     Plots the inventory on hand of a product at a location over time for multiple scenarios.
 """
-function plot_inventory_onhand(states::Array{State, 1}, location::Node, product::Product)
+function plot_inventory_onhand(states::Array{State, 1}, location::ConcreteNode, product::Product)
     #historical_on_hand::Array{Dict{Storage, Dict{Product, Int64}}, 1}
     layout = Layout(title="Inventory on hand",
                    xaxis_title="Period",
@@ -36,7 +36,7 @@ end
 
     Plots the inventory on hand of a product over time for multiple locations.
 """
-function plot_inventory_onhand(state::State, locations::Array{L, 1}, product::Product) where L <: Node
+function plot_inventory_onhand(state::State, locations::Array{L, 1}, product::Product) where L <: ConcreteNode
     #historical_on_hand::Array{Dict{Storage, Dict{Product, Int64}}, 1}
     layout = Layout(title="Inventory on hand",
                    xaxis_title="Period",
@@ -49,7 +49,7 @@ function plot_inventory_onhand(state::State, locations::Array{L, 1}, product::Pr
         layout)
 end
 
-# function plot_pending_outbound_order_lines(state::State, locations::Array{L, 1}, product::Product) where L <: Node
+# function plot_pending_outbound_order_lines(state::State, locations::Array{L, 1}, product::Product) where L <: ConcreteNode
 #     layout = Layout(title="Pending outbound order lines",
 #                    xaxis_title="Period",
 #                    yaxis_title="Unit")
@@ -61,7 +61,7 @@ end
 #         layout)
 # end
 
-function plot_orders(state::State, locations::Array{L, 1}, product::Product) where L <: Node
+function plot_orders(state::State, locations::Array{L, 1}, product::Product) where L <: ConcreteNode
     layout = Layout(title="Orders",
                    xaxis_title="Period",
                    yaxis_title="Unit")

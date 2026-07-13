@@ -169,7 +169,7 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
     end
 end
 
-function send_inventory!(state::State, env::Env, location::Node, product::Product, time::Int)
+function send_inventory!(state::State, env::Env, location::ConcreteNode, product::Product, time::Int)
     #println("send_inventory $location $product $time")
     if !haskey(state.pending_outbound_order_lines, (location, product))
         return
@@ -246,7 +246,7 @@ function place_orders(state::State, env::Env, location::Customer, product::Produ
     end
 end
     
-function place_orders(state::State, env::Env, location, product::Product, time::Int, orders::Array{OrderLine, 1})
+function place_orders(state::State, env::Env, location::ConcreteNode, product::Product, time::Int, orders::Array{OrderLine, 1})
     empty!(orders)
     for trip in get_inbound_trips(env, location, time)
         #println(policies)

@@ -5,11 +5,15 @@ struct Env
     supplychain::SupplyChain
     initial_states::Array{State, 1}
 
-    # Concretely Vector{Node} (not `Array{<:Node, 1}`, a UnionAll): the latter
-    # made the field itself abstractly typed, forcing dynamic dispatch on
-    # every access even though the stored vector's element type never
-    # changes for a given Env.
-    sorted_locations::Vector{Node}
+    # Concretely Vector{ConcreteNode} (not `Array{<:Node, 1}`, a UnionAll):
+    # the latter made the field itself abstractly typed, forcing dynamic
+    # dispatch on every access even though the stored vector's element type
+    # never changes for a given Env. ConcreteNode rather than the bare
+    # abstract Node lets every consumer (simulate's loop, place_orders,
+    # send_inventory!, ...) union-split dispatch into a handful of concrete
+    # branches instead of a fully dynamic call - see
+    # SupplyChainModeling.ConcreteNode.
+    sorted_locations::Vector{ConcreteNode}
     sorted_products::Array{Product, 1}
 
     # (location, period)-indexed departure table: departures[location][period]
@@ -17,7 +21,7 @@ struct Env
     # replaces a flat, departure-sorted-then-linearly-scanned trip list per
     # location (O(trips ever bound for location), which grows with horizon)
     # with direct O(1) indexing by period.
-    departures::Dict{Node, Vector{Vector{Trip}}}
+    departures::Dict{ConcreteNode, Vector{Vector{Trip}}}
 
     # Downstream customers depend only on network topology, which is fixed
     # for the lifetime of an Env, so they're computed once here (reusing a
@@ -25,14 +29,14 @@ struct Env
     # otherwise rebuilds the whole location graph from scratch (see
     # create_graph) on every call, a cost that used to repeat on every
     # period of every one of optimize!'s thousands of policy evaluations.
-    downstream_customers::Dict{Node, Array{Customer, 1}}
+    downstream_customers::Dict{ConcreteNode, Array{Customer, 1}}
 
     # Mean demand depends only on downstream_customers and initial_states,
     # both fixed for the lifetime of an Env, so results are memoized here the
     # first time each (location, product, time) is actually asked for -
     # avoiding both the graph rebuild above and the redundant re-summation of
     # the same demand figures across repeated identical queries.
-    mean_demand_cache::Dict{Tuple{Node, Product, Int64}, Float64}
+    mean_demand_cache::Dict{Tuple{ConcreteNode, Product, Int64}, Float64}
 
     # Whether simulate() should archive the per-period history
     # (historical_on_hand/historical_orders/historical_filled_orders/
@@ -66,7 +70,7 @@ struct Env
         end
         sorted_locations = reverse_mapping[topological_sort_by_dfs(graph)]
 
-        downstream_customers = Dict{Node, Array{Customer, 1}}()
+        downstream_customers = Dict{ConcreteNode, Array{Customer, 1}}()
         for location in locations
             parents = dfs_parents(graph, mapping[location])
             downstream_customers[location] = Customer[reverse_mapping[i] for i in 1:length(mapping) if parents[i] > 0 && reverse_mapping[i] isa Customer]
@@ -79,7 +83,7 @@ struct Env
         # is revisited once per location. Each trip only needs to be pushed
         # into the (typically 1-2) destinations it actually has, at the
         # period slot it actually departs.
-        departures = Dict{Node, Vector{Vector{Trip}}}(location => [Trip[] for _ in 1:supplychain.horizon] for location in locations)
+        departures = Dict{ConcreteNode, Vector{Vector{Trip}}}(location => [Trip[] for _ in 1:supplychain.horizon] for location in locations)
         for trip in trips
             for destination in trip.route.destinations
                 if haskey(departures, destination)
@@ -94,7 +98,7 @@ struct Env
                    collect(supplychain.products),
                    departures,
                    downstream_customers,
-                   Dict{Tuple{Node, Product, Int64}, Float64}(),
+                   Dict{Tuple{ConcreteNode, Product, Int64}, Float64}(),
                    record_history,
                    any(p -> required_lookback(p) > 0, values(policies)))
     end
@@ -114,7 +118,7 @@ function get_mean_demand(env::Env, customer::Customer, product::Product, time::I
     end
 end
 
-function get_mean_demand(env::Env, location::Node, product::Product, time::Int)
+function get_mean_demand(env::Env, location::ConcreteNode, product::Product, time::Int)
     return get!(env.mean_demand_cache, (location, product, time)) do
         demand = 0.0
         for customer in env.downstream_customers[location]

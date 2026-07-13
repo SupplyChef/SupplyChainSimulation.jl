@@ -34,19 +34,12 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      # TEMPORARY: SupplyChainModeling's capacity/overflow-cost and
-      # hash-caching features (PRs #2 and #5) are merged to main, but no new
-      # version has been registered in the Julia registry to reflect them -
-      # merging to main and registering a release are separate steps, and
-      # only the latter makes `Pkg.add`/compat-bound resolution see the
-      # change. Tracking main directly here bypasses that gap. The previous
-      # pin (claude/integer-indexing-simulation-pvnr4d) pointed at a PR that
-      # was closed without merging, which is what broke this step - main
-      # already includes everything that branch would have added, achieved
-      # instead via cheaper name-hash caching (see SupplyChainModeling PR
-      # #5) rather than id-based identity. Remove this step and bump the
-      # SupplyChainModeling compat bound once a new version is registered.
-      - run: julia --project=. -e 'using Pkg; Pkg.add(url="https://github.com/SupplyChef/SupplyChainModeling.jl", rev="main")'
+      # Project.toml's own [sources] override already pins SupplyChainModeling
+      # to whichever branch/rev currently has the unreleased features this
+      # package depends on - a separate `Pkg.add(rev=...)` step here used to
+      # duplicate that, and when the two disagreed (this step pinned "main",
+      # Project.toml pinned a feature branch) Pkg had to reconcile conflicting
+      # pins on every job, which is expensive across the whole matrix.
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1

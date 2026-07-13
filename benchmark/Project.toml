@@ -8,8 +8,8 @@ SupplyChainSimulation = "1febdd50-69ad-4f0a-8312-f316c31db602"
 # Mirrors the root Project.toml's SupplyChainModeling override: this is a
 # standalone Pkg environment, so it does not inherit the root's [sources]
 # override and would otherwise silently resolve SupplyChainModeling from the
-# registry (predating the current optimization work), or main (missing
-# ConcreteNode - see root Project.toml's comment).
+# registry (predating the current optimization work) - see root
+# Project.toml's comment.
 [sources]
 SupplyChainSimulation = {path = ".."}
-SupplyChainModeling = {url = "https://github.com/SupplyChef/SupplyChainModeling.jl", rev = "claude/benchmark-performance-stalled-hbsfre"}
+SupplyChainModeling = {url = "https://github.com/SupplyChef/SupplyChainModeling.jl", rev = "main"}

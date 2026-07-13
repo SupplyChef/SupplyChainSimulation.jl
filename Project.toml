@@ -21,12 +21,13 @@ SupplyChainModeling = "0.2, 0.3"
 UUIDs = "1.8, 1.9, 1.10, 1.11, 1.12"
 julia = "1.8, 1.9, 1.10, 1.11, 1.12"
 
-# TEMPORARY: pinned to the claude/benchmark-performance-stalled-hbsfre
-# branch instead of main because it adds ConcreteNode (a closed
-# Union{Storage,Customer,Supplier,Plant} used in Lane's hot-path type
-# signatures - see that branch's commit), which this package's Env/State/
-# Simulation hot-path retyping depends on and which hasn't been merged to
-# main yet. Repoint at main (or bump the compat bound) once that branch is
-# merged and, ideally, a new version is registered.
+# TEMPORARY: merging to SupplyChainModeling's main branch and registering a
+# new package version are separate steps, and only the latter is visible to
+# normal compat-bound resolution - main currently includes ConcreteNode (a
+# closed Union{Storage,Customer,Supplier,Plant} used in Lane's hot-path type
+# signatures, which this package's Env/State/Simulation hot-path retyping
+# depends on) that the actually-registered version doesn't have yet. Remove
+# this section and bump the SupplyChainModeling compat bound once a new
+# version is registered.
 [sources]
-SupplyChainModeling = {url = "https://github.com/SupplyChef/SupplyChainModeling.jl", rev = "claude/benchmark-performance-stalled-hbsfre"}
+SupplyChainModeling = {url = "https://github.com/SupplyChef/SupplyChainModeling.jl", rev = "main"}

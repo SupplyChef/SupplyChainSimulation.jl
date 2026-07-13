@@ -35,7 +35,7 @@ function set_parameters!(policy::QuantityOrderingPolicy, values::Array{Float64, 
     policy.orders .= Int.(round.(values))
 end
 
-function get_order(policy::QuantityOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
+function get_order(policy::QuantityOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64
     order = max(0, policy.orders[time])
     return order
 end
@@ -61,7 +61,7 @@ function set_parameters!(policy::ProductQuantityOrderingPolicy, values::Array{Fl
     policy.order = Int(round(values[1]))
 end
 
-function get_order(policy::ProductQuantityOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
+function get_order(policy::ProductQuantityOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64
     if time == policy.period
         order = max(0, policy.order)
         return order
@@ -91,7 +91,7 @@ function set_parameters!(policy::OnHandUptoOrderingPolicy, values::Array{Float64
     policy.upto = Int(round(values[1]))
 end
 
-function get_order(policy::OnHandUptoOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
+function get_order(policy::OnHandUptoOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64
     return max(0, policy.upto - get_on_hand_inventory(state, location, product))
 end
 
@@ -116,7 +116,7 @@ function set_parameters!(policy::NetUptoOrderingPolicy, values::Array{Float64, 1
     policy.upto = Int(round(values[1]))
 end
 
-function get_order(policy::NetUptoOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
+function get_order(policy::NetUptoOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64
     return max(0, policy.upto - get_net_inventory(state, location, product, time))
 end
 
@@ -142,7 +142,7 @@ function set_parameters!(policy::NetSSOrderingPolicy, values::Array{Float64, 1})
     policy.S = Int(round(values[2]))
 end
 
-function get_order(policy::NetSSOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
+function get_order(policy::NetSSOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64
     net_inventory = get_net_inventory(state, location, product, time)
     #println("net inventory @ $time: $net_inventory")
     if net_inventory >= policy.s
@@ -172,7 +172,7 @@ function set_parameters!(policy::ForwardCoverageOrderingPolicy, values::Array{Fl
     policy.cover = values[1]
 end
 
-function get_order(policy::ForwardCoverageOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
+function get_order(policy::ForwardCoverageOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64
     net_inventory = get_net_inventory(state, location, product, time)
     mean_demand = get_mean_demand(env, location, product, time)
 
@@ -236,7 +236,7 @@ end
 """
 required_lookback(policy::BackwardCoverageOrderingPolicy)::Int = length(policy.cover)
 
-function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
+function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64
     net_inventory = get_net_inventory(state, location, product, time)
     
     past_orders = get_past_outbound_orders(state, location, product, time, length(policy.cover))
@@ -288,7 +288,7 @@ function set_parameters!(policy::SingleOrderOrderingPolicy, values::Array{Float6
     policy.quantity = Int(round(values[2]))
 end
 
-function get_order(policy::SingleOrderOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
+function get_order(policy::SingleOrderOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64
     if time == policy.period
         return policy.quantity
     else
@@ -296,6 +296,28 @@ function get_order(policy::SingleOrderOrderingPolicy, state::State, env::Env, lo
     end
 end
 
-function get_order(policy::InventoryOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
+function get_order(policy::InventoryOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64
     return 0
+end
+
+"""
+    wrap_get_order(policy::InventoryOrderingPolicy)::GetOrderFn
+
+Resolves which concrete `get_order` method to call for `policy`, once, and
+returns a type-erased `GetOrderFn` that invokes it directly - see
+`GetOrderFn`'s docstring (in the top-level module file) for why. This is a
+function barrier: `policy`'s static type here is the abstract
+`InventoryOrderingPolicy`, so calling `wrap_get_order` is itself a dynamic
+dispatch, but it is only ever called once per (lane, product) at
+`Env`-construction time (see `get_lane_policies`), not once per `get_order`
+call in `simulate()`'s hot loop.
+
+Captures `policy` by reference in the returned closure (policies are
+mutable structs), so `optimize!`'s `set_parameters!(policy, ...)` mutations
+each trial - applied in place to the same policy objects `Env` was built
+from - stay visible on every subsequent call through the wrapper.
+"""
+function wrap_get_order(policy::InventoryOrderingPolicy)::GetOrderFn
+    return GetOrderFn((state, env, location, lane, product, time) ->
+        get_order(policy, state, env, location, lane, product, time))
 end

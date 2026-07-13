@@ -38,8 +38,8 @@ mutable struct State
 
     overflow_inventory::Dict{Tuple{Storage, Product}, Array{Int64, 1}}
 
-    pending_outbound_order_lines::Dict{Tuple{Node, Product}, Set{OrderLine}}
-    pending_inbound_order_lines::Dict{Tuple{Node, Product}, Set{OrderLine}}
+    pending_outbound_order_lines::Dict{Tuple{Node, Product}, Vector{OrderLine}}
+    pending_inbound_order_lines::Dict{Tuple{Node, Product}, Vector{OrderLine}}
 
     filled_orders::Set{OrderLine}
     placed_orders::Set{OrderLine}
@@ -74,8 +74,8 @@ mutable struct State
                    Dict{Tuple{Storage, Product}, Int64}(),
                    Dict{Tuple{Node, Product}, Array{Int64, 1}}(),
                    Dict{Tuple{Storage, Product}, Array{Int64, 1}}(),
-                   Dict{Tuple{Node, Product}, Set{OrderLine}}(),
-                   Dict{Tuple{Node, Product}, Set{OrderLine}}(),
+                   Dict{Tuple{Node, Product}, Vector{OrderLine}}(),
+                   Dict{Tuple{Node, Product}, Vector{OrderLine}}(),
                    Set{OrderLine}(),
                    Set{OrderLine}(),
                    [],
@@ -168,11 +168,11 @@ end
 function add_order_line!(state::State, order_line::OrderLine)
     t1 = (order_line.origin, order_line.product)
     if !haskey(state.pending_outbound_order_lines, t1) 
-        state.pending_outbound_order_lines[t1] = Set{OrderLine}()
+        state.pending_outbound_order_lines[t1] = OrderLine[]
     end
     t2 = (order_line.destination, order_line.product)
     if !haskey(state.pending_inbound_order_lines, t2) 
-        state.pending_inbound_order_lines[t2] = Set{OrderLine}()
+        state.pending_inbound_order_lines[t2] = OrderLine[]
     end
 
     Base.push!(state.pending_outbound_order_lines[t1], order_line)
@@ -180,8 +180,28 @@ function add_order_line!(state::State, order_line::OrderLine)
 end
 
 function delete_order_line!(state::State, order_line::OrderLine)
-    Base.delete!(state.pending_outbound_order_lines[(order_line.origin, order_line.product)], order_line)
-    Base.delete!(state.pending_inbound_order_lines[(order_line.destination, order_line.product)], order_line)
+    # Fast deletion from outbound vector
+    outbound = state.pending_outbound_order_lines[(order_line.origin, order_line.product)]
+    idx1 = findfirst(==(order_line), outbound)
+    if !isnothing(idx1)
+        deleteat!(outbound, idx1)
+    end
+
+    # Fast deletion from inbound vector
+    inbound = state.pending_inbound_order_lines[(order_line.destination, order_line.product)]
+    idx2 = findfirst(==(order_line), inbound)
+    if !isnothing(idx2)
+        deleteat!(inbound, idx2)
+    end
+end
+
+function delete_inbound_order_line!(state::State, order_line::OrderLine)
+    # Fast deletion from inbound vector
+    inbound = state.pending_inbound_order_lines[(order_line.destination, order_line.product)]
+    idx = findfirst(==(order_line), inbound)
+    if !isnothing(idx)
+        deleteat!(inbound, idx)
+    end
 end
 
 function delete_order_lines!(state::State, order_lines)
@@ -191,22 +211,44 @@ function delete_order_lines!(state::State, order_lines)
 end
 
 function set_on_hand_inventory!(state::State, to::Node, product::Product, quantity, time)
-    ages = get!(() -> Dict{Int64, Int64}(), state.on_hand_inventory, (to, product))
+    key = (to, product)
+    ages = get(state.on_hand_inventory, key, nothing)
+    if isnothing(ages)
+        ages = Dict{Int64, Int64}()
+        state.on_hand_inventory[key] = ages
+    end
     previous = get(ages, time, 0)
-    if !haskey(ages, time)
-        push!(get!(() -> Int64[], state.on_hand_ages_order, (to, product)), time)
+    if previous == 0 && !haskey(ages, time)
+        ages_order = get(state.on_hand_ages_order, key, nothing)
+        if isnothing(ages_order)
+            ages_order = Int64[]
+            state.on_hand_ages_order[key] = ages_order
+        end
+        push!(ages_order, time)
     end
     ages[time] = Int(quantity)
-    state.on_hand_totals[(to, product)] = get(state.on_hand_totals, (to, product), 0) + Int(quantity) - previous
+    state.on_hand_totals[key] = get(state.on_hand_totals, key, 0) + Int(quantity) - previous
 end
 
 function add_on_hand_inventory!(state::State, to::Storage, product::Product, quantity::Int64, time)
-    ages = get!(() -> Dict{Int64, Int64}(), state.on_hand_inventory, (to, product))
-    if !haskey(ages, time)
-        push!(get!(() -> Int64[], state.on_hand_ages_order, (to, product)), time)
+    key = (to, product)
+    ages = get(state.on_hand_inventory, key, nothing)
+    if isnothing(ages)
+        ages = Dict{Int64, Int64}()
+        state.on_hand_inventory[key] = ages
     end
-    ages[time] = get(ages, time, 0) + quantity
-    state.on_hand_totals[(to, product)] = get(state.on_hand_totals, (to, product), 0) + quantity
+    if !haskey(ages, time)
+        ages_order = get(state.on_hand_ages_order, key, nothing)
+        if isnothing(ages_order)
+            ages_order = Int64[]
+            state.on_hand_ages_order[key] = ages_order
+        end
+        push!(ages_order, time)
+        ages[time] = quantity
+    else
+        ages[time] += quantity
+    end
+    state.on_hand_totals[key] = get(state.on_hand_totals, key, 0) + quantity
 end
 
 function remove_on_hand_inventory!(state::State, to::Storage, product::Product, quantity::Int64)
@@ -240,14 +282,19 @@ function expire_on_hand_inventory(state::State, to::Storage, product::Product, t
     if isnothing(ages)
         return
     end
-    # Order doesn't matter here (unlike remove_on_hand_inventory!'s FIFO
-    # consumption): every bucket past max_age gets zeroed regardless of which
-    # order they're visited in, so no need to collect+sort the keys.
     expired_total = 0
-    for (t, on_hand) in ages
-        if (t <= time - max_age) && (on_hand > 0)
-            ages[t] = 0
-            expired_total += on_hand
+    ages_order = get(state.on_hand_ages_order, (to, product), nothing)
+    if !isnothing(ages_order)
+        for t in ages_order
+            if t <= time - max_age
+                on_hand = ages[t]
+                if on_hand > 0
+                    ages[t] = 0
+                    expired_total += on_hand
+                end
+            else
+                break
+            end
         end
     end
     if expired_total > 0

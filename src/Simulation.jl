@@ -132,14 +132,17 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
         return
     end
 
-    order_lines = collect(state.pending_outbound_order_lines[(location, product)])
+    order_lines = state.pending_outbound_order_lines[(location, product)]
     sort!(order_lines, by=ol -> (ol.creation_time, ol.due_date))
     #@debug order_lines
+
+    fulfilled_or_dropped = OrderLine[]
 
     for order_line in order_lines
         if order_line.due_date < time
             record_drop!(state, order_line)
-            delete_order_line!(state, order_line)
+            push!(fulfilled_or_dropped, order_line)
+            delete_inbound_order_line!(state, order_line)
             continue
         end
 
@@ -154,10 +157,15 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
 
         send_inventory!(state, env, order_line.trip, order_line.destination, order_line.product, order_line.quantity, time)
 
-        delete_order_line!(state, order_line)
+        push!(fulfilled_or_dropped, order_line)
+        delete_inbound_order_line!(state, order_line)
 
         record_fill!(state, env, order_line)
         push!(state.filled_orders, order_line)
+    end
+
+    if !isempty(fulfilled_or_dropped)
+        filter!(ol -> ol ∉ fulfilled_or_dropped, order_lines)
     end
 end
 
@@ -167,7 +175,7 @@ function send_inventory!(state::State, env::Env, location::Node, product::Produc
         return
     end
 
-    order_lines = collect(state.pending_outbound_order_lines[(location, product)])
+    order_lines = state.pending_outbound_order_lines[(location, product)]
     sort!(order_lines, by=ol -> (ol.creation_time, ol.due_date))
     #@debug order_lines
 
@@ -181,6 +189,7 @@ function send_inventory!(state::State, env::Env, location::Node, product::Produc
         if order_line.due_date < time
             record_drop!(state, order_line)
             push!(fulfilled_order_lines, order_line)
+            delete_inbound_order_line!(state, order_line)
             continue
         end
 
@@ -200,6 +209,7 @@ function send_inventory!(state::State, env::Env, location::Node, product::Produc
             available -= order_line.quantity
 
             push!(fulfilled_order_lines, order_line)
+            delete_inbound_order_line!(state, order_line)
 
             record_fill!(state, env, order_line)
             push!(state.filled_orders, order_line)
@@ -210,7 +220,9 @@ function send_inventory!(state::State, env::Env, location::Node, product::Produc
         end
     end
 
-    delete_order_lines!(state, fulfilled_order_lines)
+    if !isempty(fulfilled_order_lines)
+        filter!(ol -> ol ∉ fulfilled_order_lines, order_lines)
+    end
 end
 
 # Place orders

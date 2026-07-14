@@ -5,7 +5,7 @@ This proposal outlines a concrete architectural redesign of `SupplyChainSimulati
 
 The current implementation relies on a pointer-heavy, dictionary-based, and heap-allocated object model. By transitioning the core simulation state and logic to a **flat, cache-friendly, contiguous layout**—where nodes, products, and lanes are identified by contiguous integer indices and simulated via dense arrays/matrices—we eliminate dynamic dispatch, minimize GC overhead, and maximize memory throughput.
 
-This document analyzes the current bottlenecks, details the flat memory architecture, specifies how each simulation step translates to high-performance kernels, maps out parallelism/GPU implementation, addresses memory footprint concerns at scale with **index compression**, and outlines a **step-by-step, working-to-working evolutionary plan** to refactor the package while maintaining full API compatibility and passing all existing tests.
+This document analyzes the current bottlenecks, details the flat memory architecture, specifies how each simulation step translates to high-performance kernels, maps out parallelism/GPU implementation, addresses memory footprint concerns at scale with **index compression**, and outlines a **step-by-step, in-place, bit-by-bit evolutionary plan** to refactor the package inside the existing codebase while maintaining full API compatibility and passing all existing tests.
 
 ---
 
@@ -153,7 +153,6 @@ end
 
 ### 5.2 Place & Receive Orders Kernel
 During ordering, locations are iterated in reverse topological order.
-Instead of storing and allocating individual `OrderLine` objects:
 ```julia
 # Customer demand placement
 for id in 1:M
@@ -229,8 +228,6 @@ end
 
 ## 6. Parallelism and GPU Execution Path
 
-A flat contiguous memory layout is highly conducive to parallel architectures.
-
 ### 6.1 Multi-Threaded Parallelism (CPU Cores)
 Because policies are optimized across thousands of evaluations (e.g. `bboptimize` evaluating 15,000 function runs) and many parallel initial scenarios (e.g., Monte Carlo simulations in the Beer Game), we can achieve linear speedups with CPU multi-threading:
 * **Scenario-level Parallelism:** Distribute individual scenario runs within `minimize!` across a `Threads.@threads` loop. Since each thread operates on its own independent `FlatState` instance, there are no race conditions or synchronization overheads.
@@ -246,33 +243,47 @@ A GPU requires flat, statically-sized global memory and avoids branch-heavy dyna
 
 ---
 
-## 7. Step-by-Step "Working-to-Working" Evolution Plan
+## 7. Step-by-Step "Working-to-Working" In-Place Evolution Plan
 
-To ensure all correctness tests pass at every step of development, we will adopt a phased, backward-compatible evolution strategy:
+Instead of building a separate high-performance implementation block on the side (which can lead to code duplication, design drift, and massive integration headaches), we can evolve the **existing architecture bit-by-bit in-place**.
 
-### Phase 1: Establish High-Performance Interfaces Side-by-Side
-1. Maintain the existing `State`, `Env`, and `simulate` code exactly as they are today.
-2. Build an internal module `FlatSimulation` that implements `FlatState`, `FlatEnv`, and `flat_simulate`.
-3. Write bidirectional adapter functions:
-   - `to_flat_env(env::Env, policies)::FlatEnv`
-   - `to_flat_state(state::State)::FlatState`
-   - `update_legacy_state!(legacy::State, flat::FlatState)`
-4. Set up verification tests that run both `simulate` and `flat_simulate` on identical inputs, validating that they produce bit-identical results.
+At each small, incremental step, we introduce a flat layout for a specific subset of the simulation state, map the legacy dictionaries to read/write from this flat memory via custom getters/setters, and verify that 100% of the correctness tests continue to pass.
 
-### Phase 2: Integrate `FlatSimulation` into the Optimization Loop
-1. Modify `optimize!` to translate its legacy input networks into `FlatEnv` and `FlatState`.
-2. Execute the `bboptimize` trials entirely using the high-performance `flat_simulate` kernel.
-3. Because trial simulations represent 99% of `optimize!` computation time, this yields an immediate 10x–50x speedup for policy optimization, while keeping the user-facing inputs and outputs perfectly backward-compatible.
-4. Run all calibration, beer game, and policy optimization tests to confirm correctness and baseline convergence.
+### Step 1: Pre-calculate Compressed Mappings in `Env`
+* **Action:** When `Env` is constructed, build the high-performance flat lookup structures:
+  - Establish a stable order and construct contiguous integer arrays mapping every active product-location to an ID: `pl_location::Vector{Int32}`, `pl_product::Vector{Int32}`.
+  - Construct the lookup tables: `pl_to_lp`, `lane_lead_time`, `max_capacity`, and `sales_price` arrays.
+* **In-Place Integration:** At this step, the core simulation continues to run on legacy dictionaries. We simply build these pre-calculated indices in `Env` and store them in inactive fields.
+* **Status:** Working to working. No behavior changes. Correctness tests pass.
 
-### Phase 3: Transition the Public API to Flat Internals
-1. Refactor the public `State` and `Env` structs to wrap `FlatState` and `FlatEnv` internally.
-2. Implement deprecated/legacy properties as on-the-fly computed views or getters:
-   - For example, if a legacy test reads `state.on_hand_inventory`, we implement it as a custom property/method that builds the dictionary from `FlatState`'s dense array on demand.
-3. Fully replace the serial `simulate` with `flat_simulate`, making the high-performance execution path the default for all simulations.
-4. Run the entire test suite (`runtests.jl`) to ensure absolute API compatibility and correctness.
+### Step 2: Refactor `on_hand_totals` to Flat Memory in `State`
+* **Action:** Replace the `state.on_hand_totals` dictionary in `State` with a flat `Vector{Int64}` of size $M$ (where $M$ is the number of active Product-Location pairs pre-calculated in Step 1).
+* **Bridging & Legacy Support:**
+  - Rewrite `get_on_hand_inventory(state, location, product)` to look up the pre-calculated integer ID for `(location, product)` and directly index into the flat `Vector`.
+  - Maintain backward compatibility by providing custom overload/view methods so that any old code accessing `state.on_hand_totals` directly (like tests or custom policies) receives a virtual dictionary view (using a lightweight wrapper implementing `AbstractDict`) that reads/writes to the flat array.
+* **Status:** Working to working. Dynamic dictionary hashing is eliminated for on-hand inventory totals. Core correctness tests pass.
 
-### Phase 4: Implement Parallelism and GPU Extensions
-1. Introduce multi-threaded evaluations in `optimize!` via `Threads.@threads`.
-2. Write a `gpu_simulate` function leveraging `CUDA.jl` for users simulating massive networks or running large-scale training workloads (e.g., reinforcement learning).
-3. Add a benchmark suite to track execution speedups, aiming to consistently outperform the previous architecture by orders of magnitude.
+### Step 3: Flatten `in_transit_inventory` and `overflow_inventory`
+* **Action:**
+  - Replace the dictionary `state.in_transit_inventory` with a 2D dense `Matrix{Int64}` of size $(N_{\text{lp}}, Horizon)$.
+  - Replace `state.overflow_inventory` with a compressed vector/matrix.
+* **Bridging & Legacy Support:**
+  - Rewrite `get_in_transit_inventory` and `add_in_transit_inventory!` to look up the compressed `lp_id` of the lane-product and perform direct matrix indexing.
+  - Expose a virtual dictionary view wrapper for any legacy accesses to `state.in_transit_inventory`.
+* **Status:** Working to working. In-transit lookups now run in $O(1)$ time with zero heap allocations. Tests pass.
+
+### Step 4: Refactor the Simulation Loop Steps
+* **Action:** Convert individual parts of the `simulate` loop inside `Simulation.jl` to use flat array operations rather than legacy dict lookups:
+  - Migrate `receive_inventory!` to run sequentially across the compressed active Product-Location pairs.
+  - Migrate policy evaluation inside `place_orders` to loop through the pre-sorted list of active locations and products, executing policies directly on flat inventories.
+* **Status:** Working to working. Performance increases significantly as we eliminate sequential dictionary lookups during the main loop steps. Tests pass.
+
+### Step 5: Flatten `pending_orders` and Remove `OrderLine` Allocations
+* **Action:**
+  - Replace `state.pending_outbound_order_lines` and `state.pending_inbound_order_lines` with the flat compressed `pending_orders` backorder vector.
+  - For tests and reporting functions that still inspect the legacy list of order lines, lazily materialize/reconstruct `OrderLine` structs on demand from the flat state, or maintain a flat primitive circular buffer inside `State` that tracks active placements without heap-allocating full objects.
+* **Status:** Working to working. GC allocation overhead drops to near-zero. All correctness tests pass, but simulation runs much faster.
+
+### Step 6: Final Cleanup and Compilation Optimization
+* **Action:** Clean up any virtual dictionary wrappers and transition the last legacy files (such as visualization or optimization steps) to read from the flat data structures directly. Annotate inner loops with `@simd`, `@inbounds`, and optimize compilation.
+* **Status:** Goal Achieved! The simulation code is now fully flat, cache-aligned, ready for multi-threaded scenario expansion, and capable of a 10x-100x+ execution speedup inside the same codebase.

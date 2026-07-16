@@ -7,7 +7,6 @@ function receive_inventory!(state::State, env::Env, location::Storage, product, 
     if isinf(max_capacity)
         add_on_hand_inventory!(state, location, product, quantity, time)
         add_in_transit_inventory!(state, location, product, time, -quantity)
-        @debug "Received at $time, $location, $product, $quantity"
         return
     end
 
@@ -24,17 +23,13 @@ function receive_inventory!(state::State, env::Env, location::Storage, product, 
             # excess is delayed, not lost: it waits and is retried the next period
             add_in_transit_inventory!(state, location, product, time + 1, overflow)
         end
-        @debug "Capacity exceeded at $time, $location, $product: accepted $accepted, overflowed $overflow"
     end
-
-    @debug "Received at $time, $location, $product, $accepted"
 end
 
 function receive_inventory!(state::State, env::Env, location::Customer, product, time)
     #println(state)
     quantity = get_in_transit_inventory(state, location, product, time)
     add_in_transit_inventory!(state, location, product, time, -quantity)
-    @debug "Received at $time, $location, $product, $quantity"
 end
 
 function receive_inventory!(state::State, env::Env, location::Supplier, product, time)
@@ -48,12 +43,10 @@ function send_inventory!(state::State, env::Env, trip::Trip, destination, produc
         return
     end
     add_in_transit_inventory!(state, destination, product, time + get_leadtime(trip.route, destination), quantity)
-    @debug "Sent at $time, $(trip.route.origin), $destination, $product, $quantity with lead time $(trip.route.times[1])"
 end
 
 function send_inventory!(state::State, env::Env, trip::Trip, destination::Customer, product, quantity, time)
     #no-op
-    @debug "Sent at $time, $(trip.route.origin), $destination, $product, $quantity with lead time $(trip.route.times[1])"
 end
 
 # Metrics: fill/drop sites
@@ -147,7 +140,6 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
         end
 
         if ismissing(order_line.trip) || order_line.trip.departure < time
-            @debug "replacing trip $(order_line.trip)"
             trip = find_next_departure(env, order_line.destination, time, order_line.due_date)
             if isnothing(trip)
                 continue
@@ -196,7 +188,6 @@ function send_inventory!(state::State, env::Env, location::ConcreteNode, product
         #println("send_inventory on_hand $(get_on_hand_inventory(state, location, order_line.product) vs $(order_line.quantity)")
         if order_line.quantity <= available
             if ismissing(order_line.trip) || order_line.trip.departure < time
-                @debug "replacing trip $(order_line.trip)"
                 trip = find_next_departure(env, order_line.destination, time, order_line.due_date)
                 if isnothing(trip)
                     continue
@@ -259,8 +250,7 @@ function place_orders(state::State, env::Env, location::ConcreteNode, product::P
                     quantity = Int(ceil(minimum_quantity))
                 end
                 order = OrderLine(time, trip.route.origin, location, product, quantity, typemax(Int64), trip)
-                @debug "Ordered at $time, $location, $product, $quantity from $(trip.route.origin) with lead time $(trip.route.times[1])"
-                
+
                 push!(orders, order)
                 push!(state.placed_orders, order)
                 record_placement!(state, env, order)

@@ -268,7 +268,6 @@ function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env::En
     # isfinite doesn't rule out a deficit too large for ceil(Int, ...) to
     # represent without overflowing.
     order = (isfinite(deficit) && deficit < 1e15) ? max(0, ceil(Int, deficit)) : 0
-    @debug "Computing order at $time, $location, $product, order: $order, past outbound orders: $past_orders, cover: $coverage, net inventory: $net_inventory"
     return order
 end
 

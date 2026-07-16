@@ -8,18 +8,35 @@ mutable struct State
     supply_chain::SupplyChain
     demand::Dict{Tuple{Customer, Product}, Demand}
 
-    on_hand_inventory::Dict{Tuple{Storage, Product}, Dict{Int64, Int64}}
+    # Dense integer indices for every storage/product in supply_chain,
+    # fixed for the lifetime of a State. Lets the on_hand_* fields below be
+    # flat Matrix/Vector-of-Vector containers instead of Dicts keyed by
+    # (Storage, Product) tuples - turning every on-hand access into direct
+    # array indexing (no hashing, no lazy-allocate-on-miss branch) instead
+    # of a Dict lookup. storages/products are the reverse mapping (index ->
+    # object), used when a mutation site needs to walk every (storage,
+    # product) pair (see snapshot_state!).
+    storage_index::Dict{Storage, Int64}
+    product_index::Dict{Product, Int64}
+    storages::Vector{Storage}
+    products::Vector{Product}
 
-    # Ages (simulation periods) that currently have an on_hand_inventory
-    # bucket for a given (storage, product), kept in ascending order.
-    # Inventory is only ever added at the current, monotonically increasing
-    # simulation time (see add_on_hand_inventory!/set_on_hand_inventory!),
-    # so a newly-seen age is always >= every age already recorded here - it
-    # can just be appended, no sort needed. remove_on_hand_inventory! reads
-    # this directly for its FIFO (oldest-first) consumption order instead of
-    # collect()-ing and sort!()-ing on_hand_inventory's Dict keys on every
-    # call.
-    on_hand_ages_order::Dict{Tuple{Storage, Product}, Vector{Int64}}
+    # [storage_index, product_index] -> horizon-length array of quantity by
+    # age (simulation period the inventory arrived), indexed directly by
+    # age instead of through a per-(storage,product) Dict{Int64,Int64} -
+    # same flat-array trick already used for in_transit_inventory below.
+    on_hand_inventory::Matrix{Vector{Int64}}
+
+    # Ages (simulation periods) that currently have a nonzero-ever
+    # on_hand_inventory bucket for a given (storage, product), kept in
+    # ascending order. Inventory is only ever added/set at the current,
+    # monotonically increasing simulation time (see
+    # add_on_hand_inventory!/set_on_hand_inventory!), so a newly-seen age is
+    # always >= every age already recorded here - it can just be appended,
+    # no sort needed. remove_on_hand_inventory! reads this directly for its
+    # FIFO (oldest-first) consumption order instead of collect()-ing and
+    # sort!()-ing on_hand_inventory's keys on every call.
+    on_hand_ages_order::Matrix{Vector{Int64}}
 
     # Running total per (storage, product) of everything in the
     # on_hand_inventory age buckets above, kept in sync by every mutation
@@ -27,7 +44,7 @@ mutable struct State
     # per pending order line inside send_inventory! and by every
     # inventory-position-based policy, and previously re-summed the age
     # buckets (allocating a default Dict on misses) on each call.
-    on_hand_totals::Dict{Tuple{Storage, Product}, Int64}
+    on_hand_totals::Matrix{Int64}
 
     # NOTE: these Dict fields are deliberately typed with the closed
     # Tuple{ConcreteNode, Product} key rather than `Tuple{<:Node, Product}`
@@ -72,11 +89,23 @@ mutable struct State
     function State(supply_chain; pending_outbound_order_lines=Dict{Storage, Array{OrderLine, 1}}())
         demand = Dict((d.customer, d.product) => d for d in supply_chain.demand)
 
+        storages = collect(supply_chain.storages)
+        products = collect(supply_chain.products)
+        storage_index = Dict{Storage, Int64}(s => i for (i, s) in enumerate(storages))
+        product_index = Dict{Product, Int64}(p => i for (i, p) in enumerate(products))
+        nstorages = length(storages)
+        nproducts = length(products)
+        horizon = supply_chain.horizon
+
         state = new(supply_chain,
                    demand,
-                   Dict{Tuple{Storage, Product}, Dict{Int64, Int64}}(),
-                   Dict{Tuple{Storage, Product}, Vector{Int64}}(),
-                   Dict{Tuple{Storage, Product}, Int64}(),
+                   storage_index,
+                   product_index,
+                   storages,
+                   products,
+                   [zeros(Int64, horizon) for _ in 1:nstorages, _ in 1:nproducts],
+                   [Int64[] for _ in 1:nstorages, _ in 1:nproducts],
+                   zeros(Int64, nstorages, nproducts),
                    Dict{Tuple{ConcreteNode, Product}, Array{Int64, 1}}(),
                    Dict{Tuple{Storage, Product}, Array{Int64, 1}}(),
                    Dict{Tuple{ConcreteNode, Product}, Vector{OrderLine}}(),
@@ -120,9 +149,11 @@ Any order lines passed via the `pending_outbound_order_lines` keyword at
 construction time are a one-time seed and are not restored by `reset!`.
 """
 function reset!(state::State)
-    empty!(state.on_hand_inventory)
-    empty!(state.on_hand_ages_order)
-    empty!(state.on_hand_totals)
+    for i in eachindex(state.on_hand_inventory)
+        fill!(state.on_hand_inventory[i], 0)
+        empty!(state.on_hand_ages_order[i])
+    end
+    fill!(state.on_hand_totals, 0)
     empty!(state.in_transit_inventory)
     empty!(state.overflow_inventory)
     empty!(state.pending_outbound_order_lines)
@@ -215,57 +246,50 @@ function delete_order_lines!(state::State, order_lines)
     end
 end
 
+# Only ever called (via reset!) once per (storage, product) at time == 1, so
+# the ages_order dedup here doesn't need to be O(1) - see add_on_hand_inventory!
+# for the hot-path version of the same bookkeeping.
 function set_on_hand_inventory!(state::State, to::ConcreteNode, product::Product, quantity, time)
-    key = (to, product)
-    ages = get(state.on_hand_inventory, key, nothing)
-    if isnothing(ages)
-        ages = Dict{Int64, Int64}()
-        state.on_hand_inventory[key] = ages
-    end
-    previous = get(ages, time, 0)
-    if previous == 0 && !haskey(ages, time)
-        ages_order = get(state.on_hand_ages_order, key, nothing)
-        if isnothing(ages_order)
-            ages_order = Int64[]
-            state.on_hand_ages_order[key] = ages_order
-        end
+    si = state.storage_index[to]
+    pi = state.product_index[product]
+    ages = state.on_hand_inventory[si, pi]
+    ages_order = state.on_hand_ages_order[si, pi]
+    previous = ages[time]
+    if time ∉ ages_order
         push!(ages_order, time)
     end
     ages[time] = Int(quantity)
-    state.on_hand_totals[key] = get(state.on_hand_totals, key, 0) + Int(quantity) - previous
+    state.on_hand_totals[si, pi] += Int(quantity) - previous
 end
 
 function add_on_hand_inventory!(state::State, to::Storage, product::Product, quantity::Int64, time)
-    key = (to, product)
-    ages = get(state.on_hand_inventory, key, nothing)
-    if isnothing(ages)
-        ages = Dict{Int64, Int64}()
-        state.on_hand_inventory[key] = ages
-    end
-    if !haskey(ages, time)
-        ages_order = get(state.on_hand_ages_order, key, nothing)
-        if isnothing(ages_order)
-            ages_order = Int64[]
-            state.on_hand_ages_order[key] = ages_order
-        end
+    si = state.storage_index[to]
+    pi = state.product_index[product]
+    ages = state.on_hand_inventory[si, pi]
+    ages_order = state.on_hand_ages_order[si, pi]
+    # Ages are only ever touched at the current, monotonically increasing
+    # simulation time, so a new age is only ever the *last* one appended
+    # (or the very first) - checking ages_order's tail is O(1) and
+    # equivalent to the old per-call Dict haskey check.
+    if isempty(ages_order) || ages_order[end] != time
         push!(ages_order, time)
-        ages[time] = quantity
-    else
-        ages[time] += quantity
     end
-    state.on_hand_totals[key] = get(state.on_hand_totals, key, 0) + quantity
+    ages[time] += quantity
+    state.on_hand_totals[si, pi] += quantity
 end
 
 function remove_on_hand_inventory!(state::State, to::Storage, product::Product, quantity::Int64)
-    ages = state.on_hand_inventory[(to, product)]
+    si = state.storage_index[to]
+    pi = state.product_index[product]
+    ages = state.on_hand_inventory[si, pi]
     removed_total = 0
     # FIFO: must consume oldest inventory (smallest age/arrival time) first.
     # on_hand_ages_order already holds every age ever seen for this
     # (storage, product) in ascending order (ages only ever get added at the
     # current, monotonically increasing simulation time), so it can be
     # iterated directly instead of collect()-ing and sort!()-ing
-    # on_hand_inventory's Dict keys on every call.
-    for t in get(state.on_hand_ages_order, (to, product), Int64[])
+    # on_hand_inventory's keys on every call.
+    for t in state.on_hand_ages_order[si, pi]
         if quantity <= 0
             break
         end
@@ -274,36 +298,40 @@ function remove_on_hand_inventory!(state::State, to::Storage, product::Product, 
         quantity -= removed_quantity
         removed_total += removed_quantity
     end
-    state.on_hand_totals[(to, product)] -= removed_total
+    state.on_hand_totals[si, pi] -= removed_total
 end
 
 function get_on_hand_inventory(state::State, to::ConcreteNode, product::Product)::Int64
-    return get(state.on_hand_totals, (to, product), 0)
+    si = get(state.storage_index, to, 0)
+    if si == 0
+        return 0
+    end
+    pi = get(state.product_index, product, 0)
+    if pi == 0
+        return 0
+    end
+    return state.on_hand_totals[si, pi]
 end
 
 function expire_on_hand_inventory(state::State, to::Storage, product::Product, time)
     max_age = get_maximum_age(to, product)
-    ages = get(state.on_hand_inventory, (to, product), nothing)
-    if isnothing(ages)
-        return
-    end
+    si = state.storage_index[to]
+    pi = state.product_index[product]
+    ages = state.on_hand_inventory[si, pi]
     expired_total = 0
-    ages_order = get(state.on_hand_ages_order, (to, product), nothing)
-    if !isnothing(ages_order)
-        for t in ages_order
-            if t <= time - max_age
-                on_hand = ages[t]
-                if on_hand > 0
-                    ages[t] = 0
-                    expired_total += on_hand
-                end
-            else
-                break
+    for t in state.on_hand_ages_order[si, pi]
+        if t <= time - max_age
+            on_hand = ages[t]
+            if on_hand > 0
+                ages[t] = 0
+                expired_total += on_hand
             end
+        else
+            break
         end
     end
     if expired_total > 0
-        state.on_hand_totals[(to, product)] -= expired_total
+        state.on_hand_totals[si, pi] -= expired_total
     end
     return
 end
@@ -413,15 +441,24 @@ function snapshot_state!(state::State, time, record_history::Bool)
         sizehint!(on_hand_snapshot, length(state.on_hand_totals))
     end
     # on_hand_totals is maintained incrementally by every on-hand mutation
-    # site, so per-key totals are read directly instead of re-summing each
-    # key's age buckets here every period.
-    for (k, on_hand) in state.on_hand_totals
-        (location, product) = k
-        if on_hand != 0
-            state.metrics.holding_costs += on_hand * get(location.unit_holding_cost, product, 0)
-        end
-        if record_history
-            on_hand_snapshot[k] = on_hand
+    # site, so per-(storage,product) totals are read directly instead of
+    # re-summing each cell's age buckets here every period.
+    for pi in 1:size(state.on_hand_totals, 2), si in 1:size(state.on_hand_totals, 1)
+        on_hand = state.on_hand_totals[si, pi]
+        # A (storage, product) pair that was never touched by any on-hand
+        # mutation (on_hand_ages_order empty) never had a corresponding key
+        # in the old Dict-backed on_hand_totals either - skip it here too,
+        # so historical_on_hand/Visualization keep seeing only pairs that
+        # were ever actually stocked.
+        if on_hand != 0 || !isempty(state.on_hand_ages_order[si, pi])
+            location = state.storages[si]
+            product = state.products[pi]
+            if on_hand != 0
+                state.metrics.holding_costs += on_hand * get(location.unit_holding_cost, product, 0)
+            end
+            if record_history
+                on_hand_snapshot[(location, product)] = on_hand
+            end
         end
     end
 

@@ -16,6 +16,26 @@ future policy that needs to look backward the way
 required_lookback(policy::InventoryOrderingPolicy)::Int = 0
 
 """
+    safe_round_int(value::Float64)::Int64
+
+Rounds `value` to the nearest `Int64`, or `0` if `value` is non-finite or too
+large to represent as an `Int64` (`Int(round(value))` throws `InexactError`
+in both cases). `set_parameters!` feeds the optimizer's raw candidate values
+straight into policy fields; BlackBoxOptim's mutation/crossover can propose a
+trial outside the nominal `SearchRange` (see `optimize!`), and over
+thousands of evaluations one occasionally lands far enough out to overflow
+here - the same class of "degenerate optimizer candidate" already guarded
+against on the read side in `ForwardCoverageOrderingPolicy`/
+`BackwardCoverageOrderingPolicy`'s `get_order`.
+"""
+function safe_round_int(value::Float64)::Int64
+    if !isfinite(value) || abs(value) >= 1e15
+        return 0
+    end
+    return round(Int64, value)
+end
+
+"""
 Orders a given quantity specific to each time period.
 """
 mutable struct QuantityOrderingPolicy <: InventoryOrderingPolicy
@@ -32,10 +52,10 @@ function get_parameters(policy::QuantityOrderingPolicy)
 end
 
 function set_parameters!(policy::QuantityOrderingPolicy, values::Array{Float64, 1})
-    policy.orders .= Int.(round.(values))
+    policy.orders .= safe_round_int.(values)
 end
 
-function get_order(policy::QuantityOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
+function get_order(policy::QuantityOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64
     order = max(0, policy.orders[time])
     return order
 end
@@ -58,10 +78,10 @@ function get_parameters(policy::ProductQuantityOrderingPolicy)
 end
 
 function set_parameters!(policy::ProductQuantityOrderingPolicy, values::Array{Float64, 1})
-    policy.order = Int(round(values[1]))
+    policy.order = safe_round_int(values[1])
 end
 
-function get_order(policy::ProductQuantityOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
+function get_order(policy::ProductQuantityOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64
     if time == policy.period
         order = max(0, policy.order)
         return order
@@ -88,10 +108,10 @@ function get_parameters(policy::OnHandUptoOrderingPolicy)
 end
 
 function set_parameters!(policy::OnHandUptoOrderingPolicy, values::Array{Float64, 1})
-    policy.upto = Int(round(values[1]))
+    policy.upto = safe_round_int(values[1])
 end
 
-function get_order(policy::OnHandUptoOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
+function get_order(policy::OnHandUptoOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64
     return max(0, policy.upto - get_on_hand_inventory(state, location, product))
 end
 
@@ -113,10 +133,10 @@ function get_parameters(policy::NetUptoOrderingPolicy)
 end
 
 function set_parameters!(policy::NetUptoOrderingPolicy, values::Array{Float64, 1})
-    policy.upto = Int(round(values[1]))
+    policy.upto = safe_round_int(values[1])
 end
 
-function get_order(policy::NetUptoOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
+function get_order(policy::NetUptoOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64
     return max(0, policy.upto - get_net_inventory(state, location, product, time))
 end
 
@@ -138,11 +158,11 @@ function get_parameters(policy::NetSSOrderingPolicy)
 end
 
 function set_parameters!(policy::NetSSOrderingPolicy, values::Array{Float64, 1})
-    policy.s = Int(round(values[1]))
-    policy.S = Int(round(values[2]))
+    policy.s = safe_round_int(values[1])
+    policy.S = safe_round_int(values[2])
 end
 
-function get_order(policy::NetSSOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
+function get_order(policy::NetSSOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64
     net_inventory = get_net_inventory(state, location, product, time)
     #println("net inventory @ $time: $net_inventory")
     if net_inventory >= policy.s
@@ -172,7 +192,7 @@ function set_parameters!(policy::ForwardCoverageOrderingPolicy, values::Array{Fl
     policy.cover = values[1]
 end
 
-function get_order(policy::ForwardCoverageOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
+function get_order(policy::ForwardCoverageOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64
     net_inventory = get_net_inventory(state, location, product, time)
     mean_demand = get_mean_demand(env, location, product, time)
 
@@ -236,7 +256,7 @@ end
 """
 required_lookback(policy::BackwardCoverageOrderingPolicy)::Int = length(policy.cover)
 
-function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
+function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64
     net_inventory = get_net_inventory(state, location, product, time)
     
     past_orders = get_past_outbound_orders(state, location, product, time, length(policy.cover))
@@ -268,7 +288,6 @@ function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env::En
     # isfinite doesn't rule out a deficit too large for ceil(Int, ...) to
     # represent without overflowing.
     order = (isfinite(deficit) && deficit < 1e15) ? max(0, ceil(Int, deficit)) : 0
-    @debug "Computing order at $time, $location, $product, order: $order, past outbound orders: $past_orders, cover: $coverage, net inventory: $net_inventory"
     return order
 end
 
@@ -285,10 +304,10 @@ function get_parameters(policy::SingleOrderOrderingPolicy)
 end
 
 function set_parameters!(policy::SingleOrderOrderingPolicy, values::Array{Float64, 1})
-    policy.quantity = Int(round(values[2]))
+    policy.quantity = safe_round_int(values[2])
 end
 
-function get_order(policy::SingleOrderOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
+function get_order(policy::SingleOrderOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64
     if time == policy.period
         return policy.quantity
     else
@@ -296,6 +315,28 @@ function get_order(policy::SingleOrderOrderingPolicy, state::State, env::Env, lo
     end
 end
 
-function get_order(policy::InventoryOrderingPolicy, state::State, env::Env, location, lane, product, time)::Int64
+function get_order(policy::InventoryOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64
     return 0
+end
+
+"""
+    wrap_get_order(policy::InventoryOrderingPolicy)::GetOrderFn
+
+Resolves which concrete `get_order` method to call for `policy`, once, and
+returns a type-erased `GetOrderFn` that invokes it directly - see
+`GetOrderFn`'s docstring (in the top-level module file) for why. This is a
+function barrier: `policy`'s static type here is the abstract
+`InventoryOrderingPolicy`, so calling `wrap_get_order` is itself a dynamic
+dispatch, but it is only ever called once per (lane, product) at
+`Env`-construction time (see `get_lane_policies`), not once per `get_order`
+call in `simulate()`'s hot loop.
+
+Captures `policy` by reference in the returned closure (policies are
+mutable structs), so `optimize!`'s `set_parameters!(policy, ...)` mutations
+each trial - applied in place to the same policy objects `Env` was built
+from - stay visible on every subsequent call through the wrapper.
+"""
+function wrap_get_order(policy::InventoryOrderingPolicy)::GetOrderFn
+    return GetOrderFn((state, env, location, lane, product, time) ->
+        get_order(policy, state, env, location, lane, product, time))
 end

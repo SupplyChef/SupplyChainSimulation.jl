@@ -7,7 +7,6 @@ function receive_inventory!(state::State, env::Env, location::Storage, product, 
     if isinf(max_capacity)
         add_on_hand_inventory!(state, location, product, quantity, time)
         add_in_transit_inventory!(state, location, product, time, -quantity)
-        @debug "Received at $time, $location, $product, $quantity"
         return
     end
 
@@ -24,17 +23,13 @@ function receive_inventory!(state::State, env::Env, location::Storage, product, 
             # excess is delayed, not lost: it waits and is retried the next period
             add_in_transit_inventory!(state, location, product, time + 1, overflow)
         end
-        @debug "Capacity exceeded at $time, $location, $product: accepted $accepted, overflowed $overflow"
     end
-
-    @debug "Received at $time, $location, $product, $accepted"
 end
 
 function receive_inventory!(state::State, env::Env, location::Customer, product, time)
     #println(state)
     quantity = get_in_transit_inventory(state, location, product, time)
     add_in_transit_inventory!(state, location, product, time, -quantity)
-    @debug "Received at $time, $location, $product, $quantity"
 end
 
 function receive_inventory!(state::State, env::Env, location::Supplier, product, time)
@@ -48,12 +43,10 @@ function send_inventory!(state::State, env::Env, trip::Trip, destination, produc
         return
     end
     add_in_transit_inventory!(state, destination, product, time + get_leadtime(trip.route, destination), quantity)
-    @debug "Sent at $time, $(trip.route.origin), $destination, $product, $quantity with lead time $(trip.route.times[1])"
 end
 
 function send_inventory!(state::State, env::Env, trip::Trip, destination::Customer, product, quantity, time)
     #no-op
-    @debug "Sent at $time, $(trip.route.origin), $destination, $product, $quantity with lead time $(trip.route.times[1])"
 end
 
 # Metrics: fill/drop sites
@@ -113,26 +106,28 @@ Records `order_line` into `state.outbound_order_quantities` (see
 `get_past_outbound_orders`), if `env.needs_outbound_order_index` - i.e. only
 if some policy in this run actually declared `required_lookback(policy) > 0`
 (see `Policy.jl`). A no-op otherwise: nothing reads this index, so nothing
-gets allocated or written into it.
+gets written into it (the backing arrays are always allocated regardless -
+see `outbound_order_quantities`'s field doc in `State.jl` - this flag only
+gates whether anything is ever written there).
 
 Must be called exactly once per order line, at the `push!(state.placed_orders, order)`
 site in each `place_orders` method.
 """
 function record_placement!(state::State, env::Env, order_line::OrderLine)
     if env.needs_outbound_order_index
-        key = (order_line.origin, order_line.product)
-        quantities = get!(() -> zeros(Int64, get_horizon(state)), state.outbound_order_quantities, key)
-        quantities[order_line.creation_time] += order_line.quantity
+        li = state.location_index[order_line.origin]
+        pi = state.product_index[order_line.product]
+        state.outbound_order_quantities[li, pi][order_line.creation_time] += order_line.quantity
     end
 end
 
 # Send inventory
 function send_inventory!(state::State, env::Env, location::Supplier, product::Product, time::Int)
-    if !haskey(state.pending_outbound_order_lines, (location, product))
+    order_lines = state.pending_outbound_order_lines[state.location_index[location], state.product_index[product]]
+    if isempty(order_lines)
         return
     end
 
-    order_lines = state.pending_outbound_order_lines[(location, product)]
     sort!(order_lines, by=ol -> (ol.creation_time, ol.due_date))
     #@debug order_lines
 
@@ -147,7 +142,6 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
         end
 
         if ismissing(order_line.trip) || order_line.trip.departure < time
-            @debug "replacing trip $(order_line.trip)"
             trip = find_next_departure(env, order_line.destination, time, order_line.due_date)
             if isnothing(trip)
                 continue
@@ -169,13 +163,13 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
     end
 end
 
-function send_inventory!(state::State, env::Env, location::Node, product::Product, time::Int)
+function send_inventory!(state::State, env::Env, location::ConcreteNode, product::Product, time::Int)
     #println("send_inventory $location $product $time")
-    if !haskey(state.pending_outbound_order_lines, (location, product))
+    order_lines = state.pending_outbound_order_lines[state.location_index[location], state.product_index[product]]
+    if isempty(order_lines)
         return
     end
 
-    order_lines = state.pending_outbound_order_lines[(location, product)]
     sort!(order_lines, by=ol -> (ol.creation_time, ol.due_date))
     #@debug order_lines
 
@@ -196,7 +190,6 @@ function send_inventory!(state::State, env::Env, location::Node, product::Produc
         #println("send_inventory on_hand $(get_on_hand_inventory(state, location, order_line.product) vs $(order_line.quantity)")
         if order_line.quantity <= available
             if ismissing(order_line.trip) || order_line.trip.departure < time
-                @debug "replacing trip $(order_line.trip)"
                 trip = find_next_departure(env, order_line.destination, time, order_line.due_date)
                 if isnothing(trip)
                     continue
@@ -246,21 +239,20 @@ function place_orders(state::State, env::Env, location::Customer, product::Produ
     end
 end
     
-function place_orders(state::State, env::Env, location, product::Product, time::Int, orders::Array{OrderLine, 1})
+function place_orders(state::State, env::Env, location::ConcreteNode, product::Product, time::Int, orders::Array{OrderLine, 1})
     empty!(orders)
     for trip in get_inbound_trips(env, location, time)
         #println(policies)
-        policy = get(trip.policies, product, nothing)
-        if !isnothing(policy)
-            quantity = Int(get_order(policy, state, env, location, trip.route, product, time))
+        order_fn = get(trip.policies, product, nothing)
+        if !isnothing(order_fn)
+            quantity = Int(order_fn(state, env, location, trip.route, product, time))
             if quantity > 0
                 minimum_quantity = trip.route.minimum_quantity
                 if minimum_quantity > 0 && quantity < minimum_quantity
                     quantity = Int(ceil(minimum_quantity))
                 end
                 order = OrderLine(time, trip.route.origin, location, product, quantity, typemax(Int64), trip)
-                @debug "Ordered at $time, $location, $product, $quantity from $(trip.route.origin) with lead time $(trip.route.times[1])"
-                
+
                 push!(orders, order)
                 push!(state.placed_orders, order)
                 record_placement!(state, env, order)

@@ -6,6 +6,7 @@ version = "0.4.4"
 [deps]
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+FunctionWrappers = "069b7b12-0de2-55c6-9aab-29f3d0a68a2e"
 Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"
 PlotlyJS = "f0f68f2c-4968-5e81-91da-67840de0976a"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
@@ -15,6 +16,7 @@ UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 [compat]
 Dates = "1.8, 1.9, 1.10, 1.11, 1.12"
 Distributions = "0.25"
+FunctionWrappers = "1"
 Graphs = "1.9.0"
 PlotlyJS = "0.18.10"
 SupplyChainModeling = "0.2, 0.3"
@@ -23,10 +25,11 @@ julia = "1.8, 1.9, 1.10, 1.11, 1.12"
 
 # TEMPORARY: merging to SupplyChainModeling's main branch and registering a
 # new package version are separate steps, and only the latter is visible to
-# normal compat-bound resolution - so main can (and currently does) contain
-# merged features, like the capacity/overflow-cost support from PR #2 and
-# the hash-caching work from PR #5, that the actually-registered version
-# doesn't have yet. Remove this section and bump the SupplyChainModeling
-# compat bound once a new version is registered.
+# normal compat-bound resolution - main currently includes ConcreteNode (a
+# closed Union{Storage,Customer,Supplier,Plant} used in Lane's hot-path type
+# signatures, which this package's Env/State/Simulation hot-path retyping
+# depends on) that the actually-registered version doesn't have yet. Remove
+# this section and bump the SupplyChainModeling compat bound once a new
+# version is registered.
 [sources]
 SupplyChainModeling = {url = "https://github.com/SupplyChef/SupplyChainModeling.jl", rev = "main"}

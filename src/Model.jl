@@ -1,24 +1,26 @@
 include("Model-Transportation.jl")
 
-mutable struct OrderLine{O<:Node, D<:Node}
+"""
+Not parametrized on origin/destination type (unlike a first attempt at
+this struct): OrderLine collections are inherently heterogeneous (a single
+Vector{OrderLine}/Set{OrderLine} holds order lines between every pairing
+of node types in the network), so a caller constructing one from an
+abstractly-typed value (e.g. `trip.route.origin::ConcreteNode`) can never
+supply a statically-known concrete O/D anyway - parametrizing just left
+the type parameter unresolved (`OrderLine{O,D} where O<:Node`), which is
+worse than a plain abstract field: every downstream use (push!, Set
+membership, dispatch) then has to deal with an unresolved existential type
+instead of a single well-known concrete struct.
+"""
+mutable struct OrderLine
     creation_time::Int64
-    origin::O # from
-    destination::D # to 
+    origin::ConcreteNode # from
+    destination::ConcreteNode # to
     product::Product
     quantity::Int64
     due_date::Int64 # when
 
     trip::Union{Missing, Trip} # how (filled when shipping)
-    
-    #function OrderLine{O, D}( creation_time::Int64,
-    #                    origin::O, # from
-    #                    destination::D, # to 
-    #                    product::Product,
-    #                    quantity::Int64,
-    #                    due_date::Int64 # when
-    #        ) where {O<:Node, D<:Node}
-    #    return new(creation_time, origin, destination, product, quantity, due_date, missing)
-    #end
 end
 
 function get_inbound_trips(env, location, time)
@@ -33,7 +35,7 @@ Finds the earliest trip bound for `destination` that departs at or after
 `env.departures[destination]` (indexed directly by period) instead of
 filtering the full, unbounded list of trips ever bound for `destination`.
 """
-function find_next_departure(env, destination::Node, time::Int64)
+function find_next_departure(env, destination::ConcreteNode, time::Int64)
     periods = env.departures[destination]
     for t in time:length(periods)
         trips_at_t = periods[t]
@@ -52,7 +54,7 @@ Finds the earliest trip bound for `destination` that departs at or after
 the `[time, due_date]` window of `env.departures[destination]`, instead of
 the full, unbounded list of trips ever bound for `destination`.
 """
-function find_next_departure(env, destination::Node, time::Int64, due_date::Int64)
+function find_next_departure(env, destination::ConcreteNode, time::Int64, due_date::Int64)
     periods = env.departures[destination]
     last_period = min(due_date, length(periods))
     for t in time:last_period
@@ -77,7 +79,7 @@ end
 function create_graph(supplychain::SupplyChain)
     graph = Graphs.DiGraph(length(get_locations(supplychain)))
 
-    mapping = Dict{Node, Int64}()
+    mapping = Dict{ConcreteNode, Int64}()
     i = 1
     for location in get_locations(supplychain)
         mapping[location] = i
@@ -97,7 +99,7 @@ function create_graph(supplychain::SupplyChain)
     return (graph, mapping)
 end
 
-function get_sorted_locations(supplychain)::Vector{<:Node}
+function get_sorted_locations(supplychain)::Vector{ConcreteNode}
     (graph, mapping) = create_graph(supplychain)
 
     reverse_mapping = Vector{eltype(mapping.keys)}(undef, length(mapping))

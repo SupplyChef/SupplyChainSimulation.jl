@@ -105,12 +105,21 @@ tree_io = IOBuffer()
 Profile.print(tree_io; format=:tree, sortedby=:count, C=false, mincount=15, maxdepth=25)
 tree_lines = split(String(take!(tree_io)), '\n')
 
-flat_section = join(flat_lines[1:min(80, length(flat_lines))], '\n')
-tree_section = join(tree_lines[1:min(150, length(tree_lines))], '\n')
+# Profile.print(sortedby=:count) sorts rows ascending (lowest count first),
+# so the interesting (highest-count) rows are at the *end* of the output,
+# not the start - take the header plus the last 80 data rows, and reverse
+# the data rows so the highest count reads first.
+header_idx = findfirst(l -> occursin("=====", l), flat_lines)
+header = isnothing(header_idx) ? String[] : flat_lines[1:header_idx]
+data = filter(!isempty, isnothing(header_idx) ? flat_lines : flat_lines[header_idx+1:end])
+top_data = data[max(1, length(data) - 79):end]
+flat_section = join(vcat(header, reverse(top_data)), '\n')
 
-println("\nTop 80 by sample count (proxy for wall-clock time share):")
+tree_section = join(tree_lines, '\n')
+
+println("\nTop $(length(top_data)) by sample count (proxy for wall-clock time share):")
 println(flat_section)
-println("\n\n--- Tree view truncated to depth-relevant frames for call-path context ---")
+println("\n\n--- Tree view for call-path context ---")
 println(tree_section)
 
 summary_path = get(ENV, "GITHUB_STEP_SUMMARY", nothing)
@@ -120,7 +129,7 @@ if !isnothing(summary_path)
         println(io, "")
         println(io, "300 `minimize!` calls, sampled at the default 1ms interval. Counts are a proxy for wall-clock time share, not exact timings.")
         println(io, "")
-        println(io, "## Flat view (top 80 by sample count)")
+        println(io, "## Flat view (top $(length(top_data)) by sample count)")
         println(io, "```")
         println(io, flat_section)
         println(io, "```")

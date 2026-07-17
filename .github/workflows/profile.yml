@@ -19,3 +19,14 @@ jobs:
       - run: julia --project=benchmark -e 'using Pkg; Pkg.instantiate()'
       - run: julia --project=benchmark benchmark/profile_beergame.jl
       - run: julia --project=benchmark benchmark/profile_beergame_direct.jl
+  memory-profile:
+    name: Allocation profile - beer_game()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: '1'
+          arch: x64
+      - run: julia --project=benchmark -e 'using Pkg; Pkg.instantiate()'
+      - run: julia --project=benchmark benchmark/memory_profile_beergame.jl

@@ -106,26 +106,28 @@ Records `order_line` into `state.outbound_order_quantities` (see
 `get_past_outbound_orders`), if `env.needs_outbound_order_index` - i.e. only
 if some policy in this run actually declared `required_lookback(policy) > 0`
 (see `Policy.jl`). A no-op otherwise: nothing reads this index, so nothing
-gets allocated or written into it.
+gets written into it (the backing arrays are always allocated regardless -
+see `outbound_order_quantities`'s field doc in `State.jl` - this flag only
+gates whether anything is ever written there).
 
 Must be called exactly once per order line, at the `push!(state.placed_orders, order)`
 site in each `place_orders` method.
 """
 function record_placement!(state::State, env::Env, order_line::OrderLine)
     if env.needs_outbound_order_index
-        key = (order_line.origin, order_line.product)
-        quantities = get!(() -> zeros(Int64, get_horizon(state)), state.outbound_order_quantities, key)
-        quantities[order_line.creation_time] += order_line.quantity
+        li = state.location_index[order_line.origin]
+        pi = state.product_index[order_line.product]
+        state.outbound_order_quantities[li, pi][order_line.creation_time] += order_line.quantity
     end
 end
 
 # Send inventory
 function send_inventory!(state::State, env::Env, location::Supplier, product::Product, time::Int)
-    if !haskey(state.pending_outbound_order_lines, (location, product))
+    order_lines = state.pending_outbound_order_lines[state.location_index[location], state.product_index[product]]
+    if isempty(order_lines)
         return
     end
 
-    order_lines = state.pending_outbound_order_lines[(location, product)]
     sort!(order_lines, by=ol -> (ol.creation_time, ol.due_date))
     #@debug order_lines
 
@@ -163,11 +165,11 @@ end
 
 function send_inventory!(state::State, env::Env, location::ConcreteNode, product::Product, time::Int)
     #println("send_inventory $location $product $time")
-    if !haskey(state.pending_outbound_order_lines, (location, product))
+    order_lines = state.pending_outbound_order_lines[state.location_index[location], state.product_index[product]]
+    if isempty(order_lines)
         return
     end
 
-    order_lines = state.pending_outbound_order_lines[(location, product)]
     sort!(order_lines, by=ol -> (ol.creation_time, ol.due_date))
     #@debug order_lines
 

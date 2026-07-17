@@ -110,8 +110,8 @@ held in temporary overflow storage (see `record_overflow!`), rather than being l
 """
 function get_total_overflow_costs(state)
     overflow_costs = 0.0
-    for ((location, product), amounts) in state.overflow_inventory
-        overflow_costs += sum(amounts) * get_overflow_cost(location, product)
+    for si in 1:length(state.storages), pi in 1:length(state.products)
+        overflow_costs += sum(state.overflow_inventory[si, pi]) * get_overflow_cost(state.storages[si], state.products[pi])
     end
     return overflow_costs
 end

@@ -17,6 +17,20 @@ struct Trip
     policies::Union{Missing, Dict{Product, GetOrderFn}}
 end
 
+# Without these, Set{Trip}/Dict{Trip,...} (metrics.seen_trips,
+# state.historical_transportation) fall back to Julia's default
+# identity-based (objectid) hashing/equality for structs with non-isbits
+# fields (route::Lane and policies::Dict aren't isbits) - CPU profiling
+# optimize!'s hot loop found this as the single largest self-time cost,
+# since record_fill! checks/inserts into metrics.seen_trips on every order
+# line filled. policies isn't part of identity here: every Trip built from
+# the same (lane, departure) shares the same policies dict reference (see
+# get_lane_policies), so (route, departure) alone is exactly the same
+# equivalence classes identity-based comparison already produced - this is
+# a hashing speedup, not a semantic change.
+Base.:(==)(x::Trip, y::Trip) = x.route == y.route && x.departure == y.departure
+Base.hash(x::Trip, h::UInt64) = hash(x.departure, hash(x.route, h))
+
 function get_trips(lane::Lane, horizon::Int64)
     return [Trip(lane, t, missing) for t in 1:horizon if (isnothing(lane.can_ship) || isempty(lane.can_ship) || lane.can_ship[t])]
 end

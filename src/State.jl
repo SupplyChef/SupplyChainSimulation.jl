@@ -70,13 +70,22 @@ mutable struct State
     pending_outbound_order_lines::Matrix{Vector{OrderLine}}
     pending_inbound_order_lines::Matrix{Vector{OrderLine}}
 
-    filled_orders::Set{OrderLine}
-    placed_orders::Set{OrderLine}
+    # Vector rather than Set: OrderLine has no custom hash/== so a Set falls
+    # back to Julia's default identity-based (objectid) hashing, which
+    # profiling showed as the single largest self-time cost in optimize!'s
+    # hot loop. Order lines are only ever pushed once each (no dedup need),
+    # and the one consumer that needs actual set semantics
+    # (get_total_lost_sales, Reporting.jl) already wraps the flattened
+    # historical data in its own Set(...) regardless of source container
+    # type - same reasoning already applied to pending_outbound/inbound_
+    # order_lines above.
+    filled_orders::Vector{OrderLine}
+    placed_orders::Vector{OrderLine}
 
     historical_on_hand::Array{Dict{Tuple{Storage, Product}, Int64}, 1}
-    historical_orders::Array{Set{OrderLine}, 1}
+    historical_orders::Array{Vector{OrderLine}, 1}
     historical_transportation::Set{Trip}
-    historical_filled_orders::Array{Set{OrderLine}, 1}
+    historical_filled_orders::Array{Vector{OrderLine}, 1}
     #historical_pending_outbound_order_lines::Array{Dict{ConcreteNode, Set{OrderLine}}}
 
     # Incrementally-updated running totals, kept in sync with the
@@ -128,8 +137,8 @@ mutable struct State
                    [zeros(Int64, horizon) for _ in 1:nstorages, _ in 1:nproducts],
                    [OrderLine[] for _ in 1:nlocations, _ in 1:nproducts],
                    [OrderLine[] for _ in 1:nlocations, _ in 1:nproducts],
-                   Set{OrderLine}(),
-                   Set{OrderLine}(),
+                   OrderLine[],
+                   OrderLine[],
                    [],
                    OrderLine[],
                    Set{Trip}(),
@@ -498,14 +507,14 @@ function snapshot_state!(state::State, time, record_history::Bool)
         push!(state.historical_on_hand, on_hand_snapshot)
 
         # state.filled_orders/placed_orders are only ever mutated via push! on the
-        # field itself, so handing the current Set to history and replacing the
+        # field itself, so handing the current Vector to history and replacing the
         # field with a fresh one is equivalent to copy+empty! without the O(n)
         # element-by-element copy.
         push!(state.historical_filled_orders, state.filled_orders)
-        state.filled_orders = Set{OrderLine}()
+        state.filled_orders = OrderLine[]
 
         push!(state.historical_orders, state.placed_orders)
-        state.placed_orders = Set{OrderLine}()
+        state.placed_orders = OrderLine[]
     else
         empty!(state.filled_orders)
         empty!(state.placed_orders)

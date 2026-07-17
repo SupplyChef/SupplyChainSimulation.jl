@@ -18,3 +18,4 @@ jobs:
           arch: x64
       - run: julia --project=benchmark -e 'using Pkg; Pkg.instantiate()'
       - run: julia --project=benchmark benchmark/profile_beergame.jl
+      - run: julia --project=benchmark benchmark/profile_beergame_direct.jl

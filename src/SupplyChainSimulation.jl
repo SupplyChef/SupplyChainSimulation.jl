@@ -60,32 +60,8 @@ using Graphs
 #using Optim
 #using BlackBoxOptim
 using SupplyChainModeling
-using FunctionWrappers: FunctionWrapper
 
 abstract type InventoryOrderingPolicy end
-
-# Resolves which concrete get_order method to call once, at Env-construction
-# time (via wrap_get_order, see Policy.jl), instead of on every call in
-# simulate()'s hot loop - policy::InventoryOrderingPolicy is abstract with 8
-# concrete subtypes, so calling get_order(policy, ...) directly forces a
-# fully dynamic dispatch that boxes every argument at the call site
-# regardless of how precisely those arguments are otherwise typed (confirmed
-# via code_warntype/Profile.Allocs on the beer game benchmark - this was the
-# actual dominant allocator, not the Node-typed arguments the ConcreteNode
-# retyping targeted). FunctionWrapper type-erases the resolved closure into
-# one fixed concrete struct, so storing/reading it from Trip.policies avoids
-# that boxing regardless of how many policy types exist (unlike relying on
-# Julia's union-splitting, which only helps for small closed Unions).
-#
-# The state/env argument positions are Any rather than State/Env: Trip
-# (Model-Transportation.jl) needs this alias for its policies field, but
-# Trip is needed by Env's own fields (departures, etc.), so State/Env can't
-# be referenced concretely here without a circular type dependency. This
-# costs nothing in practice - state/env are passed as existing heap
-# references (State is a mutable struct, Env is a non-isbits immutable
-# struct, so both are already heap-allocated before this call), not boxed
-# fresh on every call the way a fully dynamic dispatch's arguments are.
-const GetOrderFn = FunctionWrapper{Int64, Tuple{Any, Any, ConcreteNode, Lane, Product, Int64}}
 
 include("Model.jl")
 include("Metrics.jl")

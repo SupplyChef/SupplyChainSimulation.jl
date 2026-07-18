@@ -253,9 +253,9 @@ function place_orders(state::State, env::Env, location::ConcreteNode, product::P
     empty!(orders)
     for trip in get_inbound_trips(env, location, time)
         #println(policies)
-        order_fn = get(trip.policies, product, nothing)
-        if !isnothing(order_fn)
-            quantity = Int(order_fn(state, env, location, trip.route, product, time))
+        policy = get(trip.policies, product, nothing)
+        if !isnothing(policy)
+            quantity = Int(get_order(policy, state, env, location, trip.route, product, time))
             if quantity > 0
                 minimum_quantity = trip.route.minimum_quantity
                 if minimum_quantity > 0 && quantity < minimum_quantity

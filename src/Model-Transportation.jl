@@ -56,17 +56,20 @@ so sharing a single dict across every period of a lane (instead of
 rebuilding an identical one per (lane, period) pair) avoids `horizon`-many
 redundant Dict allocations per lane.
 
-Stores each policy object directly (dispatched on later via ordinary
-`get_order(policy, ...)` dynamic dispatch), rather than pre-wrapping it in a
-`FunctionWrapper` closure: that type erasure went through a `ccall`-based
-trampoline, which forced boxing of every argument crossing the boundary
-(`Storage`, `Lane`, `Env`, `Product`) even though they're already heap
-references - confirmed via allocation profiling as ~55% of all bytes
-allocated by `beer_game()`. Ordinary Julia dynamic dispatch resolves the
-concrete `get_order` method via the method table without boxing
-already-heap-allocated reference arguments, so this keeps the "avoid a
-fully-static-typed dispatch on an abstract policy" goal without paying the
-FunctionWrapper boxing tax.
+Stores each policy object directly, rather than pre-wrapping it in a
+`FunctionWrapper` closure via `wrap_get_order` - that type erasure went
+through a `ccall`-based trampoline, which forced boxing of every argument
+crossing the boundary (`Storage`, `Lane`, `Env`, `Product`). Call sites now
+dispatch through `dispatch_get_order` (see Policy.jl), a hand-written union
+split, rather than calling `get_order(policy, ...)` directly: `Storage`,
+`Lane`, `Env`, and `Product` are immutable (non-`isbits`) structs, so a
+plain call on an abstractly-typed `policy` still boxes them the same way
+FunctionWrapper did - the boxing came from the abstract-typed dynamic
+dispatch itself, not from the ccall trampoline specifically (confirmed by
+re-profiling after the FunctionWrapper removal alone: boxing byte counts
+were unchanged, just re-labeled). `dispatch_get_order`'s explicit `isa`
+chain resolves the concrete `get_order` method statically per branch,
+avoiding that boxing.
 """
 function get_lane_policies(supplychain, policies)
     return Dict{Lane, Dict{Product, InventoryOrderingPolicy}}(

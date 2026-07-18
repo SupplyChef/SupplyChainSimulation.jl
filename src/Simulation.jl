@@ -71,7 +71,15 @@ function record_fill!(state::State, env::Env, order_line::OrderLine)
         metrics.trip_fixed_costs += get_fixed_cost(trip.route)
     end
     if order_line.destination isa Customer
-        metrics.sales += order_line.quantity * state.demand[(order_line.destination, order_line.product)].sales_price
+        # order_line.destination is declared ::ConcreteNode (a Union) on
+        # OrderLine; the isa check above is a runtime branch and doesn't
+        # narrow the static type of a fresh field re-read - asserting it
+        # lets state.demand (keyed by the concrete Tuple{Customer, Product})
+        # hit its fast path instead of generic, dynamically-dispatched
+        # hashing/equality. CPU profiling found this single line as ~85%
+        # of record_fill!'s self-time, called once per filled order line.
+        destination = order_line.destination::Customer
+        metrics.sales += order_line.quantity * state.demand[(destination, order_line.product)].sales_price
     end
 
     if env.record_history
@@ -95,7 +103,9 @@ pending when the horizon ends (which never reach that check - see
 """
 function record_drop!(state::State, order_line::OrderLine)
     if order_line.destination isa Customer
-        state.metrics.lost_sales += order_line.quantity * state.demand[(order_line.destination, order_line.product)].lost_sales_cost
+        # See record_fill!'s comment on this same pattern.
+        destination = order_line.destination::Customer
+        state.metrics.lost_sales += order_line.quantity * state.demand[(destination, order_line.product)].lost_sales_cost
     end
 end
 

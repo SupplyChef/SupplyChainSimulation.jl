@@ -6,7 +6,13 @@
 function get_total_demand(state)
     demand = 0.0
     for ol in filter(ol -> isa(ol.destination, Customer), collect(Base.Iterators.flatten(state.historical_orders)))
-        demand += ol.quantity * state.demand[(ol.destination, ol.product)].sales_price
+        # ol.destination is declared ::ConcreteNode (a Union) on OrderLine;
+        # the filter above already guarantees Customer here, but re-reading
+        # the field doesn't carry that narrowing - asserting it lets
+        # state.demand (keyed by the concrete Tuple{Customer, Product}) hit
+        # its fast path instead of generic, dynamically-dispatched hashing.
+        destination = ol.destination::Customer
+        demand += ol.quantity * state.demand[(destination, ol.product)].sales_price
     end
     return demand
 end
@@ -19,7 +25,9 @@ end
 function get_total_sales(state)
     sales = 0.0
     for ol in filter(ol -> isa(ol.destination, Customer), collect(Base.Iterators.flatten(state.historical_filled_orders)))
-        sales += ol.quantity * state.demand[(ol.destination, ol.product)].sales_price
+        # See get_total_demand's comment on this same pattern.
+        destination = ol.destination::Customer
+        sales += ol.quantity * state.demand[(destination, ol.product)].sales_price
     end
     return sales
 end
@@ -36,7 +44,9 @@ function get_total_lost_sales(state)
 
     lost_sales = 0.0
     for ol in unfulfilled_orders
-        lost_sales += ol.quantity * state.demand[(ol.destination, ol.product)].lost_sales_cost
+        # See get_total_demand's comment on this same pattern.
+        destination = ol.destination::Customer
+        lost_sales += ol.quantity * state.demand[(destination, ol.product)].lost_sales_cost
     end
     return lost_sales
 end

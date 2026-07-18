@@ -319,24 +319,3 @@ function get_order(policy::InventoryOrderingPolicy, state::State, env::Env, loca
     return 0
 end
 
-"""
-    wrap_get_order(policy::InventoryOrderingPolicy)::GetOrderFn
-
-Resolves which concrete `get_order` method to call for `policy`, once, and
-returns a type-erased `GetOrderFn` that invokes it directly - see
-`GetOrderFn`'s docstring (in the top-level module file) for why. This is a
-function barrier: `policy`'s static type here is the abstract
-`InventoryOrderingPolicy`, so calling `wrap_get_order` is itself a dynamic
-dispatch, but it is only ever called once per (lane, product) at
-`Env`-construction time (see `get_lane_policies`), not once per `get_order`
-call in `simulate()`'s hot loop.
-
-Captures `policy` by reference in the returned closure (policies are
-mutable structs), so `optimize!`'s `set_parameters!(policy, ...)` mutations
-each trial - applied in place to the same policy objects `Env` was built
-from - stay visible on every subsequent call through the wrapper.
-"""
-function wrap_get_order(policy::InventoryOrderingPolicy)::GetOrderFn
-    return GetOrderFn((state, env, location, lane, product, time) ->
-        get_order(policy, state, env, location, lane, product, time))
-end

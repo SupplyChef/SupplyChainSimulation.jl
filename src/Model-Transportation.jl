@@ -14,7 +14,7 @@ A trip is the basis of transportation in the simulation. It follows a route with
 struct Trip
     route::Lane
     departure::Int64
-    policies::Union{Missing, Dict{Product, GetOrderFn}}
+    policies::Union{Missing, Dict{Product, InventoryOrderingPolicy}}
 end
 
 # Without these, Set{Trip}/Dict{Trip,...} (metrics.seen_trips,
@@ -50,19 +50,27 @@ end
 """
     get_lane_policies(supplychain, policies)
 
-Builds one `Product => get_order-wrapper` dict per lane. The per-period
-`policies` dict attached to each `Trip` only ever depends on the lane, not
-the period, so sharing a single dict across every period of a lane (instead
-of rebuilding an identical one per (lane, period) pair) avoids
-`horizon`-many redundant Dict allocations per lane.
+Builds one `Product => policy` dict per lane. The per-period `policies`
+dict attached to each `Trip` only ever depends on the lane, not the period,
+so sharing a single dict across every period of a lane (instead of
+rebuilding an identical one per (lane, period) pair) avoids `horizon`-many
+redundant Dict allocations per lane.
 
-Wraps each policy via `wrap_get_order` (see Policy.jl) rather than storing
-it directly: this resolves which concrete `get_order` method to call once,
-here, instead of on every call in simulate()'s hot loop - see `GetOrderFn`.
+Stores each policy object directly (dispatched on later via ordinary
+`get_order(policy, ...)` dynamic dispatch), rather than pre-wrapping it in a
+`FunctionWrapper` closure: that type erasure went through a `ccall`-based
+trampoline, which forced boxing of every argument crossing the boundary
+(`Storage`, `Lane`, `Env`, `Product`) even though they're already heap
+references - confirmed via allocation profiling as ~55% of all bytes
+allocated by `beer_game()`. Ordinary Julia dynamic dispatch resolves the
+concrete `get_order` method via the method table without boxing
+already-heap-allocated reference arguments, so this keeps the "avoid a
+fully-static-typed dispatch on an abstract policy" goal without paying the
+FunctionWrapper boxing tax.
 """
 function get_lane_policies(supplychain, policies)
-    return Dict{Lane, Dict{Product, GetOrderFn}}(
-        l => Dict(p => wrap_get_order(policies[(l, p)]) for p in supplychain.products if haskey(policies, (l, p)))
+    return Dict{Lane, Dict{Product, InventoryOrderingPolicy}}(
+        l => Dict{Product, InventoryOrderingPolicy}(p => policies[(l, p)] for p in supplychain.products if haskey(policies, (l, p)))
         for l in supplychain.lanes
     )
 end

@@ -439,4 +439,52 @@ using Random
         true
     end
 
+    @test begin #product quantity policy and single order policy
+        horizon = 20
+        Random.seed!(3)
+
+        product = Product("product")
+
+        customer = Customer("c")
+        storage = Storage("s")
+        add_product!(storage, product; unit_holding_cost=0.1)
+        storage2 = Storage("s2")
+        add_product!(storage2, product; initial_inventory=20 * horizon)
+
+        l = Lane(storage, customer; unit_cost=0)
+        l2 = Lane(storage2, storage; unit_cost=0, time=2)
+
+        product_quantity_policy = ProductQuantityOrderingPolicy(5, 3)
+        single_order_policy = SingleOrderOrderingPolicy(3, 5)
+
+        n() = begin
+            network = SupplyChain(horizon)
+
+            add_storage!(network, storage)
+            add_storage!(network, storage2)
+            add_customer!(network, customer)
+            add_product!(network, product)
+            add_lane!(network, l)
+            add_lane!(network, l2)
+
+            add_demand!(network, customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)
+
+            return network
+        end
+
+        initial_state = n()
+
+        for policy in [product_quantity_policy, single_order_policy]
+            policies = Dict((l2, product) => policy)
+
+            final_state = simulate(initial_state, policies)
+
+            println("lost sales: $(get_total_lost_sales(final_state))")
+            println("sales: $(get_total_sales(final_state))")
+            println("demand: $(get_total_demand(final_state))")
+            println("holding costs: $(get_total_holding_costs(final_state))")
+        end
+        true
+    end
+
 end

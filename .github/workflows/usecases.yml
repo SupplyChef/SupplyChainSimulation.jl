@@ -6,6 +6,21 @@ name: Generate usecase posts
 # so it never runs unattended on someone else's commit.
 on:
   workflow_dispatch:
+  # The MCP GitHub integration used to drive this session can't call the
+  # workflow_dispatch API (403 Resource not accessible by integration), so
+  # push is the only way to trigger a run from here. Scoped to just this
+  # branch and to the *source* files, deliberately excluding results.json/
+  # post.md (the generated output the commit-back step below writes) so
+  # that commit never re-triggers this workflow - no path filter tautology,
+  # no infinite loop.
+  push:
+    branches:
+      - claude/supply-chain-use-cases-s758fd
+    paths:
+      - 'examples/usecases/**/model.jl'
+      - 'examples/usecases/**/generate_post.jl'
+      - 'examples/usecases/setup.jl'
+      - '.github/workflows/usecases.yml'
 
 permissions:
   contents: write

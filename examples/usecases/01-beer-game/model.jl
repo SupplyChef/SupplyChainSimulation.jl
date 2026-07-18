@@ -15,7 +15,9 @@ Run from the repo root after examples/usecases/setup.jl:
     julia --project=examples/usecases examples/usecases/01-beer-game/model.jl
 Writes results.json next to this file.
 =#
-using SupplyChainModeling, SupplyChainSimulation, Distributions, Random, JSON3
+using SupplyChainModeling, SupplyChainSimulation, Random, JSON3
+using Distributions: Poisson # `using Distributions` would also import Distributions.Product,
+                              # which collides with SupplyChainModeling/SupplyChainSimulation's Product
 
 const HORIZON = 200
 const SCENARIO_COUNT = 30

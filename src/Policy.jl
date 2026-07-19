@@ -232,6 +232,14 @@ Orders inventory to cover the coming periods based on past demand.
 """
 mutable struct BackwardCoverageOrderingPolicy <: InventoryOrderingPolicy
     cover::Array{Float64, 1}
+    # Reused across every get_order call instead of letting
+    # get_past_outbound_orders allocate a fresh buffer each time - cover's
+    # length (and therefore how far back get_order looks) never changes
+    # after construction, so one buffer sized to match it is always the
+    # right size for the lifetime of this policy object.
+    past_orders_buffer::Array{Union{Missing, Int64}, 1}
+
+    BackwardCoverageOrderingPolicy(cover::Array{Float64, 1}) = new(cover, Array{Union{Missing, Int64}, 1}(undef, length(cover)))
 end
 
 """
@@ -259,7 +267,7 @@ required_lookback(policy::BackwardCoverageOrderingPolicy)::Int = length(policy.c
 function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64
     net_inventory = get_net_inventory(state, location, product, time)
     
-    past_orders = get_past_outbound_orders(state, location, product, time, length(policy.cover))
+    past_orders = get_past_outbound_orders!(policy.past_orders_buffer, state, location, product, time)
     #println("$lane $time $location $past_orders")
     
     weights = 0

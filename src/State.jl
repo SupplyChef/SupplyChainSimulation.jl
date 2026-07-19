@@ -598,10 +598,26 @@ policy is in play, or simply because no order ever originated there), every
 period reads back as `0`, matching what an exhaustive scan would have found.
 """
 function get_past_outbound_orders(state::State, location::ConcreteNode, product::Product, time::Int64, step_back::Int64)::Array{Union{Missing, Int64}, 1}
-    past_orders = zeros(Union{Missing, Int64}, step_back)
+    past_orders = Array{Union{Missing, Int64}, 1}(undef, step_back)
+    return get_past_outbound_orders!(past_orders, state, location, product, time)
+end
+
+"""
+    get_past_outbound_orders!(past_orders, state, location, product, time)::Array{Union{Missing, Int64}, 1}
+
+Same as `get_past_outbound_orders`, but fills the caller-provided `past_orders`
+buffer in place instead of allocating a fresh one - `step_back` is implicitly
+`length(past_orders)`. `BackwardCoverageOrderingPolicy.get_order` (Policy.jl)
+calls this with a buffer it owns and reuses across every call (`cover`'s
+length, and therefore this buffer's size, never changes after construction),
+since a fresh `zeros(...)` allocation on every single `get_order` call -
+called ~15000 trials x 30 scenarios x every period in `optimize!`'s search -
+showed up as a real, avoidable chunk of allocation profiling.
+"""
+function get_past_outbound_orders!(past_orders::Array{Union{Missing, Int64}, 1}, state::State, location::ConcreteNode, product::Product, time::Int64)::Array{Union{Missing, Int64}, 1}
     li = get(state.location_index, location, 0)
     pi = li == 0 ? 0 : get(state.product_index, product, 0)
-    for t in 1:step_back
+    for t in 1:length(past_orders)
         creation_time = time - t
         if creation_time < 0
             past_orders[t] = missing

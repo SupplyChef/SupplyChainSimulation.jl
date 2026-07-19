@@ -139,6 +139,73 @@ end
 
 const LANES_NAMED = [("retailer_orders (l2)", wholesaler, retailer), ("wholesaler_orders (l3)", factory, wholesaler), ("factory_orders (l4)", supplier, factory)]
 const STORAGES_NAMED = [("retailer", retailer), ("wholesaler", wholesaler), ("factory", factory)]
+const BACKLOG_NODES_NAMED = [("wholesaler", wholesaler), ("factory", factory), ("supplier", supplier)]
+
+# --- Cost breakdown: what optimize! actually minimizes, and whether the
+#     "optimized" policy really is cheaper than the naive one under that
+#     same objective (metrics_cost_function isn't just applied post hoc here
+#     - it's the literal function optimize! searched against). ---
+function cost_breakdown(states)
+    return (
+        total_cost = sum(metrics_cost_function(s) for s in states),
+        holding_costs = sum(s.metrics.holding_costs for s in states),
+        trip_fixed_costs = sum(s.metrics.trip_fixed_costs for s in states),
+        trip_unit_costs = sum(s.metrics.trip_unit_costs for s in states),
+        order_count = sum(s.metrics.orders for s in states),
+        sales = sum(s.metrics.sales for s in states),
+        lost_sales = sum(s.metrics.lost_sales for s in states),
+    )
+end
+
+# --- Backlog by layer: unfulfilled internal replenishment orders queued at
+#     each origin node over time. Customer orders never backlog (due_date ==
+#     creation_time - unfilled the same period becomes a lost sale, not a
+#     queued backorder, per place_orders/send_inventory! in Simulation.jl).
+#     Internal replenishment orders (due_date == typemax(Int64)) never
+#     expire, so whatever an origin can't ship immediately queues up as a
+#     real backorder - reconstructed here as cumulative-ordered minus
+#     cumulative-filled at that origin, since neither historical_orders nor
+#     historical_filled_orders is a live queue on its own. Both arrays share
+#     the same period-offset convention as lane_order_series/onhand_series
+#     above (index 1 = period 0).
+function backlog_series(state, origin, product, horizon)
+    ordered = zeros(Float64, horizon)
+    filled = zeros(Float64, horizon)
+    for period_orders in state.historical_orders
+        for ol in period_orders
+            if ol.origin == origin && ol.product == product && 1 <= ol.creation_time <= horizon
+                ordered[ol.creation_time] += ol.quantity
+            end
+        end
+    end
+    for (idx, period_filled) in enumerate(state.historical_filled_orders)
+        t = idx - 1
+        if 1 <= t <= horizon
+            for ol in period_filled
+                if ol.origin == origin && ol.product == product
+                    filled[t] += ol.quantity
+                end
+            end
+        end
+    end
+    return cumsum(ordered) .- cumsum(filled)
+end
+
+function backlog_summary(states, nodes_named, product, horizon)
+    peak = Dict(name => Float64[] for (name, _) in nodes_named)
+    ending = Dict(name => Float64[] for (name, _) in nodes_named)
+    for s in states
+        for (name, node) in nodes_named
+            series = backlog_series(s, node, product, horizon)
+            push!(peak[name], maximum(series))
+            push!(ending[name], series[end])
+        end
+    end
+    return (
+        peak = Dict(name => mean(v) for (name, v) in peak),
+        ending = Dict(name => mean(v) for (name, v) in ending),
+    )
+end
 
 # --- Naive baseline: order-up-to a fixed "pipeline coverage, no safety stock"
 #     target at each echelon (mean demand * (lead_time + 1)), never tuned. ---
@@ -159,6 +226,8 @@ naive_result_scenario1 = (
 )
 naive_bullwhip = bullwhip_ratios(naive_states, LANES_NAMED, customer, product, HORIZON)
 naive_inventory_cv = inventory_cv(naive_states, STORAGES_NAMED, product, HORIZON)
+naive_costs = cost_breakdown(naive_states)
+naive_backlog = backlog_summary(naive_states, BACKLOG_NODES_NAMED, product, HORIZON)
 
 # --- Optimized: BackwardCoverageOrderingPolicy at each upstream echelon,
 #     tuned jointly by optimize!() against the same 30 calibration scenarios. ---
@@ -182,6 +251,8 @@ optimized_in_sample_scenario1 = (
 )
 optimized_bullwhip = bullwhip_ratios(optimized_in_sample_states, LANES_NAMED, customer, product, HORIZON)
 optimized_inventory_cv = inventory_cv(optimized_in_sample_states, STORAGES_NAMED, product, HORIZON)
+optimized_costs = cost_breakdown(optimized_in_sample_states)
+optimized_backlog = backlog_summary(optimized_in_sample_states, BACKLOG_NODES_NAMED, product, HORIZON)
 
 # Known-good values from test/policy-beergame-tests.jl's beer_game() test,
 # for the exact same seed/config/policy family - printed as a sanity check,
@@ -205,10 +276,14 @@ results = Dict(
     "naive_scenario1" => naive_result_scenario1,
     "naive_bullwhip_ratios" => naive_bullwhip,
     "naive_inventory_cv" => naive_inventory_cv,
+    "naive_costs" => naive_costs,
+    "naive_backlog" => naive_backlog,
     "optimized_in_sample_aggregate" => optimized_in_sample,
     "optimized_in_sample_scenario1" => optimized_in_sample_scenario1,
     "optimized_bullwhip_ratios" => optimized_bullwhip,
     "optimized_inventory_cv" => optimized_inventory_cv,
+    "optimized_costs" => optimized_costs,
+    "optimized_backlog" => optimized_backlog,
     "optimized_holdout_aggregate" => optimized_holdout,
     "tuned_policy_cover" => Dict(
         "l2_wholesaler_to_retailer" => opt_policy2.cover,
@@ -231,3 +306,9 @@ println("  optimized: ", optimized_bullwhip)
 println("\nOn-hand inventory coefficient of variation by node (std/mean):")
 println("  naive:     ", naive_inventory_cv)
 println("  optimized: ", optimized_inventory_cv)
+println("\nTotal cost (metrics_cost_function, the literal optimize! objective):")
+println("  naive:     ", naive_costs)
+println("  optimized: ", optimized_costs)
+println("\nBacklog by layer (peak / ending, units, averaged across scenarios):")
+println("  naive:     ", naive_backlog)
+println("  optimized: ", optimized_backlog)

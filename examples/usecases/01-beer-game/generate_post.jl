@@ -34,6 +34,15 @@ opt_cv = as_dict(results.optimized_inventory_cv)
 fill_rate_change_pp = round((opt_in.fill_rate - naive.fill_rate) * 100; digits=2)
 generalization_gap_pp = round((opt_in.fill_rate - opt_hold.fill_rate) * 100; digits=2)
 
+naive_total_cost = Float64(results.naive_costs.total_cost)
+optimized_total_cost = Float64(results.optimized_costs.total_cost)
+cost_delta_pct = round(abs(optimized_total_cost - naive_total_cost) / abs(naive_total_cost) * 100; digits=1)
+cost_verdict = if optimized_total_cost < naive_total_cost
+    """So yes — despite worse fill rate and far worse bullwhip, the optimized policy is genuinely **$(cost_delta_pct)% cheaper** under the exact cost function it was told to minimize. The optimizer isn't wrong or broken; it correctly found that trading fill rate and order stability for lower holding costs was worth it, *given the weights in this cost function* — which is precisely the point of the sections above: those weights, not some flaw in the optimizer, are what a real deployment needs to interrogate before trusting this policy."""
+else
+    """**It is not.** The optimized policy is **$(cost_delta_pct)% more expensive** than the naive fixed-target baseline under the exact same cost function — worse on total cost, worse on fill rate, and far worse on bullwhip. That changes the conclusion: this isn't a case of the optimizer correctly trading service for savings. `optimize!` only ever searched `BackwardCoverageOrderingPolicy` parameters; it never had access to `NetUptoOrderingPolicy`, so it's entirely possible the naive policy family is simply a better structural fit for this network, and the "optimized" result is the best of a worse-fitting family, not a genuine optimum. The lesson isn't "don't trust optimization" — it's "the choice of policy *family* you hand the optimizer matters as much as the tuning," and that's worth testing directly as a follow-up (run `optimize!` over `NetUptoOrderingPolicy` too, and compare)."""
+end
+
 cover2 = join(round.(Float64.(results.tuned_policy_cover.l2_wholesaler_to_retailer); digits=2), ", ")
 cover3 = join(round.(Float64.(results.tuned_policy_cover.l3_factory_to_wholesaler); digits=2), ", ")
 cover4 = join(round.(Float64.(results.tuned_policy_cover.l4_supplier_to_factory); digits=2), ", ")
@@ -125,16 +134,36 @@ This is the real question, and the honest answer is: **nobody is damping the ord
 
 Under the optimized policy, inventory volatility still climbs upstream just like classic bullwhip theory predicts — it's the **factory**, furthest from the actual customer and behind the longest (4-period) lead time, that ends up carrying the most erratic buffer. So the variance doesn't get *smoothed* anywhere in this system; it gets *warehoused*, and it's warehoused worst at the node with the least direct visibility into real demand — which is exactly the node the original bullwhip literature identifies as the classic victim.
 
-## Why the optimizer is fine with this
+The backlog picture backs this up from a different angle. Customer orders never backlog in this model — an order that isn't filled the same period is dropped as a lost sale, not queued. Internal replenishment orders between echelons are different: they never expire, so anything a node can't ship immediately queues up as a real, measurable backorder. Peak and ending queue size, averaged across all $(results.scenario_count) scenarios:
 
-Nothing is wrong with the optimizer. It's doing exactly what it was asked to do: minimize `-sales + lost_sales + holding_costs + transportation_costs + 0.001 × orders`. Look at what's *missing* from that list: nothing charges a penalty for an echelon's order quantity swinging wildly from one period to the next. Holding cost here is cheap (0.1 per unit per period) and the order-quantity term is nearly free (0.001 per unit). Given those weights, a policy that reacts hard and fast to the latest signal can track demand well enough to avoid much *additional* lost sales, and the extra inventory volatility that reactiveness creates barely costs anything to hold. The optimizer had no reason to prefer a smooth, boring policy over a jumpy, aggressive one — so it didn't find one. This is a direct, mechanical illustration of a general rule for this whole platform: **the "optimal" policy is optimal only with respect to the costs you actually told it about.** Order-quantity stability is a real cost in the real world; here, it was worth $(round(0.001; digits=3)) per unit, i.e. essentially zero.
+| Node | Naive peak backlog | Optimized peak backlog | Naive ending backlog | Optimized ending backlog |
+|---|---|---|---|---|
+| Wholesaler | $(fmt(results.naive_backlog.peak.wholesaler)) | $(fmt(results.optimized_backlog.peak.wholesaler)) | $(fmt(results.naive_backlog.ending.wholesaler)) | $(fmt(results.optimized_backlog.ending.wholesaler)) |
+| Factory | $(fmt(results.naive_backlog.peak.factory)) | $(fmt(results.optimized_backlog.peak.factory)) | $(fmt(results.naive_backlog.ending.factory)) | $(fmt(results.optimized_backlog.ending.factory)) |
+| Supplier | $(fmt(results.naive_backlog.peak.supplier)) | $(fmt(results.optimized_backlog.peak.supplier)) | $(fmt(results.naive_backlog.ending.supplier)) | $(fmt(results.optimized_backlog.ending.supplier)) |
+
+(The supplier's backlog should read ~0 in every column — it's modeled with unconstrained throughput, so it never has to queue an order. That's a sanity check on this measurement, not a finding.)
+
+## Is the "optimized" policy actually cheaper? Checking, not assuming.
+
+Everything above raises an obvious question this analysis shouldn't skip: if the optimized policy has worse fill rate *and* far worse bullwhip, is it at least genuinely cheaper under the cost function `optimize!` was minimizing? That's worth checking directly rather than assuming — `optimize!` only ever searched `BackwardCoverageOrderingPolicy` parameters here, so there was never a guarantee it could reach something as good as the naive `NetUptoOrderingPolicy` baseline, which lives in a different, entirely unsearched policy family.
+
+| Cost component | Naive | Optimized |
+|---|---|---|
+| Holding costs | $(fmt(results.naive_costs.holding_costs)) | $(fmt(results.optimized_costs.holding_costs)) |
+| Transportation (fixed) | $(fmt(results.naive_costs.trip_fixed_costs)) | $(fmt(results.optimized_costs.trip_fixed_costs)) |
+| Transportation (unit) | $(fmt(results.naive_costs.trip_unit_costs)) | $(fmt(results.optimized_costs.trip_unit_costs)) |
+| Order count | $(fmt(results.naive_costs.order_count)) | $(fmt(results.optimized_costs.order_count)) |
+| **Total cost (`optimize!`'s literal objective)** | **$(fmt(naive_total_cost))** | **$(fmt(optimized_total_cost))** |
+
+$(cost_verdict)
 
 ## Can this be replicated in a real supply chain? Why, and why not.
 
 **Why not, mostly:**
 
 1. **A ~$(ratio(opt_bw["retailer_orders (l2)"])) order-variance swing is not something a real operation can execute for free**, even if a cost function says it's cheap. Trucking capacity is booked in advance. Production lines have changeover costs and minimum run lengths. A supplier asked to ship 30x more or less than usual with no forward notice will build in padding, refuse, or renegotiate the contract — none of which this simulation's unconstrained, infinite-throughput supplier node has to deal with.
-2. **The holding-cost model is linear and flat.** A factory whose inventory coefficient of variation is $(round(opt_cv["factory"]; digits=2)) faces real working-capital, warehouse-capacity, and obsolescence risk that a constant `$0.10 per unit per period` charge doesn't capture. In practice, that volatility has a cost this model is blind to.
+2. **The holding-cost model is linear and flat.** A factory whose inventory coefficient of variation is $(round(opt_cv["factory"]; digits=2)) faces real working-capital, warehouse-capacity, and obsolescence risk that a constant `\$0.10 per unit per period` charge doesn't capture. In practice, that volatility has a cost this model is blind to.
 3. **This is still a centralized result.** `optimize!` set all three echelons' rules jointly, with one shared objective. Even a company willing to tolerate this much internal volatility would need the automation and cross-echelon authority to execute it without every swing triggering a manual override from whoever's job it is to explain a tripled order to their boss.
 
 **Why it's still worth knowing:** it's a sharper, more useful result than "the optimizer solves the bullwhip" would have been. It shows precisely how sensitive an "optimal" ordering policy is to the cost assumptions it's handed — change the weight on order-quantity stability, or cap the supplier's throughput, and you'd likely get a genuinely different, smoother policy. That's a concrete, testable next experiment (a natural Part 2: sweep an order-change penalty and a supplier capacity constraint, and see what it takes to get a policy that's both cheap *and* operationally sane) rather than a vague caveat.

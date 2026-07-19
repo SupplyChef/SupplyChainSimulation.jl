@@ -108,6 +108,24 @@ Everything above raises an obvious question this analysis shouldn't skip: if the
 
 **It is not.** The optimized policy is **42.9% more expensive** than the naive fixed-target baseline under the exact same cost function — worse on total cost, worse on fill rate, and far worse on bullwhip. That changes the conclusion: this isn't a case of the optimizer correctly trading service for savings. `optimize!` only ever searched `BackwardCoverageOrderingPolicy` parameters; it never had access to `NetUptoOrderingPolicy`, so it's entirely possible the naive policy family is simply a better structural fit for this network, and the "optimized" result is the best of a worse-fitting family, not a genuine optimum. The lesson isn't "don't trust optimization" — it's "the choice of policy *family* you hand the optimizer matters as much as the tuning," and that's worth testing directly as a follow-up (run `optimize!` over `NetUptoOrderingPolicy` too, and compare).
 
+## Scoring it the way the original board game does
+
+Everything above uses this package's own cost convention: a customer order that isn't filled the same period is a permanently **lost sale**. The physical MIT beer game scores differently — every stage, *including the retailer's shelf*, just carries a **backorder** forward with a per-period backlog cost until it's eventually filled. Nothing is ever permanently lost in the original game; it's just late, and lateness is what's penalized.
+
+This package's `Customer` node type can't fully replicate that: customer orders always have `due_date == creation_time` (hardcoded in `Simulation.jl`'s `place_orders`), so an unfilled customer order is dropped, not queued — unlike every other node type, which backlogs correctly, as the table above shows. So this is as close as this model can get: real holding + backlog cost (at 2× the holding rate, the standard ratio in Sterman's canonical version of the game) at the wholesaler, factory, and supplier, and a holding-cost-plus-lost-sales *proxy* at the retailer, clearly not equivalent to a true backlog cost:
+
+| Stage | Naive | Optimized |
+|---|---|---|
+| Retailer (holding + lost-sales proxy) | 8926.4 | 30211.2 |
+| Wholesaler (holding + backlog) | 7503.9 | 78023.5 |
+| Factory (holding + backlog) | 8772.9 | 48600.3 |
+| Supplier (holding + backlog) | 0.0 | 0.0 |
+| **Total classic score** | **25203.2** | **156835.0** |
+
+Under this scoring convention, optimized is **522.3% more expensive** than naive — the same direction as the cost comparison above, so the two conventions agree on which policy wins here, even though they measure the miss differently.
+
+This distinction matters beyond bookkeeping: a permanently-lost-sale model and an eventually-fulfilled-backorder model reward *completely different* policies. A model where stockouts are forgiven (backlogged, filled later) can rationally tolerate more short-term volatility than one where every miss is gone for good — so a policy tuned against this package's lost-sales convention isn't just numerically different from one tuned against the classic game's convention, it's answering a different question. Worth stating plainly rather than glossing over: **this whole post measures against this package's convention, not the original board game's**, and that choice is a real driver of everything above, not a footnote.
+
 ## Can this be replicated in a real supply chain? Why, and why not.
 
 **Why not, mostly:**

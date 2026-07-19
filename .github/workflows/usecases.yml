@@ -62,9 +62,12 @@ jobs:
         run: julia --project=examples/usecases ${{ matrix.dir }}/model.jl
       - name: Generate post
         run: julia --project=examples/usecases ${{ matrix.dir }}/generate_post.jl
+      - name: Sanitize artifact name
+        id: artifact
+        run: echo "name=usecase-$(echo '${{ matrix.dir }}' | tr '/' '-')" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
-          name: usecase-${{ matrix.dir }}
+          name: ${{ steps.artifact.outputs.name }}
           path: |
             ${{ matrix.dir }}/results.json
             ${{ matrix.dir }}/post.md

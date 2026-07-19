@@ -43,6 +43,16 @@ else
     """**It is not.** The optimized policy is **$(cost_delta_pct)% more expensive** than the naive fixed-target baseline under the exact same cost function — worse on total cost, worse on fill rate, and far worse on bullwhip. That changes the conclusion: this isn't a case of the optimizer correctly trading service for savings. `optimize!` only ever searched `BackwardCoverageOrderingPolicy` parameters; it never had access to `NetUptoOrderingPolicy`, so it's entirely possible the naive policy family is simply a better structural fit for this network, and the "optimized" result is the best of a worse-fitting family, not a genuine optimum. The lesson isn't "don't trust optimization" — it's "the choice of policy *family* you hand the optimizer matters as much as the tuning," and that's worth testing directly as a follow-up (run `optimize!` over `NetUptoOrderingPolicy` too, and compare)."""
 end
 
+naive_classic_total = Float64(results.naive_classic_score.total)
+optimized_classic_total = Float64(results.optimized_classic_score.total)
+classic_delta_pct = round(abs(optimized_classic_total - naive_classic_total) / abs(naive_classic_total) * 100; digits=1)
+classic_agrees = (optimized_classic_total < naive_classic_total) == (optimized_total_cost < naive_total_cost)
+classic_verdict = if optimized_classic_total < naive_classic_total
+    """Under this scoring convention, optimized is **$(classic_delta_pct)% cheaper** than naive — $(classic_agrees ? "the same direction as the cost comparison above, so the two conventions agree on which policy wins here, even though they measure the miss differently." : "the *opposite* conclusion from the cost comparison above. Which policy 'wins' depends on which convention you score it by, and that's the actual finding of this section: the choice of convention isn't a footnote, it changes the answer.")"""
+else
+    """Under this scoring convention, optimized is **$(classic_delta_pct)% more expensive** than naive — $(classic_agrees ? "the same direction as the cost comparison above, so the two conventions agree on which policy wins here, even though they measure the miss differently." : "the *opposite* conclusion from the cost comparison above. Which policy 'wins' depends on which convention you score it by, and that's the actual finding of this section: the choice of convention isn't a footnote, it changes the answer.")"""
+end
+
 cover2 = join(round.(Float64.(results.tuned_policy_cover.l2_wholesaler_to_retailer); digits=2), ", ")
 cover3 = join(round.(Float64.(results.tuned_policy_cover.l3_factory_to_wholesaler); digits=2), ", ")
 cover4 = join(round.(Float64.(results.tuned_policy_cover.l4_supplier_to_factory); digits=2), ", ")
@@ -157,6 +167,24 @@ Everything above raises an obvious question this analysis shouldn't skip: if the
 | **Total cost (`optimize!`'s literal objective)** | **$(fmt(naive_total_cost))** | **$(fmt(optimized_total_cost))** |
 
 $(cost_verdict)
+
+## Scoring it the way the original board game does
+
+Everything above uses this package's own cost convention: a customer order that isn't filled the same period is a permanently **lost sale**. The physical MIT beer game scores differently — every stage, *including the retailer's shelf*, just carries a **backorder** forward with a per-period backlog cost until it's eventually filled. Nothing is ever permanently lost in the original game; it's just late, and lateness is what's penalized.
+
+This package's `Customer` node type can't fully replicate that: customer orders always have `due_date == creation_time` (hardcoded in `Simulation.jl`'s `place_orders`), so an unfilled customer order is dropped, not queued — unlike every other node type, which backlogs correctly, as the table above shows. So this is as close as this model can get: real holding + backlog cost (at $(Int(round(0.2/0.1)))× the holding rate, the standard ratio in Sterman's canonical version of the game) at the wholesaler, factory, and supplier, and a holding-cost-plus-lost-sales *proxy* at the retailer, clearly not equivalent to a true backlog cost:
+
+| Stage | Naive | Optimized |
+|---|---|---|
+| Retailer (holding + lost-sales proxy) | $(fmt(Float64(results.naive_classic_score.per_stage.retailer))) | $(fmt(Float64(results.optimized_classic_score.per_stage.retailer))) |
+| Wholesaler (holding + backlog) | $(fmt(Float64(results.naive_classic_score.per_stage.wholesaler))) | $(fmt(Float64(results.optimized_classic_score.per_stage.wholesaler))) |
+| Factory (holding + backlog) | $(fmt(Float64(results.naive_classic_score.per_stage.factory))) | $(fmt(Float64(results.optimized_classic_score.per_stage.factory))) |
+| Supplier (holding + backlog) | $(fmt(Float64(results.naive_classic_score.per_stage.supplier))) | $(fmt(Float64(results.optimized_classic_score.per_stage.supplier))) |
+| **Total classic score** | **$(fmt(Float64(results.naive_classic_score.total)))** | **$(fmt(Float64(results.optimized_classic_score.total)))** |
+
+$(classic_verdict)
+
+This distinction matters beyond bookkeeping: a permanently-lost-sale model and an eventually-fulfilled-backorder model reward *completely different* policies. A model where stockouts are forgiven (backlogged, filled later) can rationally tolerate more short-term volatility than one where every miss is gone for good — so a policy tuned against this package's lost-sales convention isn't just numerically different from one tuned against the classic game's convention, it's answering a different question. Worth stating plainly rather than glossing over: **this whole post measures against this package's convention, not the original board game's**, and that choice is a real driver of everything above, not a footnote.
 
 ## Can this be replicated in a real supply chain? Why, and why not.
 

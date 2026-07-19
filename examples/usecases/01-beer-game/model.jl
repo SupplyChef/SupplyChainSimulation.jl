@@ -207,6 +207,45 @@ function backlog_summary(states, nodes_named, product, horizon)
     )
 end
 
+# --- "Classic beer-game" scoring: the standard board-game convention is a
+#     holding cost + backlog cost at *every* stage, accumulated over the
+#     whole game - not the lost-sales-at-the-customer-interface convention
+#     metrics_cost_function/cost_breakdown above actually use. This gets as
+#     close to that classic convention as SupplyChainSimulation.jl's model
+#     structurally allows: real backlog cost at the three internal echelons
+#     (wholesaler/factory/supplier, via backlog_series above), and a
+#     lost-sales proxy at the retailer. That proxy is necessary, not a
+#     choice: Customer orders in this package always have due_date ==
+#     creation_time (see place_orders in Simulation.jl) - unlike every other
+#     node type, an unfulfilled customer order is dropped the same period,
+#     never queued. In the original board game a stockout at retail is also
+#     just a backorder, exactly like every other stage - not a permanently
+#     lost sale - so the retailer term here is the closest available proxy,
+#     not a true equivalent, and that's a real limitation of this package's
+#     Customer node type, not an arbitrary modeling choice made for this post.
+#     backlog_rate defaults to 2x holding_rate, the standard ratio in
+#     Sterman's canonical version of the game (there: $0.50/case/week
+#     holding, $1.00/case/week backlog) - applied here to this network's own
+#     0.1 holding rate rather than importing Sterman's absolute numbers,
+#     since lead times/initial inventory/demand distribution already differ
+#     from his canonical setup.
+function classic_score(states, product, horizon; holding_rate=0.1, backlog_rate=0.2)
+    per_stage = Dict(name => Float64[] for name in ("retailer", "wholesaler", "factory", "supplier"))
+    for s in states
+        retailer_holding = holding_rate * sum(onhand_series(s, retailer, product, horizon))
+        retailer_shortfall = get_total_lost_sales(s) # proxy - see docstring above
+        push!(per_stage["retailer"], retailer_holding + retailer_shortfall)
+
+        for (name, node) in (("wholesaler", wholesaler), ("factory", factory), ("supplier", supplier))
+            holding = holding_rate * sum(onhand_series(s, node, product, horizon))
+            backlog = backlog_rate * sum(backlog_series(s, node, product, horizon))
+            push!(per_stage[name], holding + backlog)
+        end
+    end
+    stage_totals = Dict(name => sum(v) for (name, v) in per_stage)
+    return (per_stage = stage_totals, total = sum(values(stage_totals)))
+end
+
 # --- Naive baseline: order-up-to a fixed "pipeline coverage, no safety stock"
 #     target at each echelon (mean demand * (lead_time + 1)), never tuned. ---
 naive_target(lead_time) = round(Int, MEAN_DEMAND * (lead_time + 1))
@@ -228,6 +267,7 @@ naive_bullwhip = bullwhip_ratios(naive_states, LANES_NAMED, customer, product, H
 naive_inventory_cv = inventory_cv(naive_states, STORAGES_NAMED, product, HORIZON)
 naive_costs = cost_breakdown(naive_states)
 naive_backlog = backlog_summary(naive_states, BACKLOG_NODES_NAMED, product, HORIZON)
+naive_classic = classic_score(naive_states, product, HORIZON)
 
 # --- Optimized: BackwardCoverageOrderingPolicy at each upstream echelon,
 #     tuned jointly by optimize!() against the same 30 calibration scenarios. ---
@@ -253,6 +293,7 @@ optimized_bullwhip = bullwhip_ratios(optimized_in_sample_states, LANES_NAMED, cu
 optimized_inventory_cv = inventory_cv(optimized_in_sample_states, STORAGES_NAMED, product, HORIZON)
 optimized_costs = cost_breakdown(optimized_in_sample_states)
 optimized_backlog = backlog_summary(optimized_in_sample_states, BACKLOG_NODES_NAMED, product, HORIZON)
+optimized_classic = classic_score(optimized_in_sample_states, product, HORIZON)
 
 # Known-good values from test/policy-beergame-tests.jl's beer_game() test,
 # for the exact same seed/config/policy family - printed as a sanity check,
@@ -278,12 +319,14 @@ results = Dict(
     "naive_inventory_cv" => naive_inventory_cv,
     "naive_costs" => naive_costs,
     "naive_backlog" => naive_backlog,
+    "naive_classic_score" => naive_classic,
     "optimized_in_sample_aggregate" => optimized_in_sample,
     "optimized_in_sample_scenario1" => optimized_in_sample_scenario1,
     "optimized_bullwhip_ratios" => optimized_bullwhip,
     "optimized_inventory_cv" => optimized_inventory_cv,
     "optimized_costs" => optimized_costs,
     "optimized_backlog" => optimized_backlog,
+    "optimized_classic_score" => optimized_classic,
     "optimized_holdout_aggregate" => optimized_holdout,
     "tuned_policy_cover" => Dict(
         "l2_wholesaler_to_retailer" => opt_policy2.cover,
@@ -312,3 +355,6 @@ println("  optimized: ", optimized_costs)
 println("\nBacklog by layer (peak / ending, units, averaged across scenarios):")
 println("  naive:     ", naive_backlog)
 println("  optimized: ", optimized_backlog)
+println("\nClassic beer-game score (holding + backlog cost per stage, retailer uses lost-sales proxy):")
+println("  naive:     ", naive_classic)
+println("  optimized: ", optimized_classic)

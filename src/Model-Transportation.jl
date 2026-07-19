@@ -59,17 +59,21 @@ redundant Dict allocations per lane.
 Stores each policy object directly, rather than pre-wrapping it in a
 `FunctionWrapper` closure via `wrap_get_order` - that type erasure went
 through a `ccall`-based trampoline, which forced boxing of every argument
-crossing the boundary (`Storage`, `Lane`, `Env`, `Product`). Call sites now
-dispatch through `dispatch_get_order` (see Policy.jl), a hand-written union
-split, rather than calling `get_order(policy, ...)` directly: `Storage`,
-`Lane`, `Env`, and `Product` are immutable (non-`isbits`) structs, so a
-plain call on an abstractly-typed `policy` still boxes them the same way
-FunctionWrapper did - the boxing came from the abstract-typed dynamic
-dispatch itself, not from the ccall trampoline specifically (confirmed by
-re-profiling after the FunctionWrapper removal alone: boxing byte counts
-were unchanged, just re-labeled). `dispatch_get_order`'s explicit `isa`
-chain resolves the concrete `get_order` method statically per branch,
-avoiding that boxing.
+crossing the boundary (`Storage`, `Lane`, `Env`, `Product`). `place_orders`
+(Simulation.jl) hand-writes a union split (an explicit `isa` chain, each
+branch followed by a type assertion) inline at its `get_order` call site,
+rather than calling `get_order(policy, ...)` directly on the abstractly-
+typed `policy` it reads out of this dict: `Storage`, `Lane`, `Env`, and
+`Product` are immutable (non-`isbits`) structs, so a plain call on an
+abstractly-typed `policy` still boxes them the same way FunctionWrapper
+did - the boxing came from the abstract-typed dynamic dispatch itself, not
+from the ccall trampoline specifically. The union split has to be written
+inline in `place_orders`, not factored into a helper function: Julia's
+`isa`+type-assert narrowing is local to the function scope it happens in,
+so calling out to a helper with `policy` still abstractly typed
+re-introduces the exact same dynamic dispatch (confirmed the hard way -
+factoring it into a `dispatch_get_order` helper measured identically to no
+split at all, since the call *into* that helper was itself still dynamic).
 """
 function get_lane_policies(supplychain, policies)
     return Dict{Lane, Dict{Product, InventoryOrderingPolicy}}(

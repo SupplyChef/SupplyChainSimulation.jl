@@ -255,7 +255,36 @@ function place_orders(state::State, env::Env, location::ConcreteNode, product::P
         #println(policies)
         policy = get(trip.policies, product, nothing)
         if !isnothing(policy)
-            quantity = Int(dispatch_get_order(policy, state, env, location, trip.route, product, time))
+            # Hand-written union split, inlined directly here rather than
+            # factored into a helper: policy's static type at this point is
+            # the abstract InventoryOrderingPolicy (get()'s return type), and
+            # Julia's isa+type-assert narrowing is local to the function it
+            # happens in - calling out to a helper function with policy still
+            # abstractly typed re-introduces exactly the dynamic dispatch
+            # (and the Storage/Lane/Env/Product boxing that comes with it)
+            # this was meant to avoid, regardless of what that helper does
+            # internally. Confirmed by allocation profiling: an earlier
+            # version of this split lived in a separate dispatch_get_order
+            # function, and boxing at this call site was unchanged.
+            quantity = if policy isa QuantityOrderingPolicy
+                Int(get_order(policy::QuantityOrderingPolicy, state, env, location, trip.route, product, time))
+            elseif policy isa ProductQuantityOrderingPolicy
+                Int(get_order(policy::ProductQuantityOrderingPolicy, state, env, location, trip.route, product, time))
+            elseif policy isa OnHandUptoOrderingPolicy
+                Int(get_order(policy::OnHandUptoOrderingPolicy, state, env, location, trip.route, product, time))
+            elseif policy isa NetUptoOrderingPolicy
+                Int(get_order(policy::NetUptoOrderingPolicy, state, env, location, trip.route, product, time))
+            elseif policy isa NetSSOrderingPolicy
+                Int(get_order(policy::NetSSOrderingPolicy, state, env, location, trip.route, product, time))
+            elseif policy isa ForwardCoverageOrderingPolicy
+                Int(get_order(policy::ForwardCoverageOrderingPolicy, state, env, location, trip.route, product, time))
+            elseif policy isa BackwardCoverageOrderingPolicy
+                Int(get_order(policy::BackwardCoverageOrderingPolicy, state, env, location, trip.route, product, time))
+            elseif policy isa SingleOrderOrderingPolicy
+                Int(get_order(policy::SingleOrderOrderingPolicy, state, env, location, trip.route, product, time))
+            else
+                Int(get_order(policy, state, env, location, trip.route, product, time))
+            end
             if quantity > 0
                 minimum_quantity = trip.route.minimum_quantity
                 if minimum_quantity > 0 && quantity < minimum_quantity

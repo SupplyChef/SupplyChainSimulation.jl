@@ -1,0 +1,74 @@
+{
+    "horizon": 200,
+    "naive_targets": {
+        "l2_wholesaler_to_retailer": 30,
+        "l4_supplier_to_factory": 50,
+        "l3_factory_to_wholesaler": 30
+    },
+    "holdout_seed": 999,
+    "mean_demand": 10,
+    "naive_aggregate": {
+        "total_demand": 59906,
+        "total_sales": 57295,
+        "total_lost_sales": 2611,
+        "fill_rate": 0.9564150502453844
+    },
+    "naive_scenario1": {
+        "total_demand": 1931,
+        "total_sales": 1884,
+        "total_lost_sales": 47
+    },
+    "naive_inventory_cv": {
+        "wholesaler": 0.47484551700433436,
+        "retailer": 0.45261784619593104,
+        "factory": 0.5523871472205127
+    },
+    "optimized_in_sample_aggregate": {
+        "total_demand": 59906,
+        "total_sales": 56576,
+        "total_lost_sales": 3330,
+        "fill_rate": 0.9444129135645846
+    },
+    "optimized_in_sample_scenario1": {
+        "total_demand": 1931,
+        "total_sales": 1828,
+        "total_lost_sales": 103
+    },
+    "optimized_inventory_cv": {
+        "wholesaler": 1.168642472712289,
+        "retailer": 0.6087903020478085,
+        "factory": 2.0244290500217956
+    },
+    "optimized_bullwhip_ratios": {
+        "wholesaler_orders (l3)": 32.34243500714274,
+        "retailer_orders (l2)": 36.96811748580653,
+        "factory_orders (l4)": 33.2706329462527
+    },
+    "naive_bullwhip_ratios": {
+        "wholesaler_orders (l3)": 1.7098757971343594,
+        "retailer_orders (l2)": 1.4313046204696458,
+        "factory_orders (l4)": 4.047271528040351
+    },
+    "calibration_seed": 3,
+    "scenario_count": 30,
+    "optimized_holdout_aggregate": {
+        "total_demand": 60331,
+        "total_sales": 56839,
+        "total_lost_sales": 3492,
+        "fill_rate": 0.9421193084815435
+    },
+    "tuned_policy_cover": {
+        "l2_wholesaler_to_retailer": [
+            4.068457120000398,
+            5.448120537565404
+        ],
+        "l4_supplier_to_factory": [
+            0,
+            1.1116202266271662
+        ],
+        "l3_factory_to_wholesaler": [
+            0.009471316305721848,
+            0.13820031665440635
+        ]
+    }
+}

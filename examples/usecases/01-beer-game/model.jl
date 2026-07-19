@@ -246,6 +246,91 @@ function classic_score(states, product, horizon; holding_rate=0.1, backlog_rate=
     return (per_stage = stage_totals, total = sum(values(stage_totals)))
 end
 
+# --- Sterman's (1989) "anchor and adjust" heuristic - a published, measured
+#     model of how real humans play the beer game, not a policy this package
+#     ships. Each period: order = forecast + alpha_stock*(desired_stock -
+#     on_hand) + alpha_supply_line*(desired_supply_line - supply_line), where
+#     supply_line is the pipeline (on-order + in-transit, i.e. everything
+#     already placed but not yet received) and desired_supply_line =
+#     lead_time * forecast (the pipeline you'd carry in steady state).
+#
+#     alpha_supply_line = 1 means fully crediting the pipeline - and at
+#     alpha_stock=1, desired_stock=0, this reduces algebraically to exactly
+#     naive_target(lead_time) - net_inventory, i.e. this policy at
+#     alpha_supply_line=1 IS the naive NetUptoOrderingPolicy baseline below,
+#     not just something similar to it:
+#         order = forecast + 1*(0 - on_hand) + 1*(lead_time*forecast - supply_line)
+#               = forecast*(1 + lead_time) - (on_hand + supply_line)
+#               = naive_target(lead_time) - net_inventory
+#     Sterman's central finding, replicated repeatedly (Croson & Donohue found
+#     98% of 172 players underweight the supply line in the original study),
+#     is that real players set alpha_supply_line well below 1 - they don't
+#     fully believe an order already placed is "on the way," so a delayed
+#     shipment reads as a real shortfall on top of what's already coming, and
+#     they order more. Sweeping alpha_supply_line down from 1 isolates that
+#     effect on its own, holding everything else at the naive baseline.
+mutable struct AnchorAndAdjustOrderingPolicy <: InventoryOrderingPolicy
+    alpha_stock::Float64
+    alpha_supply_line::Float64
+    desired_stock::Float64
+end
+
+function get_parameters(policy::AnchorAndAdjustOrderingPolicy)
+    return [policy.alpha_stock, policy.alpha_supply_line, policy.desired_stock]
+end
+
+function set_parameters!(policy::AnchorAndAdjustOrderingPolicy, values::Array{Float64, 1})
+    policy.alpha_stock = values[1]
+    policy.alpha_supply_line = values[2]
+    policy.desired_stock = values[3]
+end
+
+function get_order(policy::AnchorAndAdjustOrderingPolicy, state, env, location, lane, product, time)
+    forecast = MEAN_DEMAND
+    on_hand = get_on_hand_inventory(state, location, product)
+    net_inventory = get_net_inventory(state, location, product, time)
+    supply_line = net_inventory - on_hand
+    lead_time = lane.times[1]
+    desired_supply_line = lead_time * forecast
+
+    stock_adjustment = policy.alpha_stock * (policy.desired_stock - on_hand)
+    supply_line_adjustment = policy.alpha_supply_line * (desired_supply_line - supply_line)
+
+    order = forecast + stock_adjustment + supply_line_adjustment
+    return max(0, round(Int, order))
+end
+
+function run_anchor_and_adjust(alpha_supply_line, product, horizon, scenario_count, seed)
+    policy2 = AnchorAndAdjustOrderingPolicy(1.0, alpha_supply_line, 0.0)
+    policy3 = AnchorAndAdjustOrderingPolicy(1.0, alpha_supply_line, 0.0)
+    policy4 = AnchorAndAdjustOrderingPolicy(1.0, alpha_supply_line, 0.0)
+    policies = Dict((l2, product) => policy2, (l3, product) => policy3, (l4, product) => policy4)
+    scenarios = build_scenarios(scenario_count, seed)
+    states = [simulate(s, policies) for s in scenarios]
+    return (
+        aggregate = aggregate(states),
+        bullwhip = bullwhip_ratios(states, LANES_NAMED, customer, product, horizon),
+        inventory_cv = inventory_cv(states, STORAGES_NAMED, product, horizon),
+        costs = cost_breakdown(states),
+        backlog = backlog_summary(states, BACKLOG_NODES_NAMED, product, horizon),
+        classic = classic_score(states, product, horizon),
+    )
+end
+
+# --- Full metric bundle for a policy set already run to completion, reused
+#     for the tuned-NetUptoOrderingPolicy and bigger-budget-optimizer runs
+#     below so every configuration in this script is measured identically. ---
+function full_metrics(states, product, horizon)
+    return (
+        aggregate = aggregate(states),
+        bullwhip = bullwhip_ratios(states, LANES_NAMED, customer, product, horizon),
+        inventory_cv = inventory_cv(states, STORAGES_NAMED, product, horizon),
+        costs = cost_breakdown(states),
+        backlog = backlog_summary(states, BACKLOG_NODES_NAMED, product, horizon),
+        classic = classic_score(states, product, horizon),
+    )
+end
+
 # --- Naive baseline: order-up-to a fixed "pipeline coverage, no safety stock"
 #     target at each echelon (mean demand * (lead_time + 1)), never tuned. ---
 naive_target(lead_time) = round(Int, MEAN_DEMAND * (lead_time + 1))
@@ -268,6 +353,17 @@ naive_inventory_cv = inventory_cv(naive_states, STORAGES_NAMED, product, HORIZON
 naive_costs = cost_breakdown(naive_states)
 naive_backlog = backlog_summary(naive_states, BACKLOG_NODES_NAMED, product, HORIZON)
 naive_classic = classic_score(naive_states, product, HORIZON)
+
+# --- Sterman anchor-and-adjust sweep: alpha_supply_line=1.0 reproduces the
+#     naive baseline exactly (see the policy's docstring above for the
+#     algebra); sweeping it down isolates how much supply-line underweighting
+#     alone - the specific, published, measured human bias - degrades things,
+#     independent of any other change to the policy. ---
+const SUPPLY_LINE_WEIGHTS = [1.0, 0.8, 0.6, 0.4, 0.2]
+anchor_adjust_results = Dict(
+    string(w) => run_anchor_and_adjust(w, product, HORIZON, SCENARIO_COUNT, CALIBRATION_SEED)
+    for w in SUPPLY_LINE_WEIGHTS
+)
 
 # --- Optimized: BackwardCoverageOrderingPolicy at each upstream echelon,
 #     tuned jointly by optimize!() against the same 30 calibration scenarios. ---
@@ -294,6 +390,46 @@ optimized_inventory_cv = inventory_cv(optimized_in_sample_states, STORAGES_NAMED
 optimized_costs = cost_breakdown(optimized_in_sample_states)
 optimized_backlog = backlog_summary(optimized_in_sample_states, BACKLOG_NODES_NAMED, product, HORIZON)
 optimized_classic = classic_score(optimized_in_sample_states, product, HORIZON)
+
+# --- Follow-up 1: tune NetUptoOrderingPolicy's own (single) parameter too,
+#     instead of comparing a *tuned* BackwardCoverageOrderingPolicy against
+#     an *untuned* naive one. This is the fair, apples-to-apples comparison:
+#     best-of-family vs. best-of-family. NetUptoOrderingPolicy has one
+#     parameter per echelon and a monotonic, well-behaved cost surface (more
+#     `upto` strictly trades lost sales for holding cost), so this should
+#     converge easily regardless of the optimizer's own limitations. ---
+tuned_naive_policy2 = NetUptoOrderingPolicy(0)
+tuned_naive_policy3 = NetUptoOrderingPolicy(0)
+tuned_naive_policy4 = NetUptoOrderingPolicy(0)
+tuned_naive_policies = Dict((l2, product) => tuned_naive_policy2, (l3, product) => tuned_naive_policy3, (l4, product) => tuned_naive_policy4)
+scenarios_for_tuned_naive = build_scenarios(SCENARIO_COUNT, CALIBRATION_SEED)
+optimize!(tuned_naive_policies, scenarios_for_tuned_naive...; cost_function=metrics_cost_function, record_history=false)
+tuned_naive_states = [simulate(s, tuned_naive_policies) for s in scenarios_for_tuned_naive]
+tuned_naive_metrics = full_metrics(tuned_naive_states, product, HORIZON)
+tuned_naive_targets = Dict(
+    "l2_wholesaler_to_retailer" => tuned_naive_policy2.upto,
+    "l3_factory_to_wholesaler" => tuned_naive_policy3.upto,
+    "l4_supplier_to_factory" => tuned_naive_policy4.upto,
+)
+
+# --- Follow-up 2: rerun the original BackwardCoverageOrderingPolicy search
+#     with 4x the evaluation budget (60000 vs. the default 15000) and 4x the
+#     no-progress patience, same starting point, to check whether the
+#     original result was actually converged or just cut off early. ---
+big_opt_policy2 = BackwardCoverageOrderingPolicy([0.0, 0.0])
+big_opt_policy3 = BackwardCoverageOrderingPolicy([0.0, 0.0])
+big_opt_policy4 = BackwardCoverageOrderingPolicy([0.0, 0.0])
+big_opt_policies = Dict((l2, product) => big_opt_policy2, (l3, product) => big_opt_policy3, (l4, product) => big_opt_policy4)
+scenarios_for_big_opt = build_scenarios(SCENARIO_COUNT, CALIBRATION_SEED)
+optimize!(big_opt_policies, scenarios_for_big_opt...; cost_function=metrics_cost_function, record_history=false,
+          params=Dict(:MaxFuncEvals => 60000.0, :MaxStepsWithoutProgress => 6000.0))
+big_opt_states = [simulate(s, big_opt_policies) for s in scenarios_for_big_opt]
+big_opt_metrics = full_metrics(big_opt_states, product, HORIZON)
+big_opt_cover = Dict(
+    "l2_wholesaler_to_retailer" => big_opt_policy2.cover,
+    "l3_factory_to_wholesaler" => big_opt_policy3.cover,
+    "l4_supplier_to_factory" => big_opt_policy4.cover,
+)
 
 # Known-good values from test/policy-beergame-tests.jl's beer_game() test,
 # for the exact same seed/config/policy family - printed as a sanity check,
@@ -333,6 +469,11 @@ results = Dict(
         "l3_factory_to_wholesaler" => opt_policy3.cover,
         "l4_supplier_to_factory" => opt_policy4.cover,
     ),
+    "anchor_adjust_results" => anchor_adjust_results,
+    "tuned_naive_metrics" => tuned_naive_metrics,
+    "tuned_naive_targets" => tuned_naive_targets,
+    "big_opt_metrics" => big_opt_metrics,
+    "big_opt_cover" => big_opt_cover,
 )
 
 open(joinpath(@__DIR__, "results.json"), "w") do io
@@ -358,3 +499,14 @@ println("  optimized: ", optimized_backlog)
 println("\nClassic beer-game score (holding + backlog cost per stage, retailer uses lost-sales proxy):")
 println("  naive:     ", naive_classic)
 println("  optimized: ", optimized_classic)
+println("\nAnchor-and-adjust sweep (fill_rate, total_cost by alpha_supply_line):")
+for w in SUPPLY_LINE_WEIGHTS
+    r = anchor_adjust_results[string(w)]
+    println("  alpha_supply_line=$(w): fill_rate=$(round(r.aggregate.fill_rate; digits=4))  total_cost=$(round(r.costs.total_cost; digits=1))")
+end
+println("\nTuned NetUptoOrderingPolicy (fair tuned-vs-tuned comparison):")
+println("  targets: ", tuned_naive_targets)
+println("  fill_rate=$(round(tuned_naive_metrics.aggregate.fill_rate; digits=4))  total_cost=$(round(tuned_naive_metrics.costs.total_cost; digits=1))")
+println("\nBigger-budget BackwardCoverageOrderingPolicy rerun (60000 vs 15000 evals):")
+println("  cover: ", big_opt_cover)
+println("  fill_rate=$(round(big_opt_metrics.aggregate.fill_rate; digits=4))  total_cost=$(round(big_opt_metrics.costs.total_cost; digits=1))")

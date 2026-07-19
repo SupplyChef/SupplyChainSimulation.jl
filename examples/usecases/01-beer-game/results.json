@@ -1,4 +1,22 @@
 {
+    "naive_costs": {
+        "total_cost": -34289.11999999999,
+        "holding_costs": 20157.400000000005,
+        "trip_fixed_costs": 0,
+        "trip_unit_costs": 0,
+        "order_count": 237480,
+        "sales": 57295,
+        "lost_sales": 2611
+    },
+    "optimized_costs": {
+        "total_cost": -19580.779999999875,
+        "holding_costs": 33425.40000000012,
+        "trip_fixed_costs": 0,
+        "trip_unit_costs": 0,
+        "order_count": 239820,
+        "sales": 56576,
+        "lost_sales": 3330
+    },
     "horizon": 200,
     "naive_targets": {
         "l2_wholesaler_to_retailer": 30,
@@ -28,6 +46,30 @@
         "total_sales": 56576,
         "total_lost_sales": 3330,
         "fill_rate": 0.9444129135645846
+    },
+    "naive_backlog": {
+        "peak": {
+            "supplier": 0,
+            "wholesaler": 24.966666666666665,
+            "factory": 39.36666666666667
+        },
+        "ending": {
+            "supplier": 0,
+            "wholesaler": 10.1,
+            "factory": 23.366666666666667
+        }
+    },
+    "optimized_backlog": {
+        "peak": {
+            "supplier": 0,
+            "wholesaler": 163.33333333333334,
+            "factory": 140.46666666666667
+        },
+        "ending": {
+            "supplier": 0,
+            "wholesaler": 61.9,
+            "factory": 51
+        }
     },
     "optimized_in_sample_scenario1": {
         "total_demand": 1931,

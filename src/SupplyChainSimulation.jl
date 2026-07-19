@@ -21,6 +21,8 @@ export NetSSOrderingPolicy
 export ForwardCoverageOrderingPolicy
 export BackwardCoverageOrderingPolicy
 export QuantityOrderingPolicy
+export ProductQuantityOrderingPolicy
+export SingleOrderOrderingPolicy
 export required_lookback
 
 export set_parameters!

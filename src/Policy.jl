@@ -257,7 +257,19 @@ end
 required_lookback(policy::BackwardCoverageOrderingPolicy)::Int = length(policy.cover)
 
 function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64
-    net_inventory = get_net_inventory(state, location, product, time)
+    # Resolved once and shared between _net_inventory_by_index and
+    # _fill_past_outbound_orders_by_index! below, instead of letting
+    # get_net_inventory and get_past_outbound_orders! each independently
+    # re-resolve the same (location, product) pair via their own Dict
+    # lookups (get_net_inventory already consolidates its own 4 sub-queries
+    # into 1 lookup each - see State.jl - but calling it and
+    # get_past_outbound_orders! back to back here still re-did that work
+    # twice for the exact same location/product/time).
+    li = get(state.location_index, location, 0)
+    pi = get(state.product_index, product, 0)
+    si = location isa Storage ? get(state.storage_index, location, 0) : 0
+
+    net_inventory = _net_inventory_by_index(state, li, pi, si, time)
 
     # Reuses a buffer owned by env (see Env.jl) rather than allocating fresh
     # on every call - keyed by (lane, product) rather than owned by policy
@@ -266,7 +278,7 @@ function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env::En
     # same mutable array read/written by all of them. env is exclusive to
     # one scenario's simulate() call, so a buffer that lives there is safe
     # even if scenarios are ever evaluated concurrently.
-    past_orders = get_past_outbound_orders!(env.past_orders_buffers[(lane, product)], state, location, product, time)
+    past_orders = _fill_past_outbound_orders_by_index!(env.past_orders_buffers[(lane, product)], state, li, pi, time)
     #println("$lane $time $location $past_orders")
     
     weights = 0

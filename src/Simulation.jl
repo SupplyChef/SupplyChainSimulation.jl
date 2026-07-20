@@ -1,21 +1,18 @@
 # Receive inventory
-function receive_inventory!(state::State, env::Env, location::Storage, product, time)
+#
+# All three receive_inventory! methods below share the same (li, si, pi,
+# time) parameter shape even though the Customer/Supplier methods don't
+# need every one of them (si in particular is Storage-only): simulate()
+# dispatches on location's runtime type at a single call site, so every
+# method has to accept the same argument list for that dispatch to work.
+# li/si/pi are resolved once per (location, product) for the whole
+# simulate() call (env.sorted_locations/env.sorted_products are both fixed
+# for the run) and passed in from there - instead of every
+# receive_inventory! call (once per (location, product) per period)
+# independently re-resolving location_index[location]/storage_index[location]/
+# product_index[product] via its own Dict lookup.
+function receive_inventory!(state::State, env::Env, location::Storage, product, li::Int64, si::Int64, pi::Int64, time)
     #println(state)
-    # Resolved once and shared across every _by_index call below, instead
-    # of add_on_hand_inventory!/add_in_transit_inventory!/
-    # get_on_hand_inventory/get_in_transit_inventory/record_overflow! each
-    # independently re-resolving location_index/storage_index/product_index
-    # for the same (location, product) pair - up to ~5 pairs of Dict lookups
-    # per call before this, called once per (location, product) per period
-    # of every simulate() run. location is a Storage already in the
-    # network (env.sorted_locations/state's own construction guarantee
-    # this), so direct indexing (not the soft get(...,0) the standalone
-    # get_on_hand_inventory/get_in_transit_inventory use for out-of-network
-    # callers) is safe here.
-    li = state.location_index[location]
-    si = state.storage_index[location]
-    pi = state.product_index[product]
-
     quantity = _in_transit_by_index(state, li, pi, time)
     max_capacity = get_maximum_storage(location, product)
 
@@ -41,17 +38,16 @@ function receive_inventory!(state::State, env::Env, location::Storage, product, 
     end
 end
 
-function receive_inventory!(state::State, env::Env, location::Customer, product, time)
+function receive_inventory!(state::State, env::Env, location::Customer, product, li::Int64, si::Int64, pi::Int64, time)
     #println(state)
-    # Same consolidation as the Storage method above, minus the on-hand
-    # pieces Customers don't have.
-    li = state.location_index[location]
-    pi = state.product_index[product]
+    # si unused: Customers have no on-hand/overflow inventory of their own
+    # (see the Storage method above) - see this section's header comment
+    # for why it's still accepted here.
     quantity = _in_transit_by_index(state, li, pi, time)
     _add_in_transit_by_index!(state, li, pi, time, -quantity)
 end
 
-function receive_inventory!(state::State, env::Env, location::Supplier, product, time)
+function receive_inventory!(state::State, env::Env, location::Supplier, product, li::Int64, si::Int64, pi::Int64, time)
     #no-op
 end
 
@@ -129,7 +125,7 @@ function record_drop!(state::State, order_line::OrderLine)
 end
 
 """
-    record_placement!(state::State, env::Env, order_line::OrderLine)
+    record_placement!(state::State, env::Env, order_line::OrderLine, pi::Int64)
 
 Records `order_line` into `state.outbound_order_quantities` (see
 `get_past_outbound_orders`), if `env.needs_outbound_order_index` - i.e. only
@@ -139,25 +135,37 @@ gets written into it (the backing arrays are always allocated regardless -
 see `outbound_order_quantities`'s field doc in `State.jl` - this flag only
 gates whether anything is ever written there).
 
+`pi` is `order_line.product`'s index, already resolved by the caller's
+`place_orders` (both methods place every order for one fixed `product` -
+`order_line.product == product` always - so `pi` is the same for every
+order line a given `place_orders` call records). `order_line.origin`
+varies per order line (a `place_orders(ConcreteNode, ...)` call can place
+orders on several different lanes/origins in one call), so that half of
+the lookup stays local to this function.
+
 Must be called exactly once per order line, at the `push!(state.placed_orders, order)`
 site in each `place_orders` method.
 """
-function record_placement!(state::State, env::Env, order_line::OrderLine)
+function record_placement!(state::State, env::Env, order_line::OrderLine, pi::Int64)
     if env.needs_outbound_order_index
         li = state.location_index[order_line.origin]
-        pi = state.product_index[order_line.product]
         state.outbound_order_quantities[li, pi][order_line.creation_time] += order_line.quantity
     end
 end
 
 # Send inventory
-function send_inventory!(state::State, env::Env, location::Supplier, product::Product, time::Int)
-    # pi is shared with every delete_inbound_order_line! call below: every
-    # order_line here was queued under this same (location, product) pending
-    # slot, so order_line.product == product for the whole loop even though
-    # each line's destination (and so its location_index lookup) differs.
-    li = state.location_index[location]
-    pi = state.product_index[product]
+#
+# Both top-level send_inventory! methods below (Supplier and ConcreteNode)
+# share the same (li, si, pi, time) parameter shape, mirroring
+# receive_inventory!'s section above and for the same reason: simulate()
+# dispatches on location's runtime type at a single call site. si is
+# unused here (Suppliers have no on-hand inventory), but every order_line
+# pulled from order_lines below was queued under this same
+# (location, product) pending slot (order_line.product == product
+# throughout), so pi is shared with every _delete_inbound_order_line_by_index!
+# call below - each line's destination (and so its own location_index
+# lookup) still varies per line, so that half stays local.
+function send_inventory!(state::State, env::Env, location::Supplier, product::Product, li::Int64, si::Int64, pi::Int64, time::Int)
     order_lines = state.pending_outbound_order_lines[li, pi]
     if isempty(order_lines)
         return
@@ -198,27 +206,13 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
     end
 end
 
-function send_inventory!(state::State, env::Env, location::ConcreteNode, product::Product, time::Int)
+function send_inventory!(state::State, env::Env, location::ConcreteNode, product::Product, li::Int64, si::Int64, pi::Int64, time::Int)
     #println("send_inventory $location $product $time")
-    # li/pi/si resolved once and shared for the whole call: every order_line
-    # pulled from order_lines below was queued under this same
-    # (location, product) pending slot (order_line.product == product
-    # throughout), and every on-hand read/write - available's initial value
-    # and each fulfilled line's _remove_on_hand_by_index! call - is against
-    # this same (location, product) too, so get_on_hand_inventory/
-    # remove_on_hand_inventory! no longer need to independently re-resolve
-    # the same indices once per order line filled. pi is also handed to
-    # _delete_inbound_order_line_by_index! below - see its comment in
-    # State.jl for why only the product half of that lookup is shared. si
-    # is 0 for a Customer/Supplier reaching this generic method (not a
+    # si is 0 for a Customer/Supplier reaching this generic method (not a
     # Storage): _on_hand_by_index's si==0 guard then keeps available at 0,
     # which the `quantity <= available` check below already relies on to
     # never fulfil lines - and so never call _remove_on_hand_by_index! - at
     # a non-Storage location.
-    li = state.location_index[location]
-    pi = state.product_index[product]
-    si = get(state.storage_index, location, 0)
-
     order_lines = state.pending_outbound_order_lines[li, pi]
     if isempty(order_lines)
         return
@@ -272,7 +266,18 @@ function send_inventory!(state::State, env::Env, location::ConcreteNode, product
 end
 
 # Place orders
-function place_orders(state::State, env::Env, location::Customer, product::Product, time::Int64, orders::Array{OrderLine, 1})
+#
+# Both place_orders methods below share the same (pi, time, orders)
+# parameter shape (simulate() dispatches on location's runtime type at a
+# single call site - see receive_inventory!'s section above for why).
+# Neither needs li: get_inbound_trips/find_next_departure/get_order below
+# key off env.departures/env's own caches by the location *object*, not
+# its state.location_index entry. pi is order_line.product's index -
+# order_line.product == product always, since each call places every
+# order for one fixed product - and is handed to record_placement!, which
+# still resolves order_line.origin's own index locally since that varies
+# per order line placed (see its docstring).
+function place_orders(state::State, env::Env, location::Customer, product::Product, pi::Int64, time::Int64, orders::Array{OrderLine, 1})
     empty!(orders)
     demand = state.demand[(location, product)]
     quantity = Int(demand.demand[time])
@@ -283,7 +288,7 @@ function place_orders(state::State, env::Env, location::Customer, product::Produ
         #@debug "Ordered at $time, $location, $product, $quantity"
         push!(orders, order)
         push!(state.placed_orders, order)
-        record_placement!(state, env, order)
+        record_placement!(state, env, order, pi)
         state.metrics.orders += quantity
         state.metrics.demand += quantity * demand.sales_price
         return
@@ -291,8 +296,8 @@ function place_orders(state::State, env::Env, location::Customer, product::Produ
         return
     end
 end
-    
-function place_orders(state::State, env::Env, location::ConcreteNode, product::Product, time::Int, orders::Array{OrderLine, 1})
+
+function place_orders(state::State, env::Env, location::ConcreteNode, product::Product, pi::Int64, time::Int, orders::Array{OrderLine, 1})
     empty!(orders)
     for trip in get_inbound_trips(env, location, time)
         #println(policies)
@@ -337,7 +342,7 @@ function place_orders(state::State, env::Env, location::ConcreteNode, product::P
 
                 push!(orders, order)
                 push!(state.placed_orders, order)
-                record_placement!(state, env, order)
+                record_placement!(state, env, order, pi)
                 state.metrics.orders += quantity
             end
         end
@@ -388,31 +393,56 @@ function simulate(env::Env, policies, initial_state)
     # instead of allocating a fresh reversed copy every period.
     reversed_sorted_locations = reverse(env.sorted_locations)
 
+    # location_index/storage_index resolved once per location for the
+    # whole simulate() call, since env.sorted_locations is fixed for the
+    # run - instead of once per (location, product, time) call, as every
+    # receive_inventory!/send_inventory!/expire_on_hand_inventory call
+    # used to independently re-resolve via its own Dict lookup. si is 0
+    # for a location that isn't a Storage (the same get(storage_index, ...,
+    # 0) convention State.jl already uses for out-of-network/non-Storage
+    # callers) - harmless to carry through uniformly since only the
+    # Storage-specific branches below ever read it.
+    location_lis = [state.location_index[l] for l in env.sorted_locations]
+    location_sis = [get(state.storage_index, l, 0) for l in env.sorted_locations]
+
+    # env.sorted_products is the exact same cached Vector as
+    # state.products (both come from get_product_index(supplychain) - see
+    # Env.jl/State.jl), so a product's position in this enumeration *is*
+    # its product_index value already - no separate lookup or precomputed
+    # array needed for pi at all.
     for time in 1:env.supplychain.horizon
-        for location in env.sorted_locations
-            for product in env.supplychain.products
-                receive_inventory!(state, env, location, product, time)
+        for (loc_idx, location) in enumerate(env.sorted_locations)
+            li = location_lis[loc_idx]
+            si = location_sis[loc_idx]
+            for (pi, product) in enumerate(env.sorted_products)
+                receive_inventory!(state, env, location, product, li, si, pi, time)
             end
         end
 
+        # place_orders doesn't need li/si (see its section's header
+        # comment), so this loop doesn't need location_lis/location_sis -
+        # a plain iteration over reversed_sorted_locations is enough.
         for location in reversed_sorted_locations
-            for product in env.supplychain.products
-                place_orders(state, env, location, product, time, orders)
+            for (pi, product) in enumerate(env.sorted_products)
+                place_orders(state, env, location, product, pi, time, orders)
                 receive_orders!(state, env, orders)
             end
         end
 
-        for location in env.sorted_locations
-            for product in env.supplychain.products
-                receive_inventory!(state, env, location, product, time)
-                send_inventory!(state, env, location, product, time)
+        for (loc_idx, location) in enumerate(env.sorted_locations)
+            li = location_lis[loc_idx]
+            si = location_sis[loc_idx]
+            for (pi, product) in enumerate(env.sorted_products)
+                receive_inventory!(state, env, location, product, li, si, pi, time)
+                send_inventory!(state, env, location, product, li, si, pi, time)
             end
         end
 
-        for location in env.sorted_locations
+        for (loc_idx, location) in enumerate(env.sorted_locations)
             if isa(location, Storage)
-                for product in env.supplychain.products
-                    expire_on_hand_inventory(state, location, product, time)
+                si = location_sis[loc_idx]
+                for (pi, product) in enumerate(env.sorted_products)
+                    expire_on_hand_inventory(state, location, product, si, pi, time)
                 end
             end
         end

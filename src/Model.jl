@@ -70,10 +70,12 @@ end
 """
     get_locations(supplychain)
 
-    Gets all the locations in the supplychain.
+    Gets all the locations (storages, customers, and suppliers - not
+    plants) in the supplychain, as the same cached Vector every call (see
+    `get_location_index` in SupplyChainModeling.jl).
 """
 function get_locations(supplychain::SupplyChain)
-    return union(supplychain.storages, supplychain.customers, supplychain.suppliers)
+    return get_location_index(supplychain).items
 end
 
 function create_graph(supplychain::SupplyChain)

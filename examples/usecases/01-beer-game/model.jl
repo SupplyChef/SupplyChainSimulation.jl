@@ -388,6 +388,24 @@ function full_metrics(states, product, horizon)
     )
 end
 
+# TEMPORARY diagnostic: the place_orders(location::Storage) override
+# apparently isn't taking effect either (its own error() check for a
+# fallback-resolved get_order never fired, yet fill_rate is still
+# bit-identical to every previous broken attempt) - print the actual
+# registered method table for place_orders and get_order to see ground
+# truth about what's really defined, instead of continuing to guess.
+println("METHODS place_orders:")
+for m in methods(place_orders)
+    println("  ", m)
+end
+println("METHODS get_order for AnchorAndAdjustOrderingPolicy:")
+for m in methods(get_order)
+    if m.sig isa DataType && length(m.sig.parameters) >= 2 && m.sig.parameters[2] == AnchorAndAdjustOrderingPolicy
+        println("  ", m)
+    end
+end
+println("which(place_orders, (State,Env,Storage,Product,Int,Array{OrderLine,1})) = ", which(place_orders, (State, Env, Storage, Product, Int, Array{OrderLine,1})))
+
 # --- Naive baseline: order-up-to a fixed "pipeline coverage, no safety stock"
 #     target at each echelon (mean demand * (lead_time + 1)), never tuned. ---
 naive_target(lead_time) = round(Int, MEAN_DEMAND * (lead_time + 1))

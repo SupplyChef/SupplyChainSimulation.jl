@@ -59,6 +59,18 @@ struct Env
     # capability it never uses.
     needs_outbound_order_index::Bool
 
+    # One reusable get_past_outbound_orders! buffer per (lane, product) pair
+    # whose policy actually looks backward (required_lookback(policy) > 0 -
+    # currently only BackwardCoverageOrderingPolicy), sized to match that
+    # policy's lookback exactly. Owned here rather than by the policy object
+    # itself: optimize! shares one policy object across every scenario's Env
+    # for a given (lane, product) (see get_lane_policies), so a policy-owned
+    # buffer would be the same mutable array shared - and, if scenarios were
+    # ever evaluated concurrently, raced - across all of them. This Env is
+    # exclusive to one scenario's simulate() call, so buffers stored here
+    # are naturally scenario-local.
+    past_orders_buffers::Dict{Tuple{Lane, Product}, Array{Union{Missing, Int64}, 1}}
+
     function Env(supplychain::SupplyChain, initial_states, policies; record_history::Bool=true)
         trips = get_trips(supplychain, policies)
         locations = get_locations(supplychain)
@@ -92,6 +104,14 @@ struct Env
             end
         end
 
+        past_orders_buffers = Dict{Tuple{Lane, Product}, Array{Union{Missing, Int64}, 1}}()
+        for ((lane, product), policy) in policies
+            lookback = required_lookback(policy)
+            if lookback > 0
+                past_orders_buffers[(lane, product)] = Array{Union{Missing, Int64}, 1}(undef, lookback)
+            end
+        end
+
         return new(supplychain,
                    collect(initial_states),
                    sorted_locations,
@@ -100,7 +120,8 @@ struct Env
                    downstream_customers,
                    Dict{Tuple{ConcreteNode, Product, Int64}, Float64}(),
                    record_history,
-                   any(p -> required_lookback(p) > 0, values(policies)))
+                   any(p -> required_lookback(p) > 0, values(policies)),
+                   past_orders_buffers)
     end
 end
 

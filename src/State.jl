@@ -330,16 +330,27 @@ function remove_on_hand_inventory!(state::State, to::Storage, product::Product, 
     state.on_hand_totals[si, pi] -= removed_total
 end
 
+
+# Shared by get_on_hand_inventory and get_net_inventory - the latter used to
+# call get_on_hand_inventory/get_in_transit_inventories/get_inbound_orders/
+# get_outbound_orders, each independently re-resolving storage_index[to]/
+# location_index[to]/product_index[product] via a Dict lookup for the same
+# (location, product) pair - 8 Dict lookups to answer one get_net_inventory
+# query. Splitting the by-index logic out lets get_net_inventory resolve
+# each index exactly once and pass it to all four, while these public
+# functions (still used standalone elsewhere) keep their own signatures.
+@inline function _on_hand_by_index(state::State, si::Int64, pi::Int64)::Int64
+    (si == 0 || pi == 0) && return 0
+    return state.on_hand_totals[si, pi]
+end
+
 function get_on_hand_inventory(state::State, to::ConcreteNode, product::Product)::Int64
     si = get(state.storage_index, to, 0)
     if si == 0
         return 0
     end
     pi = get(state.product_index, product, 0)
-    if pi == 0
-        return 0
-    end
-    return state.on_hand_totals[si, pi]
+    return _on_hand_by_index(state, si, pi)
 end
 
 function expire_on_hand_inventory(state::State, to::Storage, product::Product, time)
@@ -523,12 +534,51 @@ function snapshot_state!(state::State, time, record_history::Bool)
     #println("On hand at $time, $(state.on_hand_inventory)")
 end
 
+@inline function _in_transit_sum_by_index(state::State, li::Int64, pi::Int64, time::Int64)::Int64
+    (li == 0 || pi == 0) && return 0
+    return sum(@view state.in_transit_inventory[li, pi][time:end]; init=0)
+end
+
+@inline function _inbound_orders_by_index(state::State, li::Int64, pi::Int64, time::Int64)::Int64
+    (li == 0 || pi == 0) && return 0
+    total = 0
+    for ol in state.pending_inbound_order_lines[li, pi]
+        if ol.due_date >= time
+            total += ol.quantity
+        end
+    end
+    return total
+end
+
+@inline function _outbound_orders_by_index(state::State, li::Int64, pi::Int64, time::Int64)::Int64
+    (li == 0 || pi == 0) && return 0
+    total = 0
+    for ol in state.pending_outbound_order_lines[li, pi]
+        if ol.due_date >= time
+            total += ol.quantity
+        end
+    end
+    return total
+end
+
 function get_net_inventory(state::State, location::ConcreteNode, product::Product, time::Int64)
     # on-hand + in-transit + on-order from suppliers - on-order from supplied
-    on_hand = get_on_hand_inventory(state, location, product)
-    in_transit = sum(@view get_in_transit_inventories(state, location, product)[time:end]; init=0)
-    inbound = get_inbound_orders(state, location, product, time)
-    outbound = get_outbound_orders(state, location, product, time) 
+    #
+    # Resolves location_index/product_index/storage_index exactly once and
+    # shares them across all four components below, instead of calling
+    # get_on_hand_inventory/get_in_transit_inventories/get_inbound_orders/
+    # get_outbound_orders - each of which independently re-resolved the same
+    # (location, product) pair via its own pair of Dict lookups. That was 8
+    # Dict lookups to answer one get_net_inventory query; this is 3 (li, pi,
+    # and si only when location is actually a Storage).
+    li = get(state.location_index, location, 0)
+    pi = get(state.product_index, product, 0)
+    si = location isa Storage ? get(state.storage_index, location, 0) : 0
+
+    on_hand = _on_hand_by_index(state, si, pi)
+    in_transit = _in_transit_sum_by_index(state, li, pi, time)
+    inbound = _inbound_orders_by_index(state, li, pi, time)
+    outbound = _outbound_orders_by_index(state, li, pi, time)
 
     #@debug "on hand: $on_hand, in transit: $in_transit, inbound: $inbound, outbound: $outbound"
 
@@ -549,16 +599,7 @@ function get_inbound_orders(state::State, location::ConcreteNode, product::Produ
         return 0
     end
     pi = get(state.product_index, product, 0)
-    if pi == 0
-        return 0
-    end
-    total = 0
-    for ol in state.pending_inbound_order_lines[li, pi]
-        if ol.due_date >= time
-            total += ol.quantity
-        end
-    end
-    return total
+    return _inbound_orders_by_index(state, li, pi, time)
 end
 
 """
@@ -572,16 +613,7 @@ function get_outbound_orders(state::State, location::ConcreteNode, product::Prod
         return 0
     end
     pi = get(state.product_index, product, 0)
-    if pi == 0
-        return 0
-    end
-    total = 0
-    for ol in state.pending_outbound_order_lines[li, pi]
-        if ol.due_date >= time
-            total += ol.quantity
-        end
-    end
-    return total
+    return _outbound_orders_by_index(state, li, pi, time)
 end
 
 """

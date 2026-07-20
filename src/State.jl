@@ -561,20 +561,7 @@ end
     return total
 end
 
-function get_net_inventory(state::State, location::ConcreteNode, product::Product, time::Int64)
-    # on-hand + in-transit + on-order from suppliers - on-order from supplied
-    #
-    # Resolves location_index/product_index/storage_index exactly once and
-    # shares them across all four components below, instead of calling
-    # get_on_hand_inventory/get_in_transit_inventories/get_inbound_orders/
-    # get_outbound_orders - each of which independently re-resolved the same
-    # (location, product) pair via its own pair of Dict lookups. That was 8
-    # Dict lookups to answer one get_net_inventory query; this is 3 (li, pi,
-    # and si only when location is actually a Storage).
-    li = get(state.location_index, location, 0)
-    pi = get(state.product_index, product, 0)
-    si = location isa Storage ? get(state.storage_index, location, 0) : 0
-
+@inline function _net_inventory_by_index(state::State, li::Int64, pi::Int64, si::Int64, time::Int64)
     on_hand = _on_hand_by_index(state, si, pi)
     in_transit = _in_transit_sum_by_index(state, li, pi, time)
     inbound = _inbound_orders_by_index(state, li, pi, time)
@@ -586,6 +573,23 @@ function get_net_inventory(state::State, location::ConcreteNode, product::Produc
             in_transit +
             inbound -
             outbound
+end
+
+function get_net_inventory(state::State, location::ConcreteNode, product::Product, time::Int64)
+    # on-hand + in-transit + on-order from suppliers - on-order from supplied
+    #
+    # Resolves location_index/product_index/storage_index exactly once and
+    # shares them across all four components of _net_inventory_by_index,
+    # instead of calling get_on_hand_inventory/get_in_transit_inventories/
+    # get_inbound_orders/get_outbound_orders - each of which independently
+    # re-resolved the same (location, product) pair via its own pair of Dict
+    # lookups. That was 8 Dict lookups to answer one get_net_inventory
+    # query; this is 3 (li, pi, and si only when location is actually a
+    # Storage).
+    li = get(state.location_index, location, 0)
+    pi = get(state.product_index, product, 0)
+    si = location isa Storage ? get(state.storage_index, location, 0) : 0
+    return _net_inventory_by_index(state, li, pi, si, time)
 end
 
 """
@@ -646,9 +650,7 @@ since a fresh `zeros(...)` allocation on every single `get_order` call -
 called ~15000 trials x 30 scenarios x every period in `optimize!`'s search -
 showed up as a real, avoidable chunk of allocation profiling.
 """
-function get_past_outbound_orders!(past_orders::Array{Union{Missing, Int64}, 1}, state::State, location::ConcreteNode, product::Product, time::Int64)::Array{Union{Missing, Int64}, 1}
-    li = get(state.location_index, location, 0)
-    pi = li == 0 ? 0 : get(state.product_index, product, 0)
+@inline function _fill_past_outbound_orders_by_index!(past_orders::Array{Union{Missing, Int64}, 1}, state::State, li::Int64, pi::Int64, time::Int64)::Array{Union{Missing, Int64}, 1}
     for t in 1:length(past_orders)
         creation_time = time - t
         if creation_time < 0
@@ -668,6 +670,12 @@ function get_past_outbound_orders!(past_orders::Array{Union{Missing, Int64}, 1},
         end
     end
     past_orders
+end
+
+function get_past_outbound_orders!(past_orders::Array{Union{Missing, Int64}, 1}, state::State, location::ConcreteNode, product::Product, time::Int64)::Array{Union{Missing, Int64}, 1}
+    li = get(state.location_index, location, 0)
+    pi = li == 0 ? 0 : get(state.product_index, product, 0)
+    return _fill_past_outbound_orders_by_index!(past_orders, state, li, pi, time)
 end
 
 function get_net_network_inventory(state, location, product)

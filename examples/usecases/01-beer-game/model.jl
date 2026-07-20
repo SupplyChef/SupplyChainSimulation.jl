@@ -285,7 +285,27 @@ function set_parameters!(policy::AnchorAndAdjustOrderingPolicy, values::Array{Fl
     policy.desired_stock = values[3]
 end
 
-function get_order(policy::AnchorAndAdjustOrderingPolicy, state, env, location, lane, product, time)
+#=
+Untyped trailing arguments here previously (state, env, location, lane,
+product, time all ::Any) collided with Policy.jl's generic fallback
+get_order(policy::InventoryOrderingPolicy, state::State, env::Env,
+location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64 = 0
+- specific in slot 1 (policy), generic elsewhere, versus generic in slot 1,
+specific elsewhere: neither signature is a subtype of the other, the
+classic Julia dispatch-ambiguity shape. Julia doesn't reliably throw on
+that - it can silently resolve to one method or the other - and it silently
+picked the fallback here: every anchor-and-adjust order came back 0,
+collapsing the whole sweep to near-total stockout (fill_rate ~0.01,
+identical to several decimal places across every alpha_supply_line value,
+which is itself the tell - if the real formula were running, different
+alpha values would produce different orders). Typing `location::Storage`
+(the only type get_order is ever actually called with here - retailer/
+wholesaler/factory are Storages; Suppliers never carry an ordering policy
+in this network) makes this signature a strict subtype of the fallback's in
+every slot, which resolves the ambiguity outright rather than papering over
+symptoms.
+=#
+function get_order(policy::AnchorAndAdjustOrderingPolicy, state::State, env::Env, location::Storage, lane::Lane, product::Product, time::Int64)::Int64
     forecast = MEAN_DEMAND
     on_hand = get_on_hand_inventory(state, location, product)
     net_inventory = get_net_inventory(state, location, product, time)
@@ -364,6 +384,23 @@ anchor_adjust_results = Dict(
     string(w) => run_anchor_and_adjust(w, product, HORIZON, SCENARIO_COUNT, CALIBRATION_SEED)
     for w in SUPPLY_LINE_WEIGHTS
 )
+
+# Correctness check, not just documentation: alpha_supply_line=1.0 is
+# algebraically identical to the naive baseline (see the policy's docstring),
+# so if these two numbers disagree by more than float noise, get_order isn't
+# dispatching to AnchorAndAdjustOrderingPolicy's actual method - this exact
+# check would have caught the get_order dispatch-ambiguity bug immediately
+# instead of requiring a manual read of results.json.
+let
+    check_fill_rate = anchor_adjust_results["1.0"].aggregate.fill_rate
+    naive_fill_rate = naive_result.fill_rate
+    agree = isapprox(check_fill_rate, naive_fill_rate; atol=1e-6)
+    println("Sanity check: anchor_adjust(alpha_supply_line=1.0) should equal naive baseline exactly.")
+    println("  anchor_adjust fill_rate=$(check_fill_rate)  naive fill_rate=$(naive_fill_rate)  agree=$(agree)")
+    if !agree
+        error("AnchorAndAdjustOrderingPolicy at alpha_supply_line=1.0 does not match the naive baseline - get_order is likely not dispatching correctly (see the dispatch-ambiguity note above the policy's get_order method).")
+    end
+end
 
 # --- Optimized: BackwardCoverageOrderingPolicy at each upstream echelon,
 #     tuned jointly by optimize!() against the same 30 calibration scenarios. ---

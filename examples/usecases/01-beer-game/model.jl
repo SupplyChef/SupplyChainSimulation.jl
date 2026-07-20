@@ -364,6 +364,25 @@ function full_metrics(states, product, horizon)
     )
 end
 
+# TEMPORARY diagnostic: call get_order directly, bypassing place_orders
+# entirely, to bisect whether the bug is in AnchorAndAdjustOrderingPolicy's
+# own get_order method or in how place_orders' dispatch reaches it. The
+# previous run's debug prints inside get_order never fired at all (zero
+# calls across 30 scenarios x 200 periods x 3 lanes), which place_orders'
+# actual current source (fetched fresh from the repo) shows has a real
+# generic `else` branch that should reach any external policy type via
+# ordinary dynamic dispatch - so this direct call should behave identically
+# to what place_orders' else branch does, letting me see which side is broken.
+let
+    test_scenario = build_scenario()
+    test_state = State(test_scenario)
+    test_policy = AnchorAndAdjustOrderingPolicy(1.0, 1.0, 0.0)
+    test_policies = Dict{Tuple{Lane, Product}, InventoryOrderingPolicy}((l2, product) => test_policy)
+    test_env = Env(test_scenario, [test_state], test_policies)
+    direct_result = get_order(test_policy, test_state, test_env, retailer, l2, product, 5)
+    println("DIRECT TEST: get_order(test_policy, ...) = $direct_result (expect something in the 10-50 range, not 0)")
+end
+
 # --- Naive baseline: order-up-to a fixed "pipeline coverage, no safety stock"
 #     target at each echelon (mean demand * (lead_time + 1)), never tuned. ---
 naive_target(lead_time) = round(Int, MEAN_DEMAND * (lead_time + 1))

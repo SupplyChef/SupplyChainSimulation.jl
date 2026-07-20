@@ -435,13 +435,6 @@ function get_in_transit_inventories(state::State, to::N, product::Product)::Arra
     return state.in_transit_inventory[li, pi]
 end
 
-"""
-    record_overflow!(state::State, to::Storage, product::Product, time::Int64, quantity::Int64)
-
-Records that `quantity` units of `product` could not be received into `to`'s on-hand
-inventory at `time` because it would have exceeded `maximum_units`, and are being held
-in temporary overflow storage instead (see `get_total_overflow_costs`).
-"""
 @inline function _record_overflow_by_index!(state::State, si::Int64, pi::Int64, to::Storage, product::Product, time::Int64, quantity::Int64)
     overflow = state.overflow_inventory[si, pi]
     # This slot is overwritten, not accumulated (receive_inventory! can call
@@ -455,6 +448,13 @@ in temporary overflow storage instead (see `get_total_overflow_costs`).
     state.metrics.overflow_costs += (quantity - previous_quantity) * get_overflow_cost(to, product)
 end
 
+"""
+    record_overflow!(state::State, to::Storage, product::Product, time::Int64, quantity::Int64)
+
+Records that `quantity` units of `product` could not be received into `to`'s on-hand
+inventory at `time` because it would have exceeded `maximum_units`, and are being held
+in temporary overflow storage instead (see `get_total_overflow_costs`).
+"""
 function record_overflow!(state::State, to::Storage, product::Product, time::Int64, quantity::Int64)
     si = state.storage_index[to]
     pi = state.product_index[product]

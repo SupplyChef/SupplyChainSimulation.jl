@@ -411,11 +411,38 @@ function simulate(env::Env, policies, initial_state)
     # its product_index value already - no separate lookup or precomputed
     # array needed for pi at all.
     for time in 1:env.supplychain.horizon
+        # Hand-written union split, repeated (with different bodies) at
+        # every loop below, and hoisted above each inner product loop
+        # rather than checked per (location, product) pair - location's
+        # type is fixed for all of a location's products, so there's no
+        # reason to re-check it once per product. location's static type
+        # here is the abstract ConcreteNode (env.sorted_locations's
+        # element type - Plant never appears in it, see get_locations), so
+        # calling receive_inventory!/send_inventory!/place_orders directly
+        # would leave Julia to dynamically resolve location's actual
+        # concrete type on every single call. The isa checks below, each
+        # followed by a type assertion, let the compiler resolve and
+        # specialize each call statically instead - the same technique
+        # already used for policy dispatch in place_orders/Policy.jl, and
+        # for the same reason: factoring this into a helper function would
+        # reintroduce the exact dynamic dispatch this is meant to avoid,
+        # since Julia's isa+type-assert narrowing doesn't cross a
+        # function-call boundary.
         for (loc_idx, location) in enumerate(env.sorted_locations)
             li = location_lis[loc_idx]
             si = location_sis[loc_idx]
-            for (pi, product) in enumerate(env.sorted_products)
-                receive_inventory!(state, env, location, product, li, si, pi, time)
+            if location isa Storage
+                for (pi, product) in enumerate(env.sorted_products)
+                    receive_inventory!(state, env, location::Storage, product, li, si, pi, time)
+                end
+            elseif location isa Customer
+                for (pi, product) in enumerate(env.sorted_products)
+                    receive_inventory!(state, env, location::Customer, product, li, si, pi, time)
+                end
+            else
+                for (pi, product) in enumerate(env.sorted_products)
+                    receive_inventory!(state, env, location::Supplier, product, li, si, pi, time)
+                end
             end
         end
 
@@ -423,26 +450,50 @@ function simulate(env::Env, policies, initial_state)
         # comment), so this loop doesn't need location_lis/location_sis -
         # a plain iteration over reversed_sorted_locations is enough.
         for location in reversed_sorted_locations
-            for (pi, product) in enumerate(env.sorted_products)
-                place_orders(state, env, location, product, pi, time, orders)
-                receive_orders!(state, env, orders)
+            if location isa Customer
+                for (pi, product) in enumerate(env.sorted_products)
+                    place_orders(state, env, location::Customer, product, pi, time, orders)
+                    receive_orders!(state, env, orders)
+                end
+            elseif location isa Storage
+                for (pi, product) in enumerate(env.sorted_products)
+                    place_orders(state, env, location::Storage, product, pi, time, orders)
+                    receive_orders!(state, env, orders)
+                end
+            else
+                for (pi, product) in enumerate(env.sorted_products)
+                    place_orders(state, env, location::Supplier, product, pi, time, orders)
+                    receive_orders!(state, env, orders)
+                end
             end
         end
 
         for (loc_idx, location) in enumerate(env.sorted_locations)
             li = location_lis[loc_idx]
             si = location_sis[loc_idx]
-            for (pi, product) in enumerate(env.sorted_products)
-                receive_inventory!(state, env, location, product, li, si, pi, time)
-                send_inventory!(state, env, location, product, li, si, pi, time)
+            if location isa Storage
+                for (pi, product) in enumerate(env.sorted_products)
+                    receive_inventory!(state, env, location::Storage, product, li, si, pi, time)
+                    send_inventory!(state, env, location::Storage, product, li, si, pi, time)
+                end
+            elseif location isa Customer
+                for (pi, product) in enumerate(env.sorted_products)
+                    receive_inventory!(state, env, location::Customer, product, li, si, pi, time)
+                    send_inventory!(state, env, location::Customer, product, li, si, pi, time)
+                end
+            else
+                for (pi, product) in enumerate(env.sorted_products)
+                    receive_inventory!(state, env, location::Supplier, product, li, si, pi, time)
+                    send_inventory!(state, env, location::Supplier, product, li, si, pi, time)
+                end
             end
         end
 
         for (loc_idx, location) in enumerate(env.sorted_locations)
-            if isa(location, Storage)
+            if location isa Storage
                 si = location_sis[loc_idx]
                 for (pi, product) in enumerate(env.sorted_products)
-                    expire_on_hand_inventory(state, location, product, si, pi, time)
+                    expire_on_hand_inventory(state, location::Storage, product, si, pi, time)
                 end
             end
         end

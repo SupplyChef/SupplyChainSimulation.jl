@@ -152,7 +152,13 @@ end
 
 # Send inventory
 function send_inventory!(state::State, env::Env, location::Supplier, product::Product, time::Int)
-    order_lines = state.pending_outbound_order_lines[state.location_index[location], state.product_index[product]]
+    # pi is shared with every delete_inbound_order_line! call below: every
+    # order_line here was queued under this same (location, product) pending
+    # slot, so order_line.product == product for the whole loop even though
+    # each line's destination (and so its location_index lookup) differs.
+    li = state.location_index[location]
+    pi = state.product_index[product]
+    order_lines = state.pending_outbound_order_lines[li, pi]
     if isempty(order_lines)
         return
     end
@@ -166,7 +172,7 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
         if order_line.due_date < time
             record_drop!(state, order_line)
             push!(fulfilled_or_dropped, order_line)
-            delete_inbound_order_line!(state, order_line)
+            _delete_inbound_order_line_by_index!(state, order_line, pi)
             continue
         end
 
@@ -181,7 +187,7 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
         send_inventory!(state, env, order_line.trip, order_line.destination, order_line.product, order_line.quantity, time)
 
         push!(fulfilled_or_dropped, order_line)
-        delete_inbound_order_line!(state, order_line)
+        _delete_inbound_order_line_by_index!(state, order_line, pi)
 
         record_fill!(state, env, order_line)
         push!(state.filled_orders, order_line)
@@ -194,7 +200,26 @@ end
 
 function send_inventory!(state::State, env::Env, location::ConcreteNode, product::Product, time::Int)
     #println("send_inventory $location $product $time")
-    order_lines = state.pending_outbound_order_lines[state.location_index[location], state.product_index[product]]
+    # li/pi/si resolved once and shared for the whole call: every order_line
+    # pulled from order_lines below was queued under this same
+    # (location, product) pending slot (order_line.product == product
+    # throughout), and every on-hand read/write - available's initial value
+    # and each fulfilled line's _remove_on_hand_by_index! call - is against
+    # this same (location, product) too, so get_on_hand_inventory/
+    # remove_on_hand_inventory! no longer need to independently re-resolve
+    # the same indices once per order line filled. pi is also handed to
+    # _delete_inbound_order_line_by_index! below - see its comment in
+    # State.jl for why only the product half of that lookup is shared. si
+    # is 0 for a Customer/Supplier reaching this generic method (not a
+    # Storage): _on_hand_by_index's si==0 guard then keeps available at 0,
+    # which the `quantity <= available` check below already relies on to
+    # never fulfil lines - and so never call _remove_on_hand_by_index! - at
+    # a non-Storage location.
+    li = state.location_index[location]
+    pi = state.product_index[product]
+    si = get(state.storage_index, location, 0)
+
+    order_lines = state.pending_outbound_order_lines[li, pi]
     if isempty(order_lines)
         return
     end
@@ -204,15 +229,14 @@ function send_inventory!(state::State, env::Env, location::ConcreteNode, product
 
     #println("send_inventory order_lines $order_lines")
     fulfilled_order_lines = OrderLine[]
-    # Tracked locally and kept in sync with each remove_on_hand_inventory!
-    # below, instead of re-reading get_on_hand_inventory (a Dict lookup)
-    # twice per order line.
-    available = get_on_hand_inventory(state, location, product)
+    # Tracked locally and kept in sync with each _remove_on_hand_by_index!
+    # below, instead of re-reading on-hand inventory twice per order line.
+    available = _on_hand_by_index(state, si, pi)
     for order_line in order_lines
         if order_line.due_date < time
             record_drop!(state, order_line)
             push!(fulfilled_order_lines, order_line)
-            delete_inbound_order_line!(state, order_line)
+            _delete_inbound_order_line_by_index!(state, order_line, pi)
             continue
         end
 
@@ -227,11 +251,11 @@ function send_inventory!(state::State, env::Env, location::ConcreteNode, product
             end
 
             send_inventory!(state, env, order_line.trip,  order_line.destination, order_line.product, order_line.quantity, time)
-            remove_on_hand_inventory!(state, location, product, order_line.quantity)
+            _remove_on_hand_by_index!(state, si, pi, order_line.quantity)
             available -= order_line.quantity
 
             push!(fulfilled_order_lines, order_line)
-            delete_inbound_order_line!(state, order_line)
+            _delete_inbound_order_line_by_index!(state, order_line, pi)
 
             record_fill!(state, env, order_line)
             push!(state.filled_orders, order_line)

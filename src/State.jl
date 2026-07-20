@@ -260,13 +260,22 @@ function delete_order_line!(state::State, order_line::OrderLine)
     end
 end
 
-function delete_inbound_order_line!(state::State, order_line::OrderLine)
-    # Fast deletion from inbound vector
-    inbound = state.pending_inbound_order_lines[state.location_index[order_line.destination], state.product_index[order_line.product]]
+# Shared with send_inventory! (Simulation.jl), which processes every pending
+# order line for one fixed (location, product) pair per call and so can
+# resolve product_index[product] once up front and pass it here, instead of
+# every deleted line re-resolving the same product index. destination (and
+# so location_index[destination]) still varies per order line - each line's
+# customer/downstream location - so that lookup stays per-call.
+@inline function _delete_inbound_order_line_by_index!(state::State, order_line::OrderLine, pi::Int64)
+    inbound = state.pending_inbound_order_lines[state.location_index[order_line.destination], pi]
     idx = findfirst(==(order_line), inbound)
     if !isnothing(idx)
         deleteat!(inbound, idx)
     end
+end
+
+function delete_inbound_order_line!(state::State, order_line::OrderLine)
+    _delete_inbound_order_line_by_index!(state, order_line, state.product_index[order_line.product])
 end
 
 function delete_order_lines!(state::State, order_lines)
@@ -316,9 +325,12 @@ function add_on_hand_inventory!(state::State, to::Storage, product::Product, qua
     _add_on_hand_by_index!(state, si, pi, quantity, time)
 end
 
-function remove_on_hand_inventory!(state::State, to::Storage, product::Product, quantity::Int64)
-    si = state.storage_index[to]
-    pi = state.product_index[product]
+# Shared with send_inventory!'s ConcreteNode method (Simulation.jl), which
+# resolves si/pi once for a (location, product) it may fulfil several order
+# lines from in a single call, and calls this once per fulfilled line instead
+# of each call re-resolving storage_index[to]/product_index[product] via its
+# own Dict lookup.
+@inline function _remove_on_hand_by_index!(state::State, si::Int64, pi::Int64, quantity::Int64)
     ages = state.on_hand_inventory[si, pi]
     removed_total = 0
     # FIFO: must consume oldest inventory (smallest age/arrival time) first.
@@ -337,6 +349,12 @@ function remove_on_hand_inventory!(state::State, to::Storage, product::Product, 
         removed_total += removed_quantity
     end
     state.on_hand_totals[si, pi] -= removed_total
+end
+
+function remove_on_hand_inventory!(state::State, to::Storage, product::Product, quantity::Int64)
+    si = state.storage_index[to]
+    pi = state.product_index[product]
+    _remove_on_hand_by_index!(state, si, pi, quantity)
 end
 
 

@@ -110,16 +110,25 @@ mutable struct State
     function State(supply_chain; pending_outbound_order_lines=Dict{Storage, Array{OrderLine, 1}}())
         demand = Dict((d.customer, d.product) => d for d in supply_chain.demand)
 
-        storages = collect(supply_chain.storages)
-        products = collect(supply_chain.products)
-        storage_index = Dict{Storage, Int64}(s => i for (i, s) in enumerate(storages))
-        product_index = Dict{Product, Int64}(p => i for (i, p) in enumerate(products))
+        # get_storage_index/get_product_index/get_location_index
+        # (SupplyChainModeling.jl) cache the Vector+Dict pair on supply_chain
+        # itself, computed once and reused by every State built from it -
+        # instead of every State independently re-enumerating the same
+        # (read-only, for the duration of a simulation) Sets into an
+        # identical Dict, as every scenario's State in optimize! used to do.
+        storages_indexed = get_storage_index(supply_chain)
+        products_indexed = get_product_index(supply_chain)
+        storages = storages_indexed.items
+        products = products_indexed.items
+        storage_index = storages_indexed.index
+        product_index = products_indexed.index
         nstorages = length(storages)
         nproducts = length(products)
         horizon = supply_chain.horizon
 
-        locations = collect(ConcreteNode, get_locations(supply_chain))
-        location_index = Dict{ConcreteNode, Int64}(l => i for (i, l) in enumerate(locations))
+        locations_indexed = get_location_index(supply_chain)
+        locations = locations_indexed.items
+        location_index = locations_indexed.index
         nlocations = length(locations)
 
         state = new(supply_chain,
@@ -380,10 +389,13 @@ function get_on_hand_inventory(state::State, to::ConcreteNode, product::Product)
     return _on_hand_by_index(state, si, pi)
 end
 
-function expire_on_hand_inventory(state::State, to::Storage, product::Product, time)
+# si/pi are resolved once per (location, product) for the whole
+# simulate() call (see simulate() in Simulation.jl) and passed in here,
+# instead of this - called once per Storage per product per period of
+# every simulate() run - independently re-resolving storage_index[to]/
+# product_index[product] via its own Dict lookup every time.
+function expire_on_hand_inventory(state::State, to::Storage, product::Product, si::Int64, pi::Int64, time)
     max_age = get_maximum_age(to, product)
-    si = state.storage_index[to]
-    pi = state.product_index[product]
     ages = state.on_hand_inventory[si, pi]
     expired_total = 0
     for t in state.on_hand_ages_order[si, pi]

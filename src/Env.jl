@@ -115,7 +115,7 @@ struct Env
         return new(supplychain,
                    collect(initial_states),
                    sorted_locations,
-                   collect(supplychain.products),
+                   get_product_index(supplychain).items,
                    departures,
                    downstream_customers,
                    Dict{Tuple{ConcreteNode, Product, Int64}, Float64}(),

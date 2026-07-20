@@ -1,35 +1,54 @@
 # Receive inventory
 function receive_inventory!(state::State, env::Env, location::Storage, product, time)
     #println(state)
-    quantity = get_in_transit_inventory(state, location, product, time)
+    # Resolved once and shared across every _by_index call below, instead
+    # of add_on_hand_inventory!/add_in_transit_inventory!/
+    # get_on_hand_inventory/get_in_transit_inventory/record_overflow! each
+    # independently re-resolving location_index/storage_index/product_index
+    # for the same (location, product) pair - up to ~5 pairs of Dict lookups
+    # per call before this, called once per (location, product) per period
+    # of every simulate() run. location is a Storage already in the
+    # network (env.sorted_locations/state's own construction guarantee
+    # this), so direct indexing (not the soft get(...,0) the standalone
+    # get_on_hand_inventory/get_in_transit_inventory use for out-of-network
+    # callers) is safe here.
+    li = state.location_index[location]
+    si = state.storage_index[location]
+    pi = state.product_index[product]
+
+    quantity = _in_transit_by_index(state, li, pi, time)
     max_capacity = get_maximum_storage(location, product)
 
     if isinf(max_capacity)
-        add_on_hand_inventory!(state, location, product, quantity, time)
-        add_in_transit_inventory!(state, location, product, time, -quantity)
+        _add_on_hand_by_index!(state, si, pi, quantity, time)
+        _add_in_transit_by_index!(state, li, pi, time, -quantity)
         return
     end
 
-    capacity_remaining = max(0, Int(round(max_capacity)) - get_on_hand_inventory(state, location, product))
+    capacity_remaining = max(0, Int(round(max_capacity)) - _on_hand_by_index(state, si, pi))
     accepted = min(quantity, capacity_remaining)
     overflow = quantity - accepted
 
-    add_on_hand_inventory!(state, location, product, accepted, time)
-    add_in_transit_inventory!(state, location, product, time, -quantity)
+    _add_on_hand_by_index!(state, si, pi, accepted, time)
+    _add_in_transit_by_index!(state, li, pi, time, -quantity)
 
     if overflow > 0
-        record_overflow!(state, location, product, time, overflow)
+        _record_overflow_by_index!(state, si, pi, location, product, time, overflow)
         if time < get_horizon(state)
             # excess is delayed, not lost: it waits and is retried the next period
-            add_in_transit_inventory!(state, location, product, time + 1, overflow)
+            _add_in_transit_by_index!(state, li, pi, time + 1, overflow)
         end
     end
 end
 
 function receive_inventory!(state::State, env::Env, location::Customer, product, time)
     #println(state)
-    quantity = get_in_transit_inventory(state, location, product, time)
-    add_in_transit_inventory!(state, location, product, time, -quantity)
+    # Same consolidation as the Storage method above, minus the on-hand
+    # pieces Customers don't have.
+    li = state.location_index[location]
+    pi = state.product_index[product]
+    quantity = _in_transit_by_index(state, li, pi, time)
+    _add_in_transit_by_index!(state, li, pi, time, -quantity)
 end
 
 function receive_inventory!(state::State, env::Env, location::Supplier, product, time)

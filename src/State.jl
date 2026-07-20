@@ -291,9 +291,12 @@ function set_on_hand_inventory!(state::State, to::ConcreteNode, product::Product
     state.on_hand_totals[si, pi] += Int(quantity) - previous
 end
 
-function add_on_hand_inventory!(state::State, to::Storage, product::Product, quantity::Int64, time)
-    si = state.storage_index[to]
-    pi = state.product_index[product]
+# Shared with receive_inventory! (Simulation.jl), which resolves si/li/pi
+# once for a given (location, product) and calls this + the other _by_index
+# writers below directly, instead of add_on_hand_inventory!/
+# add_in_transit_inventory!/get_on_hand_inventory/get_in_transit_inventory/
+# record_overflow! each independently re-resolving the same indices.
+@inline function _add_on_hand_by_index!(state::State, si::Int64, pi::Int64, quantity::Int64, time)
     ages = state.on_hand_inventory[si, pi]
     ages_order = state.on_hand_ages_order[si, pi]
     # Ages are only ever touched at the current, monotonically increasing
@@ -305,6 +308,12 @@ function add_on_hand_inventory!(state::State, to::Storage, product::Product, qua
     end
     ages[time] += quantity
     state.on_hand_totals[si, pi] += quantity
+end
+
+function add_on_hand_inventory!(state::State, to::Storage, product::Product, quantity::Int64, time)
+    si = state.storage_index[to]
+    pi = state.product_index[product]
+    _add_on_hand_by_index!(state, si, pi, quantity, time)
 end
 
 function remove_on_hand_inventory!(state::State, to::Storage, product::Product, quantity::Int64)
@@ -376,16 +385,25 @@ function expire_on_hand_inventory(state::State, to::Storage, product::Product, t
     return
 end
 
+@inline function _add_in_transit_by_index!(state::State, li::Int64, pi::Int64, time::Int64, quantity::Int64)
+    state.in_transit_inventory[li, pi][time] += quantity
+end
+
 function add_in_transit_inventory!(state::State, to::N, product::Product, time::Int64, quantity::Int64) where N <: ConcreteNode
     li = state.location_index[to]
     pi = state.product_index[product]
-    state.in_transit_inventory[li, pi][time] += quantity
+    _add_in_transit_by_index!(state, li, pi, time, quantity)
 end
 
 function delete_in_transit_inventory!(state::State, to::N, product::Product, time::Int64, quantity::Int64) where N <: ConcreteNode
     li = state.location_index[to]
     pi = state.product_index[product]
     state.in_transit_inventory[li, pi][time] -= quantity
+end
+
+@inline function _in_transit_by_index(state::State, li::Int64, pi::Int64, time::Int64)::Int64
+    (li == 0 || pi == 0) && return 0
+    return state.in_transit_inventory[li, pi][time]
 end
 
 """
@@ -395,14 +413,8 @@ end
 """
 function get_in_transit_inventory(state::State, to::N, product::Product, time::Int64)::Int64 where N <: ConcreteNode
     li = get(state.location_index, to, 0)
-    if li == 0
-        return 0
-    end
-    pi = get(state.product_index, product, 0)
-    if pi == 0
-        return 0
-    end
-    return state.in_transit_inventory[li, pi][time]
+    pi = li == 0 ? 0 : get(state.product_index, product, 0)
+    return _in_transit_by_index(state, li, pi, time)
 end
 
 # Shared fallback for get_in_transit_inventories misses (a `to`/`product`
@@ -430,9 +442,7 @@ Records that `quantity` units of `product` could not be received into `to`'s on-
 inventory at `time` because it would have exceeded `maximum_units`, and are being held
 in temporary overflow storage instead (see `get_total_overflow_costs`).
 """
-function record_overflow!(state::State, to::Storage, product::Product, time::Int64, quantity::Int64)
-    si = state.storage_index[to]
-    pi = state.product_index[product]
+@inline function _record_overflow_by_index!(state::State, si::Int64, pi::Int64, to::Storage, product::Product, time::Int64, quantity::Int64)
     overflow = state.overflow_inventory[si, pi]
     # This slot is overwritten, not accumulated (receive_inventory! can call
     # record_overflow! more than once for the same (to, product, time) in a
@@ -443,6 +453,12 @@ function record_overflow!(state::State, to::Storage, product::Product, time::Int
     previous_quantity = overflow[time]
     overflow[time] = quantity
     state.metrics.overflow_costs += (quantity - previous_quantity) * get_overflow_cost(to, product)
+end
+
+function record_overflow!(state::State, to::Storage, product::Product, time::Int64, quantity::Int64)
+    si = state.storage_index[to]
+    pi = state.product_index[product]
+    _record_overflow_by_index!(state, si, pi, to, product, time, quantity)
 end
 
 """

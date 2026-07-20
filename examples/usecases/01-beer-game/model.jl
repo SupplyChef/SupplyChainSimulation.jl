@@ -286,27 +286,19 @@ function set_parameters!(policy::AnchorAndAdjustOrderingPolicy, values::Array{Fl
 end
 
 #=
-Untyped trailing arguments here previously (state, env, location, lane,
-product, time all ::Any) collided with Policy.jl's generic fallback
-get_order(policy::InventoryOrderingPolicy, state::State, env::Env,
-location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64 = 0
-- specific in slot 1 (policy), generic elsewhere, versus generic in slot 1,
-specific elsewhere: neither signature is a subtype of the other, the
-classic Julia dispatch-ambiguity shape. Julia doesn't reliably throw on
-that - it can silently resolve to one method or the other - and it silently
-picked the fallback here: every anchor-and-adjust order came back 0,
-collapsing the whole sweep to near-total stockout (fill_rate ~0.01,
-identical to several decimal places across every alpha_supply_line value,
-which is itself the tell - if the real formula were running, different
-alpha values would produce different orders). Typing `location::Storage`
-(the only type get_order is ever actually called with here - retailer/
-wholesaler/factory are Storages; Suppliers never carry an ordering policy
-in this network) makes this signature a strict subtype of the fallback's in
-every slot, which resolves the ambiguity outright rather than papering over
-symptoms.
+get_order itself is correct - confirmed by calling it directly, standalone,
+outside of place_orders: it returned exactly the value the naive base-stock
+math predicts (target 30 - net_inventory 20 = 10). The bug is entirely in
+how the installed package's place_orders reaches (or rather, doesn't reach)
+this method during a real simulation run: the exact same call, made from
+inside place_orders' hot loop instead of directly, silently behaves as if
+get_order returned 0 every period, for every scenario, collapsing fill rate
+to ~1%. That's consistent with a method-invalidation/specialization gap
+between the package's precompiled place_orders and a get_order method added
+from outside the module after the package was already precompiled, though
+the exact mechanism isn't fully pinned down - see the place_orders override
+below for the actual fix.
 =#
-const _AAA_DEBUG_CALLS = Ref(0)
-
 function get_order(policy::AnchorAndAdjustOrderingPolicy, state::State, env::Env, location::Storage, lane::Lane, product::Product, time::Int64)::Int64
     forecast = MEAN_DEMAND
     on_hand = get_on_hand_inventory(state, location, product)
@@ -319,18 +311,50 @@ function get_order(policy::AnchorAndAdjustOrderingPolicy, state::State, env::Env
     supply_line_adjustment = policy.alpha_supply_line * (desired_supply_line - supply_line)
 
     order = forecast + stock_adjustment + supply_line_adjustment
-    result = max(0, round(Int, order))
+    return max(0, round(Int, order))
+end
 
-    # TEMPORARY diagnostic - the previous fix (typing location::Storage)
-    # didn't resolve the bug (sanity check still failed identically), so
-    # this prints ground truth for the first few calls instead of continuing
-    # to theorize about dispatch blind. Remove once the real cause is found.
-    if _AAA_DEBUG_CALLS[] < 8
-        _AAA_DEBUG_CALLS[] += 1
-        println("AAA_DEBUG call #$(_AAA_DEBUG_CALLS[]): location=$(location) time=$time alpha_stock=$(policy.alpha_stock) alpha_supply_line=$(policy.alpha_supply_line) desired_stock=$(policy.desired_stock) on_hand=$on_hand net_inventory=$net_inventory supply_line=$supply_line lead_time=$lead_time desired_supply_line=$desired_supply_line stock_adjustment=$stock_adjustment supply_line_adjustment=$supply_line_adjustment order=$order result=$result")
+#=
+Overrides the installed package's place_orders(::State, ::Env, ::ConcreteNode,
+::Product, ::Int, ::Array{OrderLine,1}) for Storage locations specifically
+(Storage <: ConcreteNode, so this is a strict, unambiguous refinement of
+that signature - it doesn't touch Customer's or Supplier's own place_orders
+methods). The original hand-writes an inline isa-chain union split over the
+built-in policy types as a performance optimization, with a generic `else`
+branch that's supposed to reach any other policy type via ordinary dynamic
+dispatch - in practice, for AnchorAndAdjustOrderingPolicy, it doesn't (see
+above). This version always dispatches get_order generically - the same
+calling pattern already confirmed to work correctly from outside the
+package - which this small illustrative script doesn't need to avoid for
+performance reasons, and adds an explicit check that fails loudly if
+dispatch would silently resolve to the abstract InventoryOrderingPolicy
+fallback (which just returns 0) instead of a real policy-specific method,
+rather than ever silently treating an unrecognized policy as "order
+nothing."
+=#
+function place_orders(state::State, env::Env, location::Storage, product::Product, time::Int, orders::Array{OrderLine, 1})
+    empty!(orders)
+    for trip in get_inbound_trips(env, location, time)
+        policy = get(trip.policies, product, nothing)
+        if !isnothing(policy)
+            resolved = which(get_order, (typeof(policy), State, Env, typeof(location), Lane, Product, Int64))
+            if resolved.sig.parameters[2] == InventoryOrderingPolicy
+                error("place_orders: get_order for policy type $(typeof(policy)) resolves to the generic InventoryOrderingPolicy fallback (always returns 0), not a type-specific method - refusing to silently treat this as a zero order. Define get_order(::$(typeof(policy)), ::State, ::Env, ::ConcreteNode, ::Lane, ::Product, ::Int64) explicitly.")
+            end
+            quantity = Int(get_order(policy, state, env, location, trip.route, product, time))
+            if quantity > 0
+                minimum_quantity = trip.route.minimum_quantity
+                if minimum_quantity > 0 && quantity < minimum_quantity
+                    quantity = Int(ceil(minimum_quantity))
+                end
+                order = OrderLine(time, trip.route.origin, location, product, quantity, typemax(Int64), trip)
+                push!(orders, order)
+                push!(state.placed_orders, order)
+                record_placement!(state, env, order)
+                state.metrics.orders += quantity
+            end
+        end
     end
-
-    return result
 end
 
 function run_anchor_and_adjust(alpha_supply_line, product, horizon, scenario_count, seed)
@@ -362,25 +386,6 @@ function full_metrics(states, product, horizon)
         backlog = backlog_summary(states, BACKLOG_NODES_NAMED, product, horizon),
         classic = classic_score(states, product, horizon),
     )
-end
-
-# TEMPORARY diagnostic: call get_order directly, bypassing place_orders
-# entirely, to bisect whether the bug is in AnchorAndAdjustOrderingPolicy's
-# own get_order method or in how place_orders' dispatch reaches it. The
-# previous run's debug prints inside get_order never fired at all (zero
-# calls across 30 scenarios x 200 periods x 3 lanes), which place_orders'
-# actual current source (fetched fresh from the repo) shows has a real
-# generic `else` branch that should reach any external policy type via
-# ordinary dynamic dispatch - so this direct call should behave identically
-# to what place_orders' else branch does, letting me see which side is broken.
-let
-    test_scenario = build_scenario()
-    test_state = State(test_scenario)
-    test_policy = AnchorAndAdjustOrderingPolicy(1.0, 1.0, 0.0)
-    test_policies = Dict{Tuple{Lane, Product}, InventoryOrderingPolicy}((l2, product) => test_policy)
-    test_env = Env(test_scenario, [test_state], test_policies)
-    direct_result = get_order(test_policy, test_state, test_env, retailer, l2, product, 5)
-    println("DIRECT TEST: get_order(test_policy, ...) = $direct_result (expect something in the 10-50 range, not 0)")
 end
 
 # --- Naive baseline: order-up-to a fixed "pipeline coverage, no safety stock"

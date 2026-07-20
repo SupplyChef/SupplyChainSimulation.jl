@@ -185,241 +185,241 @@
         "0.2": {
             "aggregate": {
                 "total_demand": 59906,
-                "total_sales": 579,
-                "total_lost_sales": 59327,
-                "fill_rate": 0.009665142055887557
+                "total_sales": 28538,
+                "total_lost_sales": 31368,
+                "fill_rate": 0.4763796614696358
             },
             "bullwhip": {
-                "wholesaler_orders (l3)": 0,
-                "retailer_orders (l2)": 0,
-                "factory_orders (l4)": 0
+                "wholesaler_orders (l3)": 1.566022053190333,
+                "retailer_orders (l2)": 1.8754161645574543,
+                "factory_orders (l4)": 1.840089367875313
             },
             "inventory_cv": {
-                "wholesaler": 0,
-                "retailer": 3.519270786648291,
-                "factory": 0
+                "wholesaler": 0.8029716518117466,
+                "retailer": 0.7131780516773389,
+                "factory": 0.7791350077587308
             },
             "costs": {
-                "total_cost": 83556.70600000003,
-                "holding_costs": 24748.800000000036,
+                "total_cost": 14781.141000000001,
+                "holding_costs": 11805.600000000002,
                 "trip_fixed_costs": 0,
                 "trip_unit_costs": 0,
-                "order_count": 59906,
-                "sales": 579,
-                "lost_sales": 59327
+                "order_count": 145541,
+                "sales": 28538,
+                "lost_sales": 31368
             },
             "backlog": {
                 "peak": {
                     "supplier": 0,
-                    "wholesaler": 0,
-                    "factory": 0
+                    "wholesaler": 25.1,
+                    "factory": 24.5
                 },
                 "ending": {
                     "supplier": 0,
-                    "wholesaler": 0,
-                    "factory": 0
+                    "wholesaler": 7.433333333333334,
+                    "factory": 4.733333333333333
                 }
             },
             "classic": {
                 "per_stage": {
                     "supplier": 0,
-                    "wholesaler": 12000,
-                    "retailer": 59895.8,
-                    "factory": 12000
+                    "wholesaler": 8517.9,
+                    "retailer": 34836.600000000006,
+                    "factory": 8629.5
                 },
-                "total": 83895.8
+                "total": 51984.00000000001
             }
         },
         "0.8": {
             "aggregate": {
                 "total_demand": 59906,
-                "total_sales": 579,
-                "total_lost_sales": 59327,
-                "fill_rate": 0.009665142055887557
+                "total_sales": 52903,
+                "total_lost_sales": 7003,
+                "fill_rate": 0.8831001902981337
             },
             "bullwhip": {
-                "wholesaler_orders (l3)": 0,
-                "retailer_orders (l2)": 0,
-                "factory_orders (l4)": 0
+                "wholesaler_orders (l3)": 1.6501155821139661,
+                "retailer_orders (l2)": 1.7058797603426155,
+                "factory_orders (l4)": 2.5396563695185486
             },
             "inventory_cv": {
-                "wholesaler": 0,
-                "retailer": 3.519270786648291,
-                "factory": 0
+                "wholesaler": 0.6139837049564184,
+                "retailer": 0.6165150982854122,
+                "factory": 0.6403160051278566
             },
             "costs": {
-                "total_cost": 83556.70600000003,
-                "holding_costs": 24748.800000000036,
+                "total_cost": -28844.41899999999,
+                "holding_costs": 16833.000000000004,
                 "trip_fixed_costs": 0,
                 "trip_unit_costs": 0,
-                "order_count": 59906,
-                "sales": 579,
-                "lost_sales": 59327
+                "order_count": 222581,
+                "sales": 52903,
+                "lost_sales": 7003
             },
             "backlog": {
                 "peak": {
                     "supplier": 0,
-                    "wholesaler": 0,
-                    "factory": 0
+                    "wholesaler": 23.766666666666666,
+                    "factory": 33.166666666666664
                 },
                 "ending": {
                     "supplier": 0,
-                    "wholesaler": 0,
-                    "factory": 0
+                    "wholesaler": 10.133333333333333,
+                    "factory": 14.833333333333334
                 }
             },
             "classic": {
                 "per_stage": {
                     "supplier": 0,
-                    "wholesaler": 12000,
-                    "retailer": 59895.8,
-                    "factory": 12000
+                    "wholesaler": 6867.700000000002,
+                    "retailer": 12072.4,
+                    "factory": 8043.7
                 },
-                "total": 83895.8
+                "total": 26983.800000000003
             }
         },
         "0.6": {
             "aggregate": {
                 "total_demand": 59906,
-                "total_sales": 579,
-                "total_lost_sales": 59327,
-                "fill_rate": 0.009665142055887557
+                "total_sales": 44335,
+                "total_lost_sales": 15571,
+                "fill_rate": 0.7400761192534971
             },
             "bullwhip": {
-                "wholesaler_orders (l3)": 0,
-                "retailer_orders (l2)": 0,
-                "factory_orders (l4)": 0
+                "wholesaler_orders (l3)": 1.93596494605714,
+                "retailer_orders (l2)": 2.4926638177513953,
+                "factory_orders (l4)": 2.005821087006018
             },
             "inventory_cv": {
-                "wholesaler": 0,
-                "retailer": 3.519270786648291,
-                "factory": 0
+                "wholesaler": 0.6525965850696408,
+                "retailer": 0.6623844963955268,
+                "factory": 0.6065781561180673
             },
             "costs": {
-                "total_cost": 83556.70600000003,
-                "holding_costs": 24748.800000000036,
+                "total_cost": -12406.365999999998,
+                "holding_costs": 16162.200000000003,
                 "trip_fixed_costs": 0,
                 "trip_unit_costs": 0,
-                "order_count": 59906,
-                "sales": 579,
-                "lost_sales": 59327
+                "order_count": 195434,
+                "sales": 44335,
+                "lost_sales": 15571
             },
             "backlog": {
                 "peak": {
                     "supplier": 0,
-                    "wholesaler": 0,
-                    "factory": 0
+                    "wholesaler": 20.8,
+                    "factory": 23.433333333333334
                 },
                 "ending": {
                     "supplier": 0,
-                    "wholesaler": 0,
-                    "factory": 0
+                    "wholesaler": 8.133333333333333,
+                    "factory": 9.6
                 }
             },
             "classic": {
                 "per_stage": {
                     "supplier": 0,
-                    "wholesaler": 12000,
-                    "retailer": 59895.8,
-                    "factory": 12000
+                    "wholesaler": 7585.800000000001,
+                    "retailer": 20239.1,
+                    "factory": 8063.900000000001
                 },
-                "total": 83895.8
+                "total": 35888.8
             }
         },
         "1.0": {
             "aggregate": {
                 "total_demand": 59906,
-                "total_sales": 579,
-                "total_lost_sales": 59327,
-                "fill_rate": 0.009665142055887557
+                "total_sales": 57295,
+                "total_lost_sales": 2611,
+                "fill_rate": 0.9564150502453844
             },
             "bullwhip": {
-                "wholesaler_orders (l3)": 0,
-                "retailer_orders (l2)": 0,
-                "factory_orders (l4)": 0
+                "wholesaler_orders (l3)": 1.7098757971343594,
+                "retailer_orders (l2)": 1.4313046204696458,
+                "factory_orders (l4)": 4.047271528040351
             },
             "inventory_cv": {
-                "wholesaler": 0,
-                "retailer": 3.519270786648291,
-                "factory": 0
+                "wholesaler": 0.47484551700433436,
+                "retailer": 0.45261784619593104,
+                "factory": 0.5523871472205127
             },
             "costs": {
-                "total_cost": 83556.70600000003,
-                "holding_costs": 24748.800000000036,
+                "total_cost": -34289.11999999999,
+                "holding_costs": 20157.400000000005,
                 "trip_fixed_costs": 0,
                 "trip_unit_costs": 0,
-                "order_count": 59906,
-                "sales": 579,
-                "lost_sales": 59327
+                "order_count": 237480,
+                "sales": 57295,
+                "lost_sales": 2611
             },
             "backlog": {
                 "peak": {
                     "supplier": 0,
-                    "wholesaler": 0,
-                    "factory": 0
+                    "wholesaler": 24.966666666666665,
+                    "factory": 39.36666666666667
                 },
                 "ending": {
                     "supplier": 0,
-                    "wholesaler": 0,
-                    "factory": 0
+                    "wholesaler": 10.1,
+                    "factory": 23.366666666666667
                 }
             },
             "classic": {
                 "per_stage": {
                     "supplier": 0,
-                    "wholesaler": 12000,
-                    "retailer": 59895.8,
-                    "factory": 12000
+                    "wholesaler": 7503.900000000001,
+                    "retailer": 8926.400000000001,
+                    "factory": 8772.9
                 },
-                "total": 83895.8
+                "total": 25203.200000000004
             }
         },
         "0.4": {
             "aggregate": {
                 "total_demand": 59906,
-                "total_sales": 579,
-                "total_lost_sales": 59327,
-                "fill_rate": 0.009665142055887557
+                "total_sales": 36641,
+                "total_lost_sales": 23265,
+                "fill_rate": 0.6116415717958135
             },
             "bullwhip": {
-                "wholesaler_orders (l3)": 0,
-                "retailer_orders (l2)": 0,
-                "factory_orders (l4)": 0
+                "wholesaler_orders (l3)": 1.7265927928081737,
+                "retailer_orders (l2)": 2.518874577314626,
+                "factory_orders (l4)": 1.9097981848418597
             },
             "inventory_cv": {
-                "wholesaler": 0,
-                "retailer": 3.519270786648291,
-                "factory": 0
+                "wholesaler": 0.717803080536049,
+                "retailer": 0.6991373165599126,
+                "factory": 0.6691451187928006
             },
             "costs": {
-                "total_cost": 83556.70600000003,
-                "holding_costs": 24748.800000000036,
+                "total_cost": 864.7770000000098,
+                "holding_costs": 14069.60000000001,
                 "trip_fixed_costs": 0,
                 "trip_unit_costs": 0,
-                "order_count": 59906,
-                "sales": 579,
-                "lost_sales": 59327
+                "order_count": 171177,
+                "sales": 36641,
+                "lost_sales": 23265
             },
             "backlog": {
                 "peak": {
                     "supplier": 0,
-                    "wholesaler": 0,
-                    "factory": 0
+                    "wholesaler": 21.7,
+                    "factory": 18.5
                 },
                 "ending": {
                     "supplier": 0,
-                    "wholesaler": 0,
-                    "factory": 0
+                    "wholesaler": 10.133333333333333,
+                    "factory": 5.733333333333333
                 }
             },
             "classic": {
                 "per_stage": {
                     "supplier": 0,
-                    "wholesaler": 12000,
-                    "retailer": 59895.8,
-                    "factory": 12000
+                    "wholesaler": 7890.1,
+                    "retailer": 27299.399999999998,
+                    "factory": 7900.3
                 },
-                "total": 83895.8
+                "total": 43089.8
             }
         }
     },

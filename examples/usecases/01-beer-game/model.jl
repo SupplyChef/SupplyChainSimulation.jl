@@ -305,6 +305,8 @@ in this network) makes this signature a strict subtype of the fallback's in
 every slot, which resolves the ambiguity outright rather than papering over
 symptoms.
 =#
+const _AAA_DEBUG_CALLS = Ref(0)
+
 function get_order(policy::AnchorAndAdjustOrderingPolicy, state::State, env::Env, location::Storage, lane::Lane, product::Product, time::Int64)::Int64
     forecast = MEAN_DEMAND
     on_hand = get_on_hand_inventory(state, location, product)
@@ -317,7 +319,18 @@ function get_order(policy::AnchorAndAdjustOrderingPolicy, state::State, env::Env
     supply_line_adjustment = policy.alpha_supply_line * (desired_supply_line - supply_line)
 
     order = forecast + stock_adjustment + supply_line_adjustment
-    return max(0, round(Int, order))
+    result = max(0, round(Int, order))
+
+    # TEMPORARY diagnostic - the previous fix (typing location::Storage)
+    # didn't resolve the bug (sanity check still failed identically), so
+    # this prints ground truth for the first few calls instead of continuing
+    # to theorize about dispatch blind. Remove once the real cause is found.
+    if _AAA_DEBUG_CALLS[] < 8
+        _AAA_DEBUG_CALLS[] += 1
+        println("AAA_DEBUG call #$(_AAA_DEBUG_CALLS[]): location=$(location) time=$time alpha_stock=$(policy.alpha_stock) alpha_supply_line=$(policy.alpha_supply_line) desired_stock=$(policy.desired_stock) on_hand=$on_hand net_inventory=$net_inventory supply_line=$supply_line lead_time=$lead_time desired_supply_line=$desired_supply_line stock_adjustment=$stock_adjustment supply_line_adjustment=$supply_line_adjustment order=$order result=$result")
+    end
+
+    return result
 end
 
 function run_anchor_and_adjust(alpha_supply_line, product, horizon, scenario_count, seed)

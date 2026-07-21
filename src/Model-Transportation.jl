@@ -70,6 +70,16 @@ so sharing a single dict across every period of a lane (instead of
 rebuilding an identical one per (lane, period) pair) avoids `horizon`-many
 redundant Dict allocations per lane.
 
+Iterates `policies` itself - typically sparse (most networks don't define
+every lane/product combination) - and groups its entries by lane, instead
+of the reverse: probing `haskey(policies, (l, p))` for every
+`(lane, product)` combination regardless of how many are actually defined.
+That inverted approach was O(lanes x products); this is
+O(lanes + length(policies)). A `(lane, product)` entry for a lane/product
+outside `supplychain.lanes`/`supplychain.products` is silently dropped,
+matching the old behavior (which could only ever see pairs drawn from
+those two collections in the first place).
+
 Stores each policy object directly, rather than pre-wrapping it in a
 `FunctionWrapper` closure via `wrap_get_order` - that type erasure went
 through a `ccall`-based trampoline, which forced boxing of every argument
@@ -90,10 +100,14 @@ factoring it into a `dispatch_get_order` helper measured identically to no
 split at all, since the call *into* that helper was itself still dynamic).
 """
 function get_lane_policies(supplychain, policies)
-    return Dict{Lane, Dict{Product, InventoryOrderingPolicy}}(
-        l => Dict{Product, InventoryOrderingPolicy}(p => policies[(l, p)] for p in supplychain.products if haskey(policies, (l, p)))
-        for l in supplychain.lanes
-    )
+    result = Dict{Lane, Dict{Product, InventoryOrderingPolicy}}(l => Dict{Product, InventoryOrderingPolicy}() for l in supplychain.lanes)
+    for ((l, p), policy) in policies
+        lane_policies = get(result, l, nothing)
+        if !isnothing(lane_policies) && p in supplychain.products
+            lane_policies[p] = policy
+        end
+    end
+    return result
 end
 
 """

@@ -117,11 +117,18 @@ struct Env
         nlanes = length(lanes_indexed.items)
         lane_index = lanes_indexed.index
 
+        # Left undef rather than pre-filled with an empty Vector per cell:
+        # that fill was an O(lanes x products) allocation storm regardless
+        # of how many (lane, product) pairs actually use a policy with
+        # required_lookback(policy) > 0 (currently only
+        # BackwardCoverageOrderingPolicy) - typically a small fraction of
+        # the full lanes x products space. The only reader
+        # (_backward_coverage_order, Policy.jl) is only ever reached via
+        # place_orders dispatching on trip.policies[product] actually
+        # being such a policy - the same (lane, product, policy) triple
+        # the loop below uses to decide which cells to write - so every
+        # cell that's ever read is guaranteed to have been written first.
         past_orders_buffers = Matrix{Vector{Union{Missing, Int64}}}(undef, nlanes, nproducts)
-        # Initialize default empty arrays so every slot contains a valid vector reference
-        for p_idx in 1:nproducts, l_idx in 1:nlanes
-            past_orders_buffers[l_idx, p_idx] = Union{Missing, Int64}[]
-        end
 
         for ((lane, product), policy) in policies
             lookback = required_lookback(policy)

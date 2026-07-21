@@ -290,12 +290,16 @@ end
 """
 required_lookback(policy::BackwardCoverageOrderingPolicy)::Int = length(policy.cover)
 
-function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, li::Int64, si::Int64, pi::Int64, time::Int64)::Int64
+# Shared by both get_order overloads below: the one difference between
+# them is how lane_idx is obtained (a free field read from a Trip already
+# in hand vs. a state.lane_index Dict lookup from a bare Lane) - the
+# coverage math past that point is identical either way, so it lives here
+# once rather than being duplicated per overload.
+@inline function _backward_coverage_order(policy::BackwardCoverageOrderingPolicy, state::State, env::Env, lane_idx::Int64, li::Int64, si::Int64, pi::Int64, time::Int64)::Int64
     net_inventory = _net_inventory_by_index(state, li, pi, si, time)
 
-    lane_idx = state.lane_index[lane]
     past_orders = _fill_past_outbound_orders_by_index!(env.past_orders_buffers[lane_idx, pi], state, li, pi, time)
-    
+
     weights = 0.0
     coverage = 0.0
     for i in 1:length(policy.cover) - 1
@@ -321,8 +325,30 @@ function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env::En
     # See the identical guard in ForwardCoverageOrderingPolicy.get_order:
     # isfinite doesn't rule out a deficit too large for ceil(Int, ...) to
     # represent without overflowing.
-    order = (isfinite(deficit) && deficit < 1e15) ? max(0, ceil(Int, deficit)) : 0
-    return order
+    return (isfinite(deficit) && deficit < 1e15) ? max(0, ceil(Int, deficit)) : 0
+end
+
+"""
+Fast path for `place_orders`' internal dispatch (Simulation.jl), which
+already has the full `Trip` - not just its `route::Lane` - in hand: reads
+`trip.lane_index` directly instead of hashing `trip.route` through
+`state.lane_index` on every call. CPU profiling of the Profile workflow
+found that lookup as real self-time in `simulate()`'s hot loop even after
+`state.lane_index` itself was cached (see `get_lane_index`,
+SupplyChainModeling.jl) - `Trip.lane_index` (Model-Transportation.jl)
+resolves it once at `Env` construction instead.
+"""
+function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env::Env, location::ConcreteNode, trip::Trip, product::Product, li::Int64, si::Int64, pi::Int64, time::Int64)::Int64
+    return _backward_coverage_order(policy, state, env, trip.lane_index, li, si, pi, time)
+end
+
+"""
+Lane-based fallback for direct/external callers that only have a `Lane`,
+not a `Trip`, in hand (e.g. calling `get_order` outside `place_orders`).
+`place_orders` itself calls the `Trip`-taking overload above instead.
+"""
+function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, li::Int64, si::Int64, pi::Int64, time::Int64)::Int64
+    return _backward_coverage_order(policy, state, env, state.lane_index[lane], li, si, pi, time)
 end
 
 function get_order(policy::BackwardCoverageOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64

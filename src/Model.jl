@@ -45,7 +45,7 @@ concretely-typed) caller instead, letting the compiler union-split it
 without boxing - allocation profiling found this as the largest single
 allocation site in a full `beer_game()` run.
 """
-@inline function find_next_departure(env, destination::ConcreteNode, time::Int64)
+@inline function find_next_departure(env, destination::ConcreteNode, time::Int64)::Trip
     periods = env.departures[destination]
     for t in time:length(periods)
         trips_at_t = periods[t]
@@ -53,7 +53,7 @@ allocation site in a full `beer_game()` run.
             return trips_at_t[1]
         end
     end
-    return nothing
+    return NULL_TRIP
 end
 
 """
@@ -67,7 +67,7 @@ the full, unbounded list of trips ever bound for `destination`.
 `@inline`d for the same reason as the 3-argument method above - see its
 docstring.
 """
-@inline function find_next_departure(env, destination::ConcreteNode, time::Int64, due_date::Int64)
+@inline function find_next_departure(env, destination::ConcreteNode, time::Int64, due_date::Int64)::Trip
     periods = env.departures[destination]
     last_period = min(due_date, length(periods))
     for t in time:last_period
@@ -77,7 +77,7 @@ docstring.
             end
         end
     end
-    return nothing
+    return NULL_TRIP
 end
 
 """

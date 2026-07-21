@@ -86,3 +86,6 @@ function get_trips(supplychain, policies)
     lane_policies = get_lane_policies(supplychain, policies)
     return [Trip(l, t, lane_policies[l]) for l in supplychain.lanes for t in 1:supplychain.horizon if (isnothing(l.can_ship) || isempty(l.can_ship) || l.can_ship[t])]
 end
+
+const NULL_LANE = Lane(Customer("NULL"), Customer("NULL"); unit_cost=0.0)
+const NULL_TRIP = Trip(NULL_LANE, 0, missing)

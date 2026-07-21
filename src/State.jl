@@ -559,10 +559,18 @@ on-hand inventory and the per-period Set handoffs - is skipped entirely, and
 next period instead of being swapped for fresh, permanently-retained Sets.
 """
 function snapshot_state!(state::State, time, record_history::Bool)
+    # Not sizehint!'d to length(state.on_hand_totals) (every storage x
+    # product pair): a fresh Dict is needed every period regardless (it's
+    # handed to historical_on_hand below and must outlive this call, so it
+    # can't be a reused/cleared buffer the way reusable_order_lines_buffer
+    # is) - sizehint!ing it to the full dense worst case every period paid
+    # for allocating/rehashing a table sized for every pair even when only
+    # a fraction are ever actually touched (see the "was this pair ever
+    # touched" skip below), which CPU profiling of the large-network
+    # benchmark found as a real chunk of simulate()'s time. Left to grow
+    # via Dict's own default incremental strategy instead, which sizes
+    # itself to what's actually inserted.
     on_hand_snapshot = record_history ? Dict{Tuple{Storage, Product}, Int64}() : nothing
-    if record_history
-        sizehint!(on_hand_snapshot, length(state.on_hand_totals))
-    end
     # on_hand_totals is maintained incrementally by every on-hand mutation
     # site, so per-(storage,product) totals are read directly instead of
     # re-summing each cell's age buckets here every period.

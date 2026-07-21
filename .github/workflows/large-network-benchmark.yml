@@ -42,3 +42,44 @@ jobs:
           BENCHMARK_STORAGE_COUNT: ${{ inputs.storage_count }}
           BENCHMARK_PRODUCT_COUNT: ${{ inputs.product_count }}
           BENCHMARK_HORIZON: ${{ inputs.horizon }}
+
+  cpu-profile:
+    name: CPU profile @ ${{ inputs.storage_count }} storages
+    runs-on: ubuntu-latest
+    # Each phase (Env construction, simulate()) is profiled once, not
+    # repeated for statistical timing the way benchmark's BenchmarkTools
+    # samples are - should be faster than the benchmark job above, but
+    # kept generous for the same "fail clearly instead of hanging" reason.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v2
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: '1'
+          arch: x64
+      - run: julia --project=benchmark -e 'using Pkg; Pkg.instantiate()'
+      - run: julia --project=benchmark benchmark/profile_large_network.jl ${{ inputs.env_only && '--env-only' || '' }}
+        env:
+          BENCHMARK_STORAGE_COUNT: ${{ inputs.storage_count }}
+          BENCHMARK_PRODUCT_COUNT: ${{ inputs.product_count }}
+          BENCHMARK_HORIZON: ${{ inputs.horizon }}
+
+  memory-profile:
+    name: Allocation profile @ ${{ inputs.storage_count }} storages
+    runs-on: ubuntu-latest
+    # Same reasoning as Profile's memory-profile job: Profile.Allocs at a
+    # high sample rate is far slower than unprofiled execution - this
+    # script uses the same low rate that job already validated as safe.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v2
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: '1'
+          arch: x64
+      - run: julia --project=benchmark -e 'using Pkg; Pkg.instantiate()'
+      - run: julia --project=benchmark benchmark/memory_profile_large_network.jl ${{ inputs.env_only && '--env-only' || '' }}
+        env:
+          BENCHMARK_STORAGE_COUNT: ${{ inputs.storage_count }}
+          BENCHMARK_PRODUCT_COUNT: ${{ inputs.product_count }}
+          BENCHMARK_HORIZON: ${{ inputs.horizon }}

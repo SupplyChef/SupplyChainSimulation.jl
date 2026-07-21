@@ -281,7 +281,7 @@ end
 function place_orders(state::State, env::Env, location::Customer, product::Product, li::Int64, si::Int64, pi::Int64, time::Int64, orders::Array{OrderLine, 1})
     empty!(orders)
     demand = state.demand[(location, product)]
-    quantity = round(Int64, demand.demand[time])
+    quantity = floor(Int64, demand.demand[time])
     if quantity > 0
         trip = find_next_departure(env, location, time)
         if trip !== NULL_TRIP

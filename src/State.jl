@@ -28,6 +28,9 @@ mutable struct State
     location_index::Dict{ConcreteNode, Int64}
     locations::Vector{ConcreteNode}
 
+    lane_index::Dict{Lane, Int64}
+    lanes::Vector{Lane}
+
     # [storage_index, product_index] -> horizon-length array of quantity by
     # age (simulation period the inventory arrived), indexed directly by
     # age instead of through a per-(storage,product) Dict{Int64,Int64} -
@@ -131,6 +134,9 @@ mutable struct State
         location_index = locations_indexed.index
         nlocations = length(locations)
 
+        lanes = supply_chain.lanes
+        lane_index = Dict{Lane, Int64}(lane => i for (i, lane) in enumerate(lanes))
+
         state = new(supply_chain,
                    demand,
                    storage_index,
@@ -139,6 +145,8 @@ mutable struct State
                    products,
                    location_index,
                    locations,
+                   lane_index,
+                   lanes,
                    [zeros(Int64, horizon) for _ in 1:nstorages, _ in 1:nproducts],
                    [Int64[] for _ in 1:nstorages, _ in 1:nproducts],
                    zeros(Int64, nstorages, nproducts),
@@ -152,7 +160,7 @@ mutable struct State
                    OrderLine[],
                    Set{Trip}(),
                    [],
-                   SimMetrics(),
+                   SimMetrics(length(lanes), horizon),
                    [zeros(Int64, horizon) for _ in 1:nlocations, _ in 1:nproducts])
                    #,[])
                    
@@ -582,13 +590,20 @@ end
 
 @inline function _in_transit_sum_by_index(state::State, li::Int64, pi::Int64, time::Int64)::Int64
     (li == 0 || pi == 0) && return 0
-    return sum(@view state.in_transit_inventory[li, pi][time:end]; init=0)
+    vec = state.in_transit_inventory[li, pi]
+    total = 0
+    @inbounds for t in time:length(vec)
+        total += vec[t]
+    end
+    return total
 end
 
 @inline function _inbound_orders_by_index(state::State, li::Int64, pi::Int64, time::Int64)::Int64
     (li == 0 || pi == 0) && return 0
     total = 0
-    for ol in state.pending_inbound_order_lines[li, pi]
+    vec = state.pending_inbound_order_lines[li, pi]
+    @inbounds for i in eachindex(vec)
+        ol = vec[i]
         if ol.due_date >= time
             total += ol.quantity
         end
@@ -599,7 +614,9 @@ end
 @inline function _outbound_orders_by_index(state::State, li::Int64, pi::Int64, time::Int64)::Int64
     (li == 0 || pi == 0) && return 0
     total = 0
-    for ol in state.pending_outbound_order_lines[li, pi]
+    vec = state.pending_outbound_order_lines[li, pi]
+    @inbounds for i in eachindex(vec)
+        ol = vec[i]
         if ol.due_date >= time
             total += ol.quantity
         end
@@ -697,7 +714,7 @@ called ~15000 trials x 30 scenarios x every period in `optimize!`'s search -
 showed up as a real, avoidable chunk of allocation profiling.
 """
 @inline function _fill_past_outbound_orders_by_index!(past_orders::Array{Union{Missing, Int64}, 1}, state::State, li::Int64, pi::Int64, time::Int64)::Array{Union{Missing, Int64}, 1}
-    for t in 1:length(past_orders)
+    @inbounds for t in eachindex(past_orders)
         creation_time = time - t
         if creation_time < 0
             past_orders[t] = missing

@@ -69,7 +69,10 @@ struct Env
     # ever evaluated concurrently, raced - across all of them. This Env is
     # exclusive to one scenario's simulate() call, so buffers stored here
     # are naturally scenario-local.
-    past_orders_buffers::Dict{Tuple{Lane, Product}, Array{Union{Missing, Int64}, 1}}
+    past_orders_buffers::Matrix{Vector{Union{Missing, Int64}}}
+
+    # Reusable buffer to avoid allocating a fresh Vector{OrderLine} inside send_inventory!
+    reusable_order_lines_buffer::Vector{OrderLine}
 
     function Env(supplychain::SupplyChain, initial_states, policies; record_history::Bool=true)
         trips = get_trips(supplychain, policies)
@@ -104,24 +107,37 @@ struct Env
             end
         end
 
-        past_orders_buffers = Dict{Tuple{Lane, Product}, Array{Union{Missing, Int64}, 1}}()
+        nlanes = length(supplychain.lanes)
+        products_indexed = get_product_index(supplychain)
+        nproducts = length(products_indexed.items)
+        lane_index = Dict{Lane, Int64}(lane => i for (i, lane) in enumerate(supplychain.lanes))
+
+        past_orders_buffers = Matrix{Vector{Union{Missing, Int64}}}(undef, nlanes, nproducts)
+        # Initialize default empty arrays so every slot contains a valid vector reference
+        for p_idx in 1:nproducts, l_idx in 1:nlanes
+            past_orders_buffers[l_idx, p_idx] = Union{Missing, Int64}[]
+        end
+
         for ((lane, product), policy) in policies
             lookback = required_lookback(policy)
             if lookback > 0
-                past_orders_buffers[(lane, product)] = Array{Union{Missing, Int64}, 1}(undef, lookback)
+                l_idx = lane_index[lane]
+                p_idx = products_indexed.index[product]
+                past_orders_buffers[l_idx, p_idx] = Array{Union{Missing, Int64}, 1}(undef, lookback)
             end
         end
 
         return new(supplychain,
                    collect(initial_states),
                    sorted_locations,
-                   get_product_index(supplychain).items,
+                   products_indexed.items,
                    departures,
                    downstream_customers,
                    Dict{Tuple{ConcreteNode, Product, Int64}, Float64}(),
                    record_history,
                    any(p -> required_lookback(p) > 0, values(policies)),
-                   past_orders_buffers)
+                   past_orders_buffers,
+                   OrderLine[])
     end
 end
 

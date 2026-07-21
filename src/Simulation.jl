@@ -81,8 +81,9 @@ function record_fill!(state::State, env::Env, order_line::OrderLine)
     metrics = state.metrics
 
     metrics.trip_unit_costs += trip.route.unit_cost * order_line.quantity
-    if trip ∉ metrics.seen_trips
-        push!(metrics.seen_trips, trip)
+    lane_idx = state.lane_index[trip.route]
+    if !metrics.seen_trips[lane_idx, trip.departure]
+        metrics.seen_trips[lane_idx, trip.departure] = true
         metrics.trip_fixed_costs += get_fixed_cost(trip.route)
     end
     if order_line.destination isa Customer
@@ -174,7 +175,7 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
     sort!(order_lines, by=ol -> (ol.creation_time, ol.due_date))
     #@debug order_lines
 
-    fulfilled_or_dropped = OrderLine[]
+    fulfilled_or_dropped = empty!(env.reusable_order_lines_buffer)
 
     for order_line in order_lines
         if order_line.due_date < time
@@ -186,7 +187,7 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
 
         if ismissing(order_line.trip) || order_line.trip.departure < time
             trip = find_next_departure(env, order_line.destination, time, order_line.due_date)
-            if isnothing(trip)
+            if trip === NULL_TRIP
                 continue
             end
             order_line.trip = trip
@@ -222,7 +223,7 @@ function send_inventory!(state::State, env::Env, location::ConcreteNode, product
     #@debug order_lines
 
     #println("send_inventory order_lines $order_lines")
-    fulfilled_order_lines = OrderLine[]
+    fulfilled_order_lines = empty!(env.reusable_order_lines_buffer)
     # Tracked locally and kept in sync with each _remove_on_hand_by_index!
     # below, instead of re-reading on-hand inventory twice per order line.
     available = _on_hand_by_index(state, si, pi)
@@ -238,7 +239,7 @@ function send_inventory!(state::State, env::Env, location::ConcreteNode, product
         if order_line.quantity <= available
             if ismissing(order_line.trip) || order_line.trip.departure < time
                 trip = find_next_departure(env, order_line.destination, time, order_line.due_date)
-                if isnothing(trip)
+                if trip === NULL_TRIP
                     continue
                 end
                 order_line.trip = trip
@@ -277,27 +278,30 @@ end
 # order for one fixed product - and is handed to record_placement!, which
 # still resolves order_line.origin's own index locally since that varies
 # per order line placed (see its docstring).
-function place_orders(state::State, env::Env, location::Customer, product::Product, pi::Int64, time::Int64, orders::Array{OrderLine, 1})
+function place_orders(state::State, env::Env, location::Customer, product::Product, li::Int64, si::Int64, pi::Int64, time::Int64, orders::Array{OrderLine, 1})
     empty!(orders)
     demand = state.demand[(location, product)]
-    quantity = Int(demand.demand[time])
+    quantity = floor(Int64, demand.demand[time])
     if quantity > 0
         trip = find_next_departure(env, location, time)
-
-        order = OrderLine(time, trip.route.origin, location, product, quantity, time, missing) # customers orders are due immediately
-        #@debug "Ordered at $time, $location, $product, $quantity"
-        push!(orders, order)
-        push!(state.placed_orders, order)
-        record_placement!(state, env, order, pi)
-        state.metrics.orders += quantity
-        state.metrics.demand += quantity * demand.sales_price
-        return
+        if trip !== NULL_TRIP
+            order = OrderLine(time, trip.route.origin, location, product, quantity, time, missing) # customers orders are due immediately
+            #@debug "Ordered at $time, $location, $product, $quantity"
+            push!(orders, order)
+            push!(state.placed_orders, order)
+            record_placement!(state, env, order, pi)
+            state.metrics.orders += quantity
+            state.metrics.demand += quantity * demand.sales_price
+            return
+        else
+            return
+        end
     else
         return
     end
 end
 
-function place_orders(state::State, env::Env, location::ConcreteNode, product::Product, pi::Int64, time::Int, orders::Array{OrderLine, 1})
+function place_orders(state::State, env::Env, location::ConcreteNode, product::Product, li::Int64, si::Int64, pi::Int64, time::Int, orders::Array{OrderLine, 1})
     empty!(orders)
     for trip in get_inbound_trips(env, location, time)
         #println(policies)
@@ -315,23 +319,23 @@ function place_orders(state::State, env::Env, location::ConcreteNode, product::P
             # version of this split lived in a separate dispatch_get_order
             # function, and boxing at this call site was unchanged.
             quantity = if policy isa QuantityOrderingPolicy
-                Int(get_order(policy::QuantityOrderingPolicy, state, env, location, trip.route, product, time))
+                Int(get_order(policy::QuantityOrderingPolicy, state, env, location, trip.route, product, li, si, pi, time))
             elseif policy isa ProductQuantityOrderingPolicy
-                Int(get_order(policy::ProductQuantityOrderingPolicy, state, env, location, trip.route, product, time))
+                Int(get_order(policy::ProductQuantityOrderingPolicy, state, env, location, trip.route, product, li, si, pi, time))
             elseif policy isa OnHandUptoOrderingPolicy
-                Int(get_order(policy::OnHandUptoOrderingPolicy, state, env, location, trip.route, product, time))
+                Int(get_order(policy::OnHandUptoOrderingPolicy, state, env, location, trip.route, product, li, si, pi, time))
             elseif policy isa NetUptoOrderingPolicy
-                Int(get_order(policy::NetUptoOrderingPolicy, state, env, location, trip.route, product, time))
+                Int(get_order(policy::NetUptoOrderingPolicy, state, env, location, trip.route, product, li, si, pi, time))
             elseif policy isa NetSSOrderingPolicy
-                Int(get_order(policy::NetSSOrderingPolicy, state, env, location, trip.route, product, time))
+                Int(get_order(policy::NetSSOrderingPolicy, state, env, location, trip.route, product, li, si, pi, time))
             elseif policy isa ForwardCoverageOrderingPolicy
-                Int(get_order(policy::ForwardCoverageOrderingPolicy, state, env, location, trip.route, product, time))
+                Int(get_order(policy::ForwardCoverageOrderingPolicy, state, env, location, trip.route, product, li, si, pi, time))
             elseif policy isa BackwardCoverageOrderingPolicy
-                Int(get_order(policy::BackwardCoverageOrderingPolicy, state, env, location, trip.route, product, time))
+                Int(get_order(policy::BackwardCoverageOrderingPolicy, state, env, location, trip.route, product, li, si, pi, time))
             elseif policy isa SingleOrderOrderingPolicy
-                Int(get_order(policy::SingleOrderOrderingPolicy, state, env, location, trip.route, product, time))
+                Int(get_order(policy::SingleOrderOrderingPolicy, state, env, location, trip.route, product, li, si, pi, time))
             else
-                Int(get_order(policy, state, env, location, trip.route, product, time))
+                Int(get_order(policy, state, env, location, trip.route, product, li, si, pi, time))
             end
             if quantity > 0
                 minimum_quantity = trip.route.minimum_quantity
@@ -404,6 +408,8 @@ function simulate(env::Env, policies, initial_state)
     # Storage-specific branches below ever read it.
     location_lis = [state.location_index[l] for l in env.sorted_locations]
     location_sis = [get(state.storage_index, l, 0) for l in env.sorted_locations]
+    reversed_location_lis = reverse(location_lis)
+    reversed_location_sis = reverse(location_sis)
 
     # env.sorted_products is the exact same cached Vector as
     # state.products (both come from get_product_index(supplychain) - see
@@ -446,23 +452,22 @@ function simulate(env::Env, policies, initial_state)
             end
         end
 
-        # place_orders doesn't need li/si (see its section's header
-        # comment), so this loop doesn't need location_lis/location_sis -
-        # a plain iteration over reversed_sorted_locations is enough.
-        for location in reversed_sorted_locations
+        for (loc_idx, location) in enumerate(reversed_sorted_locations)
+            li = reversed_location_lis[loc_idx]
+            si = reversed_location_sis[loc_idx]
             if location isa Customer
                 for (pi, product) in enumerate(env.sorted_products)
-                    place_orders(state, env, location::Customer, product, pi, time, orders)
+                    place_orders(state, env, location::Customer, product, li, si, pi, time, orders)
                     receive_orders!(state, env, orders)
                 end
             elseif location isa Storage
                 for (pi, product) in enumerate(env.sorted_products)
-                    place_orders(state, env, location::Storage, product, pi, time, orders)
+                    place_orders(state, env, location::Storage, product, li, si, pi, time, orders)
                     receive_orders!(state, env, orders)
                 end
             else
                 for (pi, product) in enumerate(env.sorted_products)
-                    place_orders(state, env, location::Supplier, product, pi, time, orders)
+                    place_orders(state, env, location::Supplier, product, li, si, pi, time, orders)
                     receive_orders!(state, env, orders)
                 end
             end

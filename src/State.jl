@@ -328,18 +328,29 @@ end
 # writers below directly, instead of add_on_hand_inventory!/
 # add_in_transit_inventory!/get_on_hand_inventory/get_in_transit_inventory/
 # record_overflow! each independently re-resolving the same indices.
+#
+# receive_inventory! calls this once per (storage, product) every period
+# regardless of whether anything is actually arriving (quantity == 0 is the
+# common case for most (storage, product, period) combinations on a large,
+# sparsely-active network) - recording an age for a zero-quantity "arrival"
+# would just be dead weight every downstream ages_order reader
+# (_remove_on_hand_by_index!, expire_on_hand_inventory, snapshot_state!'s
+# "was this pair ever touched" check) has to scan past for no benefit, so
+# skip it entirely when there's nothing to record.
 @inline function _add_on_hand_by_index!(state::State, si::Int64, pi::Int64, quantity::Int64, time)
-    ages = state.on_hand_inventory[si, pi]
-    ages_order = state.on_hand_ages_order[si, pi]
-    # Ages are only ever touched at the current, monotonically increasing
-    # simulation time, so a new age is only ever the *last* one appended
-    # (or the very first) - checking ages_order's tail is O(1) and
-    # equivalent to the old per-call Dict haskey check.
-    if isempty(ages_order) || ages_order[end] != time
-        push!(ages_order, time)
+    if quantity > 0
+        ages = state.on_hand_inventory[si, pi]
+        ages_order = state.on_hand_ages_order[si, pi]
+        # Ages are only ever touched at the current, monotonically
+        # increasing simulation time, so a new age is only ever the *last*
+        # one appended (or the very first) - checking ages_order's tail is
+        # O(1) and equivalent to the old per-call Dict haskey check.
+        if isempty(ages_order) || ages_order[end] != time
+            push!(ages_order, time)
+        end
+        ages[time] += quantity
+        state.on_hand_totals[si, pi] += quantity
     end
-    ages[time] += quantity
-    state.on_hand_totals[si, pi] += quantity
 end
 
 function add_on_hand_inventory!(state::State, to::Storage, product::Product, quantity::Int64, time)

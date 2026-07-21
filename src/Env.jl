@@ -85,10 +85,35 @@ struct Env
         end
         sorted_locations = reverse_mapping[topological_sort_by_dfs(graph)]
 
-        downstream_customers = Dict{ConcreteNode, Array{Customer, 1}}()
-        for location in locations
-            parents = dfs_parents(graph, mapping[location])
-            downstream_customers[location] = Customer[reverse_mapping[i] for i in 1:length(mapping) if parents[i] > 0 && reverse_mapping[i] isa Customer]
+        # Every location's downstream Customers = the union of its direct
+        # successors' own downstream Customers, plus any direct successor
+        # that's itself a Customer. Computed once per location in a single
+        # reverse-topological pass - a location's successors are always
+        # later in sorted_locations (every edge's origin precedes its
+        # destination there), so by the time `location` is processed here,
+        # each of its successors' entries below is already final - instead
+        # of a full graph traversal per location (dfs_parents(graph,
+        # mapping[location]), O(locations) calls each O(locations + lanes),
+        # i.e. O(locations x (locations + lanes)) overall - the dominant
+        # cost of Env construction on a large network, since it's quadratic
+        # in locations where everything else here is linear). successors
+        # reuses supplychain.lanes directly rather than graph/mapping,
+        # since it only needs adjacency, not vertex indices.
+        successors = Dict{ConcreteNode, Vector{ConcreteNode}}(location => ConcreteNode[] for location in locations)
+        for lane in supplychain.lanes
+            append!(successors[lane.origin], get_destinations(lane))
+        end
+
+        downstream_customers = Dict{ConcreteNode, Array{Customer, 1}}(location => Customer[] for location in locations)
+        for location in Iterators.reverse(sorted_locations)
+            reachable_customers = Set{Customer}()
+            for successor in successors[location]
+                if successor isa Customer
+                    push!(reachable_customers, successor)
+                end
+                union!(reachable_customers, downstream_customers[successor])
+            end
+            downstream_customers[location] = collect(reachable_customers)
         end
 
         # Group trips by (destination, period) in a single pass instead of,

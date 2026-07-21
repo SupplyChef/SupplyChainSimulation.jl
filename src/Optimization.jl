@@ -49,7 +49,7 @@ function minimize!(lane_policies, policies, envs::Array{Env, 1}, initial_states:
 end
 
 """
-    optimize!(supplychain::SupplyChain, lane_policies, initial_states...; cost_function, record_history)
+    optimize!(supplychain::SupplyChain, lane_policies, initial_states...; cost_function, record_history, method, cma_es_options)
 
     Optimizes the inventory policies in the supply chain by simulating the inventory movement starting from the initial states and costing the results with the cost function.
 
@@ -67,8 +67,32 @@ end
     `get_total_*` functions, and that index is maintained regardless of
     `record_history` (see `required_lookback`/`Env.needs_outbound_order_index`),
     so `record_history=false` is safe with that policy too.
+
+    `method` selects the search algorithm used to minimize `cost_function` over the
+    policies' parameters:
+    - `:custom` (the default): the original hand-rolled differential-evolution-style
+      optimizer in this file (`bboptimize`/`params`). Kept as the default so existing
+      callers see byte-for-byte identical behavior.
+    - `:cma_es`: Covariance Matrix Adaptation Evolution Strategy, via the
+      CMAEvolutionStrategy.jl package. Tuned via `cma_es_options` (see below) instead
+      of `params`, since CMA-ES's options aren't all `Float64` (bounds are vectors,
+      some are integers) and `params` is typed `Dict{Symbol, Float64}`.
+
+    `cma_es_options` (only used when `method === :cma_es`) accepts:
+    - `:lower`, `:upper`: box constraints, each either a scalar (broadcast to every
+      parameter) or a per-parameter vector. Default `0.0`/`5000.0`, matching
+      `:custom`'s default `:SearchRange`.
+    - `:maxfevals`: evaluation budget. Default `15000`, matching `:custom`'s default
+      `:MaxFuncEvals`, so the two methods are comparable under the same budget.
+    - `:sigma0`: initial global step size (CMA-ES's `s0`). Defaults to a quarter of
+      the bounds' range, a commonly-used rule of thumb when there's no prior on
+      where in the box the optimum sits.
+    - `:popsize`, `:seed`, `:verbosity`: passed straight through to
+      `CMAEvolutionStrategy.minimize` when given; otherwise left at that package's
+      own defaults (`:verbosity` defaults to `0` here instead, since `:custom`
+      already prints its own progress and CMA-ES's is redundant in that context).
 """
-function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s), record_history::Bool=true)
+function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s), record_history::Bool=true, method::Symbol=:custom, cma_es_options::Dict{Symbol, Any}=Dict{Symbol, Any}())
     initial_states = State.(supplychains)
     envs = [Env(supplychain, initial_states, lane_policies; record_history=record_history) for supplychain in supplychains]
 
@@ -86,32 +110,59 @@ function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}
 
     x0 = vcat([get_parameters(policy) for policy in policies]...)
     x0 = convert(Array{Float64, 1}, x0)
-    
-    res1 = SupplyChainSimulation.bboptimize(x -> minimize!(lane_policies, policies, collect(envs), collect(initial_states), x; cost_function=cost_function), 
-                     x0, 
-                    merge(Dict(:MaxFuncEvals => 15000,
-                         :MaxStepsWithoutProgress => 1500, 
-                         :SearchRange => (-0.0, 5000.0), 
-                         :NumDimensions => length(x0)), params))
 
-    # res = BlackBoxOptim.bboptimize(x -> minimize!(env, horizon, collect(initial_states), policies, x; cost_function=cost_function), 
-    #                      x0, 
-    #                     Dict(:MaxFuncEvals => 3000,
-    #                          :MaxStepsWithoutProgress => 500, 
-    #                          :SearchRange => (-0.0, 5000.0), 
-    #                          :NumDimensions => parameter_count, 
-    #                          :Method => :generating_set_search,
-    #                          :TraceMode => :silent))
+    f = x -> minimize!(lane_policies, policies, collect(envs), collect(initial_states), x; cost_function=cost_function)
 
-    #best = minimizer(res)
-    #println(best)
-    #println(best_fitness(res))
-    best = res1
+    if method === :custom
+        best = SupplyChainSimulation.bboptimize(f,
+                         x0,
+                        merge(Dict(:MaxFuncEvals => 15000,
+                             :MaxStepsWithoutProgress => 1500,
+                             :SearchRange => (-0.0, 5000.0),
+                             :NumDimensions => length(x0)), params))
+    elseif method === :cma_es
+        best = cma_es_optimize(f, x0, cma_es_options)
+    else
+        error("optimize!: unknown method $(repr(method)); supported methods are :custom and :cma_es")
+    end
+
     i = 1
     for policy in policies
         set_parameters!(policy, best[i:i+length(get_parameters(policy))-1])
         i = i + length(get_parameters(policy))
     end
+end
+
+"""
+    cma_es_optimize(f, x0, options)
+
+Minimizes `f` starting from `x0` with CMAEvolutionStrategy.jl, translating this
+package's `optimize!(...; method=:cma_es, cma_es_options=...)` options (see
+`optimize!`'s docstring) into `CMAEvolutionStrategy.minimize`'s keyword arguments.
+Split out of `optimize!` so the CMA-ES-specific option handling (scalar-vs-vector
+bounds, the `sigma0` default, forwarding `popsize`/`seed` only when given) doesn't
+clutter the method-dispatch branch above.
+"""
+function cma_es_optimize(f, x0::Array{Float64, 1}, options::Dict{Symbol, Any})
+    n = length(x0)
+    lower = get(options, :lower, 0.0)
+    upper = get(options, :upper, 5000.0)
+    lower_bounds = lower isa AbstractVector ? convert(Array{Float64, 1}, lower) : fill(convert(Float64, lower), n)
+    upper_bounds = upper isa AbstractVector ? convert(Array{Float64, 1}, upper) : fill(convert(Float64, upper), n)
+
+    sigma0 = get(options, :sigma0, (upper_bounds[1] - lower_bounds[1]) / 4)
+
+    minimize_kwargs = Dict{Symbol, Any}(
+        :lower => lower_bounds,
+        :upper => upper_bounds,
+        :maxfevals => get(options, :maxfevals, 15000),
+        :verbosity => get(options, :verbosity, 0),
+    )
+    haskey(options, :popsize) && (minimize_kwargs[:popsize] = options[:popsize])
+    haskey(options, :seed) && (minimize_kwargs[:seed] = options[:seed])
+
+    result = CMAEvolutionStrategy.minimize(f, x0, sigma0; minimize_kwargs...)
+    return CMAEvolutionStrategy.xbest(result)
 end
 
 function bboptimize(f, x0, params)

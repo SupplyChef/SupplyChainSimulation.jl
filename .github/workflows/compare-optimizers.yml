@@ -1,0 +1,42 @@
+name: Compare optimizers
+
+on:
+  workflow_dispatch:
+    inputs:
+      maxfevals:
+        description: 'Evaluation budget given to each method (optimize!''s :custom and :cma_es)'
+        default: '3000'
+      trials:
+        description: 'Independent trials (distinct seeds) per method, for mean/std/paired-test reporting'
+        default: '5'
+
+env:
+  JULIA_PKG_SERVER_REGISTRY_PREFERENCE: conservative
+  # benchmark/Manifest.toml is a plain snapshot, not something CI regenerates
+  # and commits back - a direct-dependency change in the root Project.toml
+  # (e.g. adding a package) makes it stale, and plain Pkg.instantiate() hard
+  # errors on a stale manifest rather than fixing it up. Pkg.resolve() first
+  # brings it back in sync before instantiate() downloads everything.
+
+jobs:
+  compare:
+    name: optimize! :custom vs :cma_es @ ${{ inputs.trials }} trials x ${{ inputs.maxfevals }} evals
+    runs-on: ubuntu-latest
+    # Each trial runs both methods once; 5 trials x 3000 evals x 16 training
+    # scenarios (the default newsvendor ensemble) is the same order of work
+    # as the existing calibration-generalization test (which already runs
+    # 3000 evals against 16 scenarios in normal test-suite time), just
+    # repeated ~10x - generous timeout in case a much larger maxfevals/trials
+    # override is requested via workflow_dispatch.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v2
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: '1'
+          arch: x64
+      - run: julia --project=benchmark -e 'using Pkg; Pkg.resolve(); Pkg.instantiate()'
+      - run: julia --project=benchmark benchmark/compare_optimizers.jl
+        env:
+          COMPARE_MAXFEVALS: ${{ inputs.maxfevals }}
+          COMPARE_TRIALS: ${{ inputs.trials }}

@@ -107,10 +107,15 @@ struct Env
             end
         end
 
-        nlanes = length(supplychain.lanes)
         products_indexed = get_product_index(supplychain)
         nproducts = length(products_indexed.items)
-        lane_index = Dict{Lane, Int64}(lane => i for (i, lane) in enumerate(supplychain.lanes))
+
+        # get_lane_index (SupplyChainModeling.jl) caches the Vector+Dict
+        # pair on supplychain itself, computed once and reused by every
+        # Env/State built from it - see the identical use in State.jl.
+        lanes_indexed = get_lane_index(supplychain)
+        nlanes = length(lanes_indexed.items)
+        lane_index = lanes_indexed.index
 
         past_orders_buffers = Matrix{Vector{Union{Missing, Int64}}}(undef, nlanes, nproducts)
         # Initialize default empty arrays so every slot contains a valid vector reference

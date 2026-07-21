@@ -27,7 +27,7 @@ jobs:
         with:
           version: '1'
           arch: x64
-      - run: julia --project=benchmark -e 'using Pkg; Pkg.resolve(); Pkg.instantiate()'
+      - run: julia --project=benchmark -e 'using Pkg; Pkg.Registry.add("General"); Pkg.resolve(); Pkg.instantiate()'
       - run: julia --project=benchmark benchmark/profile_beergame.jl
       - run: julia --project=benchmark benchmark/profile_beergame_direct.jl
   memory-profile:
@@ -46,5 +46,5 @@ jobs:
         with:
           version: '1'
           arch: x64
-      - run: julia --project=benchmark -e 'using Pkg; Pkg.resolve(); Pkg.instantiate()'
+      - run: julia --project=benchmark -e 'using Pkg; Pkg.Registry.add("General"); Pkg.resolve(); Pkg.instantiate()'
       - run: julia --project=benchmark benchmark/memory_profile_beergame.jl

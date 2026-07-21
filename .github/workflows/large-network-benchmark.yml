@@ -41,7 +41,7 @@ jobs:
         with:
           version: '1'
           arch: x64
-      - run: julia --project=benchmark -e 'using Pkg; Pkg.resolve(); Pkg.instantiate()'
+      - run: julia --project=benchmark -e 'using Pkg; Pkg.Registry.add("General"); Pkg.resolve(); Pkg.instantiate()'
       - run: julia --project=benchmark benchmark/benchmarks.jl ${{ inputs.env_only && '--env-only' || '' }}
         env:
           BENCHMARK_STORAGE_COUNT: ${{ inputs.storage_count }}
@@ -62,7 +62,7 @@ jobs:
         with:
           version: '1'
           arch: x64
-      - run: julia --project=benchmark -e 'using Pkg; Pkg.resolve(); Pkg.instantiate()'
+      - run: julia --project=benchmark -e 'using Pkg; Pkg.Registry.add("General"); Pkg.resolve(); Pkg.instantiate()'
       - run: julia --project=benchmark benchmark/profile_large_network.jl ${{ inputs.env_only && '--env-only' || '' }}
         env:
           BENCHMARK_STORAGE_COUNT: ${{ inputs.storage_count }}
@@ -82,7 +82,7 @@ jobs:
         with:
           version: '1'
           arch: x64
-      - run: julia --project=benchmark -e 'using Pkg; Pkg.resolve(); Pkg.instantiate()'
+      - run: julia --project=benchmark -e 'using Pkg; Pkg.Registry.add("General"); Pkg.resolve(); Pkg.instantiate()'
       - run: julia --project=benchmark benchmark/memory_profile_large_network.jl ${{ inputs.env_only && '--env-only' || '' }}
         env:
           BENCHMARK_STORAGE_COUNT: ${{ inputs.storage_count }}

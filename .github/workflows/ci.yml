@@ -48,7 +48,7 @@ jobs:
       # internally, which *hard errors* on a manifest missing a direct
       # dependency (unlike a merely version-mismatched manifest, which it
       # would resolve on its own) - so resolve explicitly first.
-      - run: julia --project=@. -e 'using Pkg; Pkg.resolve()'
+      - run: julia --project=@. -e 'using Pkg; Pkg.Registry.add("General"); Pkg.resolve()'
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1

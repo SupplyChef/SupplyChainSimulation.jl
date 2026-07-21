@@ -35,7 +35,7 @@ jobs:
         with:
           version: '1'
           arch: x64
-      - run: julia --project=benchmark -e 'using Pkg; Pkg.resolve(); Pkg.instantiate()'
+      - run: julia --project=benchmark -e 'using Pkg; Pkg.Registry.add("General"); Pkg.resolve(); Pkg.instantiate()'
       - run: julia --project=benchmark benchmark/compare_optimizers.jl
         env:
           COMPARE_MAXFEVALS: ${{ inputs.maxfevals }}

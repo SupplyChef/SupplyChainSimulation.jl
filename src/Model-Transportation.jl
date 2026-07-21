@@ -15,6 +15,20 @@ struct Trip
     route::Lane
     departure::Int64
     policies::Union{Missing, Dict{Product, InventoryOrderingPolicy}}
+
+    # route's position in the owning SupplyChain's lane ordering (see
+    # get_lane_index, SupplyChainModeling.jl), resolved once here at
+    # construction instead of every consumer hashing route through
+    # state.lane_index on every use - CPU profiling found that lookup
+    # (record_fill!, BackwardCoverageOrderingPolicy.get_order) as real
+    # self-time even after state.lane_index itself was cached. 0 for Trips
+    # built without a SupplyChain to resolve an index against (the
+    # standalone get_trips(lane/lanes/routes, horizon) methods below, and
+    # NULL_TRIP) - none of those are ever fed into
+    # record_fill!/BackwardCoverageOrderingPolicy.get_order, which only
+    # ever see Trips sourced from get_trips(supplychain, policies) via
+    # env.departures (see Env.jl).
+    lane_index::Int64
 end
 
 # Without these, Set{Trip}/Dict{Trip,...} (metrics.seen_trips,
@@ -32,19 +46,19 @@ Base.:(==)(x::Trip, y::Trip) = x.route == y.route && x.departure == y.departure
 Base.hash(x::Trip, h::UInt64) = hash(x.departure, hash(x.route, h))
 
 function get_trips(lane::Lane, horizon::Int64)
-    return [Trip(lane, t, missing) for t in 1:horizon if (isnothing(lane.can_ship) || isempty(lane.can_ship) || lane.can_ship[t])]
+    return [Trip(lane, t, missing, 0) for t in 1:horizon if (isnothing(lane.can_ship) || isempty(lane.can_ship) || lane.can_ship[t])]
 end
 
 function get_trips(lanes::Array{Lane, 1}, horizon::Int64)
-    return [Trip(l, t, missing) for l in lanes for t in 1:horizon if (isnothing(l.can_ship) || isempty(l.can_ship) || l.can_ship[t])]
+    return [Trip(l, t, missing, 0) for l in lanes for t in 1:horizon if (isnothing(l.can_ship) || isempty(l.can_ship) || l.can_ship[t])]
 end
 
 function get_trips(lanes::Set{Lane}, horizon::Int64)
-    return [Trip(l, t, missing) for l in lanes for t in 1:horizon if (isnothing(l.can_ship) || isempty(l.can_ship) || l.can_ship[t])]
+    return [Trip(l, t, missing, 0) for l in lanes for t in 1:horizon if (isnothing(l.can_ship) || isempty(l.can_ship) || l.can_ship[t])]
 end
 
 function get_trips(routes, horizon::Int64)
-    return [Trip(r, t, missing) for r in routes for t in 1:horizon]
+    return [Trip(r, t, missing, 0) for r in routes for t in 1:horizon]
 end
 
 """
@@ -82,10 +96,31 @@ function get_lane_policies(supplychain, policies)
     )
 end
 
+"""
+    get_trips(supplychain, policies)
+
+Builds every `Trip` the simulation can ever depart on: one per (lane, period)
+pair the lane is actually allowed to ship in (see `Lane.can_ship`).
+
+Resolves each lane's `lane_policies[l]` and `lane_index` (its position in
+`supplychain.lanes` - see `Trip.lane_index`) once per lane via `enumerate`
+rather than once per (lane, period) pair - `enumerate(supplychain.lanes)`
+hands out the exact same numbering `get_lane_index` caches, with no Dict
+lookup needed at all, so this doesn't even need to call it.
+"""
 function get_trips(supplychain, policies)
     lane_policies = get_lane_policies(supplychain, policies)
-    return [Trip(l, t, lane_policies[l]) for l in supplychain.lanes for t in 1:supplychain.horizon if (isnothing(l.can_ship) || isempty(l.can_ship) || l.can_ship[t])]
+    trips = Trip[]
+    for (lane_idx, l) in enumerate(supplychain.lanes)
+        policies_for_lane = lane_policies[l]
+        for t in 1:supplychain.horizon
+            if isnothing(l.can_ship) || isempty(l.can_ship) || l.can_ship[t]
+                push!(trips, Trip(l, t, policies_for_lane, lane_idx))
+            end
+        end
+    end
+    return trips
 end
 
 const NULL_LANE = Lane(Customer("NULL"), Customer("NULL"); unit_cost=0.0)
-const NULL_TRIP = Trip(NULL_LANE, 0, missing)
+const NULL_TRIP = Trip(NULL_LANE, 0, missing, 0)

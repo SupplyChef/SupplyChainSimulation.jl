@@ -81,9 +81,8 @@ function record_fill!(state::State, env::Env, order_line::OrderLine)
     metrics = state.metrics
 
     metrics.trip_unit_costs += trip.route.unit_cost * order_line.quantity
-    lane_idx = state.lane_index[trip.route]
-    if !metrics.seen_trips[lane_idx, trip.departure]
-        metrics.seen_trips[lane_idx, trip.departure] = true
+    if !metrics.seen_trips[trip.lane_index, trip.departure]
+        metrics.seen_trips[trip.lane_index, trip.departure] = true
         metrics.trip_fixed_costs += get_fixed_cost(trip.route)
     end
     if order_line.destination isa Customer
@@ -331,7 +330,12 @@ function place_orders(state::State, env::Env, location::ConcreteNode, product::P
             elseif policy isa ForwardCoverageOrderingPolicy
                 Int(get_order(policy::ForwardCoverageOrderingPolicy, state, env, location, trip.route, product, li, si, pi, time))
             elseif policy isa BackwardCoverageOrderingPolicy
-                Int(get_order(policy::BackwardCoverageOrderingPolicy, state, env, location, trip.route, product, li, si, pi, time))
+                # Passes trip (not trip.route, unlike every other branch
+                # here): the Trip-taking get_order overload (Policy.jl)
+                # reads trip.lane_index directly instead of hashing
+                # trip.route through state.lane_index, since trip is
+                # already in hand at this exact call site.
+                Int(get_order(policy::BackwardCoverageOrderingPolicy, state, env, location, trip, product, li, si, pi, time))
             elseif policy isa SingleOrderOrderingPolicy
                 Int(get_order(policy::SingleOrderOrderingPolicy, state, env, location, trip.route, product, li, si, pi, time))
             else

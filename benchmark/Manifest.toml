@@ -801,7 +801,7 @@ uuid = "bea87d4a-7f5b-5778-9afe-8cc45184846c"
 version = "7.8.3+2"
 
 [[deps.SupplyChainModeling]]
-git-tree-sha1 = "c35761c4b8c059eb809c5ac0b00032166aec7e74"
+git-tree-sha1 = "5509e6925e56944ccec2a1e93f9191261d849861"
 repo-rev = "main"
 repo-url = "https://github.com/SupplyChef/SupplyChainModeling.jl"
 uuid = "8a0b78ce-42db-494b-a45c-80b287de1a3d"

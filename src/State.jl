@@ -28,6 +28,10 @@ mutable struct State
     location_index::Dict{ConcreteNode, Int64}
     locations::Vector{ConcreteNode}
 
+    # Same trick again, covering every lane in the network - lets
+    # env.past_orders_buffers (Env.jl) and metrics.seen_trips (Metrics.jl)
+    # be indexed directly by lane rather than through a Dict keyed by the
+    # Lane object itself.
     lane_index::Dict{Lane, Int64}
     lanes::Vector{Lane}
 
@@ -113,12 +117,13 @@ mutable struct State
     function State(supply_chain; pending_outbound_order_lines=Dict{Storage, Array{OrderLine, 1}}())
         demand = Dict((d.customer, d.product) => d for d in supply_chain.demand)
 
-        # get_storage_index/get_product_index/get_location_index
-        # (SupplyChainModeling.jl) cache the Vector+Dict pair on supply_chain
-        # itself, computed once and reused by every State built from it -
-        # instead of every State independently re-enumerating the same
-        # (read-only, for the duration of a simulation) Sets into an
-        # identical Dict, as every scenario's State in optimize! used to do.
+        # get_storage_index/get_product_index/get_location_index/
+        # get_lane_index (SupplyChainModeling.jl) cache the Vector+Dict pair
+        # on supply_chain itself, computed once and reused by every
+        # State/Env built from it - instead of every State/Env
+        # independently re-enumerating the same (read-only, for the
+        # duration of a simulation) Sets/Array into an identical Dict, as
+        # every scenario's State in optimize! used to do.
         storages_indexed = get_storage_index(supply_chain)
         products_indexed = get_product_index(supply_chain)
         storages = storages_indexed.items
@@ -134,8 +139,9 @@ mutable struct State
         location_index = locations_indexed.index
         nlocations = length(locations)
 
-        lanes = supply_chain.lanes
-        lane_index = Dict{Lane, Int64}(lane => i for (i, lane) in enumerate(lanes))
+        lanes_indexed = get_lane_index(supply_chain)
+        lanes = lanes_indexed.items
+        lane_index = lanes_indexed.index
 
         state = new(supply_chain,
                    demand,

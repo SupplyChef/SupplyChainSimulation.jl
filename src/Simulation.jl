@@ -66,17 +66,23 @@ end
 
 # Metrics: fill/drop sites
 """
-    record_fill!(state::State, env::Env, order_line::OrderLine)
+    record_fill!(state::State, env::Env, order_line::OrderLine, pi::Int64)
 
 Incrementally updates `state.metrics` for an `order_line` that has just been
 fulfilled (its trip has been assigned and the shipment sent), and, if
 `env.record_history` is set, mirrors the same fact into
 `state.historical_transportation` for later reporting/visualization.
 
+`pi` is `order_line.product`'s index, already resolved by the caller's
+`send_inventory!` (same reasoning as `record_placement!`'s `pi` - every order
+line passed to one `send_inventory!` call shares the same product).
+`order_line.destination` still varies per order line, so that half of
+`state.demand`'s index stays local to this function.
+
 Must be called exactly once per fulfilled order line - matches the site of
 each `push!(state.filled_orders, order_line)` in `send_inventory!`.
 """
-function record_fill!(state::State, env::Env, order_line::OrderLine)
+function record_fill!(state::State, env::Env, order_line::OrderLine, pi::Int64)
     trip = order_line.trip
     metrics = state.metrics
 
@@ -86,15 +92,7 @@ function record_fill!(state::State, env::Env, order_line::OrderLine)
         metrics.trip_fixed_costs += get_fixed_cost(trip.route)
     end
     if order_line.destination isa Customer
-        # order_line.destination is declared ::ConcreteNode (a Union) on
-        # OrderLine; the isa check above is a runtime branch and doesn't
-        # narrow the static type of a fresh field re-read - asserting it
-        # lets state.demand (keyed by the concrete Tuple{Customer, Product})
-        # hit its fast path instead of generic, dynamically-dispatched
-        # hashing/equality. CPU profiling found this single line as ~85%
-        # of record_fill!'s self-time, called once per filled order line.
-        destination = order_line.destination::Customer
-        metrics.sales += order_line.quantity * state.demand[(destination, order_line.product)].sales_price
+        metrics.sales += order_line.quantity * state.demand[state.location_index[order_line.destination], pi].sales_price
     end
 
     if env.record_history
@@ -103,7 +101,7 @@ function record_fill!(state::State, env::Env, order_line::OrderLine)
 end
 
 """
-    record_drop!(state::State, order_line::OrderLine)
+    record_drop!(state::State, order_line::OrderLine, pi::Int64)
 
 Incrementally updates `state.metrics` for an `order_line` that has expired
 (its due date passed) without being fulfilled - a lost sale, if it was bound
@@ -111,16 +109,19 @@ for a customer. Non-customer-bound order lines (e.g. internal replenishment)
 never contribute to lost sales, matching `get_total_lost_sales`'s
 `isa(ol.destination, Customer)` filter.
 
+`pi` is `order_line.product`'s index - see `record_fill!`'s docstring for why
+it's a parameter rather than resolved locally. `flush_pending_as_lost!`'s
+call site has no such shared `pi` available (it walks every pending order
+line across every location/product), so it resolves one there instead.
+
 Must be called exactly once per dropped order line: either at the explicit
 `due_date < time` expiry site in `send_inventory!`, or, for order lines still
 pending when the horizon ends (which never reach that check - see
 `flush_pending_as_lost!`), once at the end of `simulate`.
 """
-function record_drop!(state::State, order_line::OrderLine)
+function record_drop!(state::State, order_line::OrderLine, pi::Int64)
     if order_line.destination isa Customer
-        # See record_fill!'s comment on this same pattern.
-        destination = order_line.destination::Customer
-        state.metrics.lost_sales += order_line.quantity * state.demand[(destination, order_line.product)].lost_sales_cost
+        state.metrics.lost_sales += order_line.quantity * state.demand[state.location_index[order_line.destination], pi].lost_sales_cost
     end
 end
 
@@ -178,7 +179,7 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
 
     for order_line in order_lines
         if order_line.due_date < time
-            record_drop!(state, order_line)
+            record_drop!(state, order_line, pi)
             push!(fulfilled_or_dropped, order_line)
             _delete_inbound_order_line_by_index!(state, order_line, pi)
             continue
@@ -197,7 +198,7 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
         push!(fulfilled_or_dropped, order_line)
         _delete_inbound_order_line_by_index!(state, order_line, pi)
 
-        record_fill!(state, env, order_line)
+        record_fill!(state, env, order_line, pi)
         push!(state.filled_orders, order_line)
     end
 
@@ -228,7 +229,7 @@ function send_inventory!(state::State, env::Env, location::ConcreteNode, product
     available = _on_hand_by_index(state, si, pi)
     for order_line in order_lines
         if order_line.due_date < time
-            record_drop!(state, order_line)
+            record_drop!(state, order_line, pi)
             push!(fulfilled_order_lines, order_line)
             _delete_inbound_order_line_by_index!(state, order_line, pi)
             continue
@@ -251,7 +252,7 @@ function send_inventory!(state::State, env::Env, location::ConcreteNode, product
             push!(fulfilled_order_lines, order_line)
             _delete_inbound_order_line_by_index!(state, order_line, pi)
 
-            record_fill!(state, env, order_line)
+            record_fill!(state, env, order_line, pi)
             push!(state.filled_orders, order_line)
 
             if available == 0
@@ -269,17 +270,20 @@ end
 #
 # Both place_orders methods below share the same (pi, time, orders)
 # parameter shape (simulate() dispatches on location's runtime type at a
-# single call site - see receive_inventory!'s section above for why).
-# Neither needs li: get_inbound_trips/find_next_departure/get_order below
-# key off env.departures/env's own caches by the location *object*, not
-# its state.location_index entry. pi is order_line.product's index -
-# order_line.product == product always, since each call places every
-# order for one fixed product - and is handed to record_placement!, which
-# still resolves order_line.origin's own index locally since that varies
-# per order line placed (see its docstring).
+# single call site - see receive_inventory!'s section above for why). pi
+# is order_line.product's index - order_line.product == product always,
+# since each call places every order for one fixed product - and is
+# handed to record_placement!, which still resolves order_line.origin's
+# own index locally since that varies per order line placed (see its
+# docstring). li is location's own index: unused by the ConcreteNode
+# method below (get_inbound_trips/find_next_departure/get_order key off
+# env.departures/env's own caches by the location *object*, not its
+# state.location_index entry - li is only threaded through to policies'
+# get_order), but used directly by the Customer method here to index
+# state.demand, since location *is* the demand's customer in this method.
 function place_orders(state::State, env::Env, location::Customer, product::Product, li::Int64, si::Int64, pi::Int64, time::Int64, orders::Array{OrderLine, 1})
     empty!(orders)
-    demand = state.demand[(location, product)]
+    demand = state.demand[li, pi]
     quantity = floor(Int64, demand.demand[time])
     if quantity > 0
         trip = find_next_departure(env, location, time)
@@ -538,6 +542,9 @@ that path and this one.
 """
 function flush_pending_as_lost!(state::State)
     for order_line in Base.Iterators.flatten(values(state.pending_outbound_order_lines))
-        record_drop!(state, order_line)
+        # No shared pi here (unlike send_inventory!'s calls above): this walks
+        # every pending order line across every (location, product) cell, not
+        # just one, so each line's own product index is resolved locally.
+        record_drop!(state, order_line, state.product_index[order_line.product])
     end
 end

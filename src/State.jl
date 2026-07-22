@@ -6,7 +6,16 @@ Contains information about the historical and current state of the simulation, i
 """
 mutable struct State
     supply_chain::SupplyChain
-    demand::Dict{Tuple{Customer, Product}, Demand}
+
+    # [location_index, product_index] -> that (location, product) pair's
+    # Demand, or `nothing` if it has none (most location/product pairs -
+    # only Customers ever have demand). Was a Dict{Tuple{Customer,Product},
+    # Demand}: CPU profiling of record_fill! (see its comment) found hashing
+    # that compound tuple key as ~85% of record_fill!'s self-time, called
+    # once per filled order line - the same Dict-lookup-on-the-hot-path
+    # pattern already eliminated from on_hand_inventory/in_transit_inventory/
+    # etc. via this same flat-indexing trick, just never applied here.
+    demand::Matrix{Union{Nothing, Demand}}
 
     # Dense integer indices for every storage/product in supply_chain,
     # fixed for the lifetime of a State. Lets the on_hand_* fields below be
@@ -131,8 +140,6 @@ mutable struct State
     last_on_hand_snapshot_size::Int64
 
     function State(supply_chain; pending_outbound_order_lines=Dict{Storage, Array{OrderLine, 1}}())
-        demand = Dict((d.customer, d.product) => d for d in supply_chain.demand)
-
         # get_storage_index/get_product_index/get_location_index/
         # get_lane_index (SupplyChainModeling.jl) cache the Vector+Dict pair
         # on supply_chain itself, computed once and reused by every
@@ -154,6 +161,11 @@ mutable struct State
         locations = locations_indexed.items
         location_index = locations_indexed.index
         nlocations = length(locations)
+
+        demand = Union{Nothing, Demand}[nothing for _ in 1:nlocations, _ in 1:nproducts]
+        for d in supply_chain.demand
+            demand[location_index[d.customer], product_index[d.product]] = d
+        end
 
         lanes_indexed = get_lane_index(supply_chain)
         lanes = lanes_indexed.items

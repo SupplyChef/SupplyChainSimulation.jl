@@ -61,6 +61,7 @@ export plot_inventory_onhand
 using Graphs
 #using Optim
 #using BlackBoxOptim
+import CMAEvolutionStrategy
 using SupplyChainModeling
 
 abstract type InventoryOrderingPolicy end

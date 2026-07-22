@@ -5,6 +5,11 @@ on:
 
 env:
   JULIA_PKG_SERVER_REGISTRY_PREFERENCE: conservative
+  # benchmark/Manifest.toml is a plain snapshot, not something CI regenerates
+  # and commits back - a direct-dependency change in the root Project.toml
+  # (e.g. adding a package) makes it stale, and plain Pkg.instantiate() hard
+  # errors on a stale manifest rather than fixing it up. Pkg.resolve() first
+  # brings it back in sync before instantiate() downloads everything.
 
 jobs:
   profile:
@@ -22,7 +27,7 @@ jobs:
         with:
           version: '1'
           arch: x64
-      - run: julia --project=benchmark -e 'using Pkg; Pkg.instantiate()'
+      - run: julia --project=benchmark -e 'using Pkg; Pkg.Registry.add("General"); Pkg.resolve(); Pkg.instantiate()'
       - run: julia --project=benchmark benchmark/profile_beergame.jl
       - run: julia --project=benchmark benchmark/profile_beergame_direct.jl
   memory-profile:
@@ -41,5 +46,5 @@ jobs:
         with:
           version: '1'
           arch: x64
-      - run: julia --project=benchmark -e 'using Pkg; Pkg.instantiate()'
+      - run: julia --project=benchmark -e 'using Pkg; Pkg.Registry.add("General"); Pkg.resolve(); Pkg.instantiate()'
       - run: julia --project=benchmark benchmark/memory_profile_beergame.jl

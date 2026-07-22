@@ -40,6 +40,15 @@ jobs:
       # duplicate that, and when the two disagreed (this step pinned "main",
       # Project.toml pinned a feature branch) Pkg had to reconcile conflicting
       # pins on every job, which is expensive across the whole matrix.
+      #
+      # Manifest.toml is a checked-in snapshot, not something CI regenerates
+      # and commits back - so a direct-dependency change in Project.toml
+      # (e.g. adding a package) leaves it stale until someone resolves and
+      # commits a fresh one. julia-buildpkg's Pkg.build() calls instantiate()
+      # internally, which *hard errors* on a manifest missing a direct
+      # dependency (unlike a merely version-mismatched manifest, which it
+      # would resolve on its own) - so resolve explicitly first.
+      - run: julia --project=@. -e 'using Pkg; Pkg.Registry.add("General"); Pkg.resolve()'
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1

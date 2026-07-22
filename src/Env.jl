@@ -123,13 +123,32 @@ struct Env
         # is revisited once per location. Each trip only needs to be pushed
         # into the (typically 1-2) destinations it actually has, at the
         # period slot it actually departs.
-        departures = Dict{ConcreteNode, Vector{Vector{Trip}}}(location => [Trip[] for _ in 1:supplychain.horizon] for location in locations)
+        #
+        # Locations that are an actual trip destination get their own
+        # horizon-length Vector{Trip}, built lazily here rather than eagerly
+        # for every location in the network - that eager version was Env
+        # construction's single largest allocation site on a large network,
+        # since most locations (e.g. root suppliers with no inbound lanes)
+        # never receive a single trip.
+        departures = Dict{ConcreteNode, Vector{Vector{Trip}}}()
         for trip in trips
             for destination in trip.route.destinations
-                if haskey(departures, destination)
-                    push!(departures[destination][trip.departure], trip)
-                end
+                periods = get!(() -> [Trip[] for _ in 1:supplychain.horizon], departures, destination)
+                push!(periods[trip.departure], trip)
             end
+        end
+
+        # place_orders (Simulation.jl) calls get_inbound_trips/
+        # find_next_departure (Model.jl) - both direct env.departures[location]
+        # indexing - unconditionally for *every* location in the network each
+        # period, not just ones with an inbound lane, so every location still
+        # needs a key here. Every location left out by the loop above (never
+        # a trip's destination) gets the exact same shared empty periods
+        # vector rather than one allocated per location - safe since nothing
+        # past this point ever mutates it, and it's only ever read.
+        empty_periods = [Trip[] for _ in 1:supplychain.horizon]
+        for location in locations
+            get!(departures, location, empty_periods)
         end
 
         products_indexed = get_product_index(supplychain)

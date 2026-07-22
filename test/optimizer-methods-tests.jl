@@ -116,3 +116,94 @@
         optimize!(policies, network; method=:not_a_real_method)
     end
 end
+
+@testset "optimize! method=:nelder_mead" begin
+    # Smoke-tests optimize!'s :nelder_mead path end to end (Optim.jl wiring in
+    # Optimization.jl's nelder_mead_optimize) - same shape/reasoning as the
+    # :cma_es tests above.
+    @test begin
+        horizon = 1
+
+        product = Product("product")
+
+        supplier = Supplier("supplier")
+        storage = Storage("storage")
+        add_product!(storage, product; unit_holding_cost=1.0)
+        customer = Customer("customer")
+
+        l1 = Lane(storage, customer)
+        l2 = Lane(supplier, storage)
+
+        n() = begin
+            network = SupplyChain(horizon)
+
+            add_supplier!(network, supplier)
+            add_storage!(network, storage)
+            add_customer!(network, customer)
+            add_product!(network, product)
+            add_lane!(network, l1)
+            add_lane!(network, l2)
+
+            add_demand!(network, customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)
+
+            return network
+        end
+
+        policy = OnHandUptoOrderingPolicy(0)
+        policies = Dict((l2, product) => policy)
+
+        initial_states = [n() for i in 1:5]
+        # Small maxfevals/restarts keeps this a fast smoke test - exercises
+        # nelder_mead_optimize's default (scalar) bounds path.
+        optimize!(policies, initial_states...;
+                  method=:nelder_mead,
+                  nelder_mead_options=Dict{Symbol, Any}(:maxfevals => 200, :restarts => 2),
+                  cost_function=metrics_cost_function, record_history=false)
+
+        final_states = [simulate(initial_state, policies) for initial_state in initial_states]
+        true
+    end
+
+    @test begin
+        # Exercises nelder_mead_optimize's vector-bounds path, which the
+        # scalar-bounds test above doesn't reach.
+        horizon = 1
+
+        product = Product("product")
+
+        supplier = Supplier("supplier")
+        storage = Storage("storage")
+        add_product!(storage, product; unit_holding_cost=1.0)
+        customer = Customer("customer")
+
+        l1 = Lane(storage, customer)
+        l2 = Lane(supplier, storage)
+
+        n() = begin
+            network = SupplyChain(horizon)
+
+            add_supplier!(network, supplier)
+            add_storage!(network, storage)
+            add_customer!(network, customer)
+            add_product!(network, product)
+            add_lane!(network, l1)
+            add_lane!(network, l2)
+
+            add_demand!(network, customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)
+
+            return network
+        end
+
+        policy = BackwardCoverageOrderingPolicy([0.0, 0.0])
+        policies = Dict((l2, product) => policy)
+
+        initial_states = [n() for i in 1:5]
+        optimize!(policies, initial_states...;
+                  method=:nelder_mead,
+                  nelder_mead_options=Dict{Symbol, Any}(:lower => [0.0, 0.0], :upper => [100.0, 100.0], :maxfevals => 200, :restarts => 2),
+                  cost_function=metrics_cost_function, record_history=false)
+
+        final_states = [simulate(initial_state, policies) for initial_state in initial_states]
+        true
+    end
+end

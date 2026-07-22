@@ -1,8 +1,16 @@
 #=
-Compares optimize!'s two search methods - :custom (the original hand-rolled
-optimizer) and :cma_es (CMAEvolutionStrategy.jl, wired up in Optimization.jl)
-- on the same simulation-optimization task, under a matched evaluation
-budget, across several independent trials.
+Compares optimize!'s three search methods - :custom (the original hand-rolled
+optimizer), :cma_es (CMAEvolutionStrategy.jl), and :nelder_mead (multi-start
+Optim.jl NelderMead) - on the same simulation-optimization task, under a
+matched evaluation budget, across several independent trials.
+
+:nelder_mead was added after an earlier run of this script showed :cma_es
+converging - and then plateauing - well before exhausting its evaluation
+budget (see the convergence table this script prints): a deterministic local
+search with restarts is a genuinely different approach from CMA-ES's
+population-based one, and worth checking whether it matches CMA-ES's
+solution quality in less time, or beats it by spending the leftover budget
+on more restarts instead of one long population search.
 
 What "better" means here is deliberately not just "lower final training
 cost": a search that overfits a small fixed scenario sample can look great
@@ -10,17 +18,18 @@ on the scenarios it was tuned on and still be worse in practice. So this
 mirrors test/policy-calibration-generalization-tests.jl's design - calibrate
 on a training ensemble of demand regimes, then score the *held-out* ensemble
 the policy was never tuned on - and reports both, plus wall-clock time (the
-two algorithms don't necessarily cost the same per evaluation) and a paired
-comparison across trials (same trial => same scenarios => same starting
-point for both methods, so differences are attributable to the algorithm,
-not to scenario variance).
+algorithms don't necessarily cost the same per evaluation) and a paired
+comparison across trials against the :custom baseline (same trial => same
+scenarios => same starting point for every method, so differences are
+attributable to the algorithm, not to scenario variance).
 
 This intentionally does not call optimize! itself: comparing convergence
 *during* the search (not just the final answer) needs a per-evaluation hook
 that optimize!'s public API doesn't expose, so this reimplements optimize!'s
 setup (Env construction, sorted policy keys, x0 assembly - see Optimization.jl)
 with an instrumented objective, then calls the same internal
-SupplyChainSimulation.bboptimize/cma_es_optimize entry points optimize! uses.
+SupplyChainSimulation.bboptimize/cma_es_optimize/nelder_mead_optimize entry
+points optimize! uses.
 
 Run with:
     julia --project=benchmark benchmark/compare_optimizers.jl
@@ -144,6 +153,9 @@ function run_search(method::Symbol, lane_policies, training_scenarios; maxfevals
     elseif method === :cma_es
         best = SupplyChainSimulation.cma_es_optimize(tracked_f, x0,
             Dict{Symbol, Any}(:maxfevals => maxfevals, :seed => UInt(seed)))
+    elseif method === :nelder_mead
+        best = SupplyChainSimulation.nelder_mead_optimize(tracked_f, x0,
+            Dict{Symbol, Any}(:maxfevals => maxfevals))
     else
         error("run_search: unknown method $method")
     end
@@ -216,7 +228,7 @@ end
 
 function main()
     (; maxfevals, trials) = compare_optimizers_params()
-    methods = [:custom, :cma_es]
+    methods = [:custom, :cma_es, :nelder_mead]
 
     println("Comparing optimize! methods: maxfevals=$maxfevals, trials=$trials")
     println("Training ensemble: $(length(TRAINING_REGIMES)) regimes x $TRAINING_REPLICATIONS replications = $(length(TRAINING_REGIMES) * TRAINING_REPLICATIONS) scenarios")
@@ -251,7 +263,7 @@ function main()
     end
 
     summary_lines = String[]
-    push!(summary_lines, "## Optimizer comparison: :custom vs :cma_es")
+    push!(summary_lines, "## Optimizer comparison: " * join(methods, " vs "))
     push!(summary_lines, "")
     push!(summary_lines, "maxfevals=$maxfevals, trials=$trials")
     push!(summary_lines, "")
@@ -284,18 +296,19 @@ function main()
 
     if trials > 1
         push!(summary_lines, "")
-        push!(summary_lines, "### Paired comparison across trials (custom minus cma_es, two-sided paired t-test)")
+        push!(summary_lines, "### Paired comparison against :custom across trials (two-sided paired t-test)")
         push!(summary_lines, "")
-        tc_diff, tc_t, tc_p = paired_t_test(results[:custom].training_cost, results[:cma_es].training_cost)
-        hc_diff, hc_t, hc_p = paired_t_test(results[:custom].held_out_cost, results[:cma_es].held_out_cost)
-        wt_diff, wt_t, wt_p = paired_t_test(results[:custom].wall_time, results[:cma_es].wall_time)
-        push!(summary_lines, "| metric | mean diff (custom - cma_es) | t | p |")
-        push!(summary_lines, "|---|---|---|---|")
-        push!(summary_lines, "| training_cost | $(round(tc_diff, digits=3)) | $(round(tc_t, digits=3)) | $(round(tc_p, digits=4)) |")
-        push!(summary_lines, "| held_out_cost | $(round(hc_diff, digits=3)) | $(round(hc_t, digits=3)) | $(round(hc_p, digits=4)) |")
-        push!(summary_lines, "| wall_time (s) | $(round(wt_diff, digits=3)) | $(round(wt_t, digits=3)) | $(round(wt_p, digits=4)) |")
+        push!(summary_lines, "| alternative | metric | mean diff (custom - alternative) | t | p |")
+        push!(summary_lines, "|---|---|---|---|---|")
+        for method in methods
+            method === :custom && continue
+            for (label, field) in (("training_cost", :training_cost), ("held_out_cost", :held_out_cost), ("wall_time (s)", :wall_time))
+                diff, t, p = paired_t_test(getfield(results[:custom], field), getfield(results[method], field))
+                push!(summary_lines, "| $method | $label | $(round(diff, digits=3)) | $(round(t, digits=3)) | $(round(p, digits=4)) |")
+            end
+        end
         push!(summary_lines, "")
-        push!(summary_lines, "Negative diff means :cma_es scored lower (better, since both costs are minimized); p < 0.05 suggests the difference isn't just trial-to-trial noise.")
+        push!(summary_lines, "Negative diff means the alternative scored lower (better, since both costs are minimized); p < 0.05 suggests the difference isn't just trial-to-trial noise.")
     end
 
     summary = join(summary_lines, "\n")

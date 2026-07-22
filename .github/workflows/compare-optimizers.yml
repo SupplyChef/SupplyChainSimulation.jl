@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       maxfevals:
-        description: 'Evaluation budget given to each method (optimize!''s :custom and :cma_es)'
+        description: 'Evaluation budget given to each method (optimize!''s :custom, :cma_es, and :nelder_mead)'
         default: '3000'
       trials:
         description: 'Independent trials (distinct seeds) per method, for mean/std/paired-test reporting'
@@ -20,14 +20,16 @@ env:
 
 jobs:
   compare:
-    name: optimize! :custom vs :cma_es @ ${{ inputs.trials }} trials x ${{ inputs.maxfevals }} evals
+    name: optimize! :custom vs :cma_es vs :nelder_mead @ ${{ inputs.trials }} trials x ${{ inputs.maxfevals }} evals
     runs-on: ubuntu-latest
-    # Each trial runs both methods once; 5 trials x 3000 evals x 16 training
-    # scenarios (the default newsvendor ensemble) is the same order of work
-    # as the existing calibration-generalization test (which already runs
-    # 3000 evals against 16 scenarios in normal test-suite time), just
-    # repeated ~10x - generous timeout in case a much larger maxfevals/trials
-    # override is requested via workflow_dispatch.
+    # Each trial runs all three methods once, on both the newsvendor and
+    # beer_game problems. 5 trials x 3000 evals x 16 training scenarios (the
+    # default newsvendor ensemble) is the same order of work as the existing
+    # calibration-generalization test (which already runs 3000 evals against
+    # 16 scenarios in normal test-suite time), just repeated ~15x across
+    # methods/problems; beer_game adds a second, heavier (20 scenarios x 200
+    # periods vs 16 x 100) problem on top - generous timeout to cover that
+    # plus any larger maxfevals/trials override requested via workflow_dispatch.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v2

@@ -123,12 +123,25 @@ struct Env
         # is revisited once per location. Each trip only needs to be pushed
         # into the (typically 1-2) destinations it actually has, at the
         # period slot it actually departs.
-        departures = Dict{ConcreteNode, Vector{Vector{Trip}}}(location => [Trip[] for _ in 1:supplychain.horizon] for location in locations)
+        #
+        # Only locations that actually appear as some trip's destination get
+        # an entry (built from `trips`, not from `locations`) - a
+        # horizon-length Vector{Trip} per *every* location, most of which
+        # (e.g. root suppliers with no inbound lanes) never receive a trip,
+        # was Env construction's single largest allocation site on a large
+        # network. Every location ever looked up via env.departures[...]
+        # (get_inbound_trips/find_next_departure in Model.jl) is a lane's
+        # destination for some policy-bearing lane, and get_trips(supplychain,
+        # policies) above generates a Trip for every (lane, period) pair in
+        # supplychain.lanes - so every such location is guaranteed to already
+        # have an entry here by the time it's looked up; only locations no
+        # lane ever points to (and that are consequently never looked up
+        # either) are left out.
+        departures = Dict{ConcreteNode, Vector{Vector{Trip}}}()
         for trip in trips
             for destination in trip.route.destinations
-                if haskey(departures, destination)
-                    push!(departures[destination][trip.departure], trip)
-                end
+                periods = get!(() -> [Trip[] for _ in 1:supplychain.horizon], departures, destination)
+                push!(periods[trip.departure], trip)
             end
         end
 

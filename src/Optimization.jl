@@ -109,11 +109,14 @@ end
       derivative-free simplex search).
     - `:maxfevals`: total evaluation budget across all restarts combined. Default
       `15000`, matching the other two methods.
-    - `:restarts`: number of *additional* random-start Nelder-Mead runs beyond the
-      one seeded at `x0`. Default `5` (6 runs total), each getting an even share of
-      `:maxfevals`. Restarts are what let this method compete with population-based
-      search on a multimodal landscape despite each individual run only exploring
-      locally.
+    - `:restarts`: number of *additional* Nelder-Mead runs beyond the one seeded at
+      `x0`, each getting an even share of `:maxfevals`. Default `5` (6 runs total).
+      Each restart perturbs the current incumbent best by a random step (see
+      `:restart_scale`), not a fresh uniformly random point in the whole box - see
+      `nelder_mead_optimize`'s docstring for why a global-random-restart version of
+      this was actively harmful on a 6-parameter problem.
+    - `:restart_scale`: restart perturbation size, as a fraction of `:upper - :lower`
+      in each dimension. Default `0.2`.
 """
 function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s), record_history::Bool=true, method::Symbol=:custom, cma_es_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), nelder_mead_options::Dict{Symbol, Any}=Dict{Symbol, Any}())
     initial_states = State.(supplychains)
@@ -193,11 +196,27 @@ end
 """
     nelder_mead_optimize(f, x0, options)
 
-Minimizes `f` with multi-start Nelder-Mead (Optim.jl), translating this package's
-`optimize!(...; method=:nelder_mead, nelder_mead_options=...)` options (see
-`optimize!`'s docstring). One run is seeded at `x0`, `options[:restarts]` more from
-uniformly random points in the box, each given an even share of `:maxfevals`; the
-best result across all runs wins.
+Minimizes `f` with iterated-local-search-style multi-start Nelder-Mead (Optim.jl),
+translating this package's `optimize!(...; method=:nelder_mead, nelder_mead_options=...)`
+options (see `optimize!`'s docstring). One run is seeded at `x0`; each of
+`options[:restarts]` more perturbs the *current incumbent best* by a random step
+scaled to `options[:restart_scale]` times the box's range in each dimension, rather
+than drawing a fresh uniformly random point from the whole box. Each run gets an
+even share of `:maxfevals`; the best result across all runs wins.
+
+Earlier versions of this function drew every restart uniformly from the whole
+`[lower, upper]` box. benchmark/compare_optimizers.jl's beer_game comparison (6
+parameters, vs. newsvendor's 2) showed this was actively harmful, not just
+inefficient: a uniform sample of a 6-dimensional box is overwhelmingly likely to
+land far from any good region, so nearly every restart wasted its whole budget
+converging to a poor local optimum instead of ever improving on the x0-seeded run -
+visible as wildly inconsistent, often much worse than :custom/:cma_es results.
+Perturbing around the incumbent instead keeps restarts a local
+refinement/escape-a-nearby-local-optimum mechanism, which does not need to get
+harder as dimensionality grows the way "land anywhere useful in the full box"
+does - at the cost of being less able to find a *distant* better region than a
+true global restart could. `x0` itself is never perturbed away from, so a caller
+that already has a good starting guess loses nothing.
 
 Candidates are clamped into `[lower, upper]` before being passed to `f` rather than
 handled via Optim.jl's `Fminbox` - plain `NelderMead` needs no gradient, and Fminbox's
@@ -210,26 +229,32 @@ function nelder_mead_optimize(f, x0::Array{Float64, 1}, options::Dict{Symbol, An
     upper = get(options, :upper, 5000.0)
     lower_bounds = lower isa AbstractVector ? convert(Array{Float64, 1}, lower) : fill(convert(Float64, lower), n)
     upper_bounds = upper isa AbstractVector ? convert(Array{Float64, 1}, upper) : fill(convert(Float64, upper), n)
+    box_range = upper_bounds .- lower_bounds
 
     maxfevals = get(options, :maxfevals, 15000)
     restarts = get(options, :restarts, 5)
+    restart_scale = get(options, :restart_scale, 0.2)
 
     clamped_f = x -> f(clamp.(x, lower_bounds, upper_bounds))
+    per_start_budget = max(1, maxfevals ÷ (restarts + 1))
 
-    starts = Array{Float64, 1}[clamp.(x0, lower_bounds, upper_bounds)]
-    for _ in 1:restarts
-        push!(starts, lower_bounds .+ rand(n) .* (upper_bounds .- lower_bounds))
-    end
-    per_start_budget = max(1, maxfevals ÷ length(starts))
+    # iterations is capped at the same budget as f_calls_limit - Options' own
+    # default (1_000) would otherwise silently cut a run short before
+    # f_calls_limit binds, for any per_start_budget above that.
+    nm_options = Optim.Options(f_calls_limit=per_start_budget, iterations=per_start_budget)
 
-    best_x = starts[1]
+    best_x = clamp.(x0, lower_bounds, upper_bounds)
     best_f = clamped_f(best_x)
 
-    for start in starts
-        # iterations is capped at the same budget as f_calls_limit - Options'
-        # own default (1_000) would otherwise silently cut a run short before
-        # f_calls_limit binds, for any per_start_budget above that.
-        result = Optim.optimize(clamped_f, start, Optim.NelderMead(), Optim.Options(f_calls_limit=per_start_budget, iterations=per_start_budget))
+    result = Optim.optimize(clamped_f, best_x, Optim.NelderMead(), nm_options)
+    if Optim.minimum(result) < best_f
+        best_f = Optim.minimum(result)
+        best_x = clamp.(Optim.minimizer(result), lower_bounds, upper_bounds)
+    end
+
+    for _ in 1:restarts
+        start = clamp.(best_x .+ restart_scale .* box_range .* (2 .* rand(n) .- 1), lower_bounds, upper_bounds)
+        result = Optim.optimize(clamped_f, start, Optim.NelderMead(), nm_options)
         candidate_f = Optim.minimum(result)
         if candidate_f < best_f
             best_f = candidate_f

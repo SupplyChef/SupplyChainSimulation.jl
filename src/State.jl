@@ -114,6 +114,22 @@ mutable struct State
     # one being asked about) for a match.
     outbound_order_quantities::Matrix{Vector{Int64}}
 
+    # snapshot_state! sizehint!s each period's fresh on_hand_snapshot Dict to
+    # this - the *previous* period's actual final size - instead of either
+    # the full dense worst case (every storage x product pair, however few
+    # are ever actually touched - the bug removed in favor of an unhinted
+    # Dict) or no hint at all (which still pays for several rehash/regrow
+    # steps as the Dict grows from empty to its natural size every single
+    # period). Consecutive periods in a given simulation tend to touch a
+    # similar number of (storage, product) pairs, so last period's size is
+    # usually a good estimate of this period's - self-tuning, so it adapts
+    # if that changes instead of assuming a fixed worst case. Deliberately
+    # not reset by reset!: carrying the estimate across repeated
+    # reset!+simulate() cycles on the same reused State (as optimize! does,
+    # thousands of times per search) only helps, since the occupancy
+    # pattern is a stable property of the network, not of any one trial.
+    last_on_hand_snapshot_size::Int64
+
     function State(supply_chain; pending_outbound_order_lines=Dict{Storage, Array{OrderLine, 1}}())
         demand = Dict((d.customer, d.product) => d for d in supply_chain.demand)
 
@@ -167,7 +183,8 @@ mutable struct State
                    Set{Trip}(),
                    [],
                    SimMetrics(length(lanes), horizon),
-                   [zeros(Int64, horizon) for _ in 1:nlocations, _ in 1:nproducts])
+                   [zeros(Int64, horizon) for _ in 1:nlocations, _ in 1:nproducts],
+                   0)
                    #,[])
                    
         reset!(state)
@@ -559,18 +576,27 @@ on-hand inventory and the per-period Set handoffs - is skipped entirely, and
 next period instead of being swapped for fresh, permanently-retained Sets.
 """
 function snapshot_state!(state::State, time, record_history::Bool)
-    # Not sizehint!'d to length(state.on_hand_totals) (every storage x
-    # product pair): a fresh Dict is needed every period regardless (it's
-    # handed to historical_on_hand below and must outlive this call, so it
-    # can't be a reused/cleared buffer the way reusable_order_lines_buffer
-    # is) - sizehint!ing it to the full dense worst case every period paid
-    # for allocating/rehashing a table sized for every pair even when only
-    # a fraction are ever actually touched (see the "was this pair ever
-    # touched" skip below), which CPU profiling of the large-network
-    # benchmark found as a real chunk of simulate()'s time. Left to grow
-    # via Dict's own default incremental strategy instead, which sizes
-    # itself to what's actually inserted.
-    on_hand_snapshot = record_history ? Dict{Tuple{Storage, Product}, Int64}() : nothing
+    # A fresh Dict is needed every period regardless of sizing (it's handed
+    # to historical_on_hand below and must outlive this call, so it can't be
+    # a reused/cleared buffer the way reusable_order_lines_buffer is). Not
+    # sizehint!'d to length(state.on_hand_totals) (every storage x product
+    # pair) - that was the full dense worst case, and CPU profiling of the
+    # large-network benchmark found allocating/rehashing a table sized for
+    # every pair, even though only a fraction are ever actually touched (see
+    # the "was this pair ever touched" skip below), as a real chunk of
+    # simulate()'s time. sizehint!'d instead to state.last_on_hand_snapshot_size
+    # - last period's actual final size (see State's field comment) - which
+    # avoids most of the same rehash/regrow cost without resurrecting the
+    # dense-worst-case bug: still just an estimate that Dict's own
+    # incremental growth strategy can correct if it's wrong, not a
+    # guaranteed final size.
+    on_hand_snapshot = if record_history
+        d = Dict{Tuple{Storage, Product}, Int64}()
+        sizehint!(d, state.last_on_hand_snapshot_size)
+        d
+    else
+        nothing
+    end
     # on_hand_totals is maintained incrementally by every on-hand mutation
     # site, so per-(storage,product) totals are read directly instead of
     # re-summing each cell's age buckets here every period.
@@ -594,6 +620,7 @@ function snapshot_state!(state::State, time, record_history::Bool)
     end
 
     if record_history
+        state.last_on_hand_snapshot_size = length(on_hand_snapshot)
         push!(state.historical_on_hand, on_hand_snapshot)
 
         # state.filled_orders/placed_orders are only ever mutated via push! on the

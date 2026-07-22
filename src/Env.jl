@@ -124,25 +124,31 @@ struct Env
         # into the (typically 1-2) destinations it actually has, at the
         # period slot it actually departs.
         #
-        # Only locations that actually appear as some trip's destination get
-        # an entry (built from `trips`, not from `locations`) - a
-        # horizon-length Vector{Trip} per *every* location, most of which
-        # (e.g. root suppliers with no inbound lanes) never receive a trip,
-        # was Env construction's single largest allocation site on a large
-        # network. Every location ever looked up via env.departures[...]
-        # (get_inbound_trips/find_next_departure in Model.jl) is a lane's
-        # destination for some policy-bearing lane, and get_trips(supplychain,
-        # policies) above generates a Trip for every (lane, period) pair in
-        # supplychain.lanes - so every such location is guaranteed to already
-        # have an entry here by the time it's looked up; only locations no
-        # lane ever points to (and that are consequently never looked up
-        # either) are left out.
+        # Locations that are an actual trip destination get their own
+        # horizon-length Vector{Trip}, built lazily here rather than eagerly
+        # for every location in the network - that eager version was Env
+        # construction's single largest allocation site on a large network,
+        # since most locations (e.g. root suppliers with no inbound lanes)
+        # never receive a single trip.
         departures = Dict{ConcreteNode, Vector{Vector{Trip}}}()
         for trip in trips
             for destination in trip.route.destinations
                 periods = get!(() -> [Trip[] for _ in 1:supplychain.horizon], departures, destination)
                 push!(periods[trip.departure], trip)
             end
+        end
+
+        # place_orders (Simulation.jl) calls get_inbound_trips/
+        # find_next_departure (Model.jl) - both direct env.departures[location]
+        # indexing - unconditionally for *every* location in the network each
+        # period, not just ones with an inbound lane, so every location still
+        # needs a key here. Every location left out by the loop above (never
+        # a trip's destination) gets the exact same shared empty periods
+        # vector rather than one allocated per location - safe since nothing
+        # past this point ever mutates it, and it's only ever read.
+        empty_periods = [Trip[] for _ in 1:supplychain.horizon]
+        for location in locations
+            get!(departures, location, empty_periods)
         end
 
         products_indexed = get_product_index(supplychain)

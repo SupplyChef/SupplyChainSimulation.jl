@@ -62,6 +62,7 @@ using Graphs
 #using Optim
 #using BlackBoxOptim
 import CMAEvolutionStrategy
+import Optim
 using SupplyChainModeling
 
 abstract type InventoryOrderingPolicy end

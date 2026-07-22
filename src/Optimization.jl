@@ -77,6 +77,15 @@ end
       CMAEvolutionStrategy.jl package. Tuned via `cma_es_options` (see below) instead
       of `params`, since CMA-ES's options aren't all `Float64` (bounds are vectors,
       some are integers) and `params` is typed `Dict{Symbol, Float64}`.
+    - `:nelder_mead`: multi-start Nelder-Mead simplex search, via Optim.jl. Tuned via
+      `nelder_mead_options` (see below). A deliberately different kind of algorithm
+      from the other two (a deterministic local search with restarts, vs. their
+      population-based stochastic search) - worth trying because
+      benchmark/compare_optimizers.jl showed :cma_es converging (and then plateauing)
+      well before exhausting its evaluation budget on the newsvendor benchmark,
+      suggesting a cheaper local refinement with restarts to escape local optima
+      might match its quality in even less time, or find a better optimum with the
+      leftover budget spent on more restarts instead of one long population search.
 
     `cma_es_options` (only used when `method === :cma_es`) accepts:
     - `:lower`, `:upper`: box constraints, each either a scalar (broadcast to every
@@ -91,8 +100,22 @@ end
       `CMAEvolutionStrategy.minimize` when given; otherwise left at that package's
       own defaults (`:verbosity` defaults to `0` here instead, since `:custom`
       already prints its own progress and CMA-ES's is redundant in that context).
+
+    `nelder_mead_options` (only used when `method === :nelder_mead`) accepts:
+    - `:lower`, `:upper`: box constraints, same shape/defaults as `cma_es_options`.
+      Plain Nelder-Mead is unconstrained, so out-of-box candidates are clamped back
+      into range before being costed, rather than using Optim.jl's `Fminbox` (a
+      log-barrier wrapper built for gradient-based methods, not a natural fit for a
+      derivative-free simplex search).
+    - `:maxfevals`: total evaluation budget across all restarts combined. Default
+      `15000`, matching the other two methods.
+    - `:restarts`: number of *additional* random-start Nelder-Mead runs beyond the
+      one seeded at `x0`. Default `5` (6 runs total), each getting an even share of
+      `:maxfevals`. Restarts are what let this method compete with population-based
+      search on a multimodal landscape despite each individual run only exploring
+      locally.
 """
-function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s), record_history::Bool=true, method::Symbol=:custom, cma_es_options::Dict{Symbol, Any}=Dict{Symbol, Any}())
+function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s), record_history::Bool=true, method::Symbol=:custom, cma_es_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), nelder_mead_options::Dict{Symbol, Any}=Dict{Symbol, Any}())
     initial_states = State.(supplychains)
     envs = [Env(supplychain, initial_states, lane_policies; record_history=record_history) for supplychain in supplychains]
 
@@ -122,8 +145,10 @@ function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}
                              :NumDimensions => length(x0)), params))
     elseif method === :cma_es
         best = cma_es_optimize(f, x0, cma_es_options)
+    elseif method === :nelder_mead
+        best = nelder_mead_optimize(f, x0, nelder_mead_options)
     else
-        error("optimize!: unknown method $(repr(method)); supported methods are :custom and :cma_es")
+        error("optimize!: unknown method $(repr(method)); supported methods are :custom, :cma_es, and :nelder_mead")
     end
 
     i = 1
@@ -163,6 +188,56 @@ function cma_es_optimize(f, x0::Array{Float64, 1}, options::Dict{Symbol, Any})
 
     result = CMAEvolutionStrategy.minimize(f, x0, sigma0; minimize_kwargs...)
     return CMAEvolutionStrategy.xbest(result)
+end
+
+"""
+    nelder_mead_optimize(f, x0, options)
+
+Minimizes `f` with multi-start Nelder-Mead (Optim.jl), translating this package's
+`optimize!(...; method=:nelder_mead, nelder_mead_options=...)` options (see
+`optimize!`'s docstring). One run is seeded at `x0`, `options[:restarts]` more from
+uniformly random points in the box, each given an even share of `:maxfevals`; the
+best result across all runs wins.
+
+Candidates are clamped into `[lower, upper]` before being passed to `f` rather than
+handled via Optim.jl's `Fminbox` - plain `NelderMead` needs no gradient, and Fminbox's
+log-barrier approach is built around methods that have one, so a barrier around a
+derivative-free simplex search isn't a well-supported combination.
+"""
+function nelder_mead_optimize(f, x0::Array{Float64, 1}, options::Dict{Symbol, Any})
+    n = length(x0)
+    lower = get(options, :lower, 0.0)
+    upper = get(options, :upper, 5000.0)
+    lower_bounds = lower isa AbstractVector ? convert(Array{Float64, 1}, lower) : fill(convert(Float64, lower), n)
+    upper_bounds = upper isa AbstractVector ? convert(Array{Float64, 1}, upper) : fill(convert(Float64, upper), n)
+
+    maxfevals = get(options, :maxfevals, 15000)
+    restarts = get(options, :restarts, 5)
+
+    clamped_f = x -> f(clamp.(x, lower_bounds, upper_bounds))
+
+    starts = Array{Float64, 1}[clamp.(x0, lower_bounds, upper_bounds)]
+    for _ in 1:restarts
+        push!(starts, lower_bounds .+ rand(n) .* (upper_bounds .- lower_bounds))
+    end
+    per_start_budget = max(1, maxfevals ÷ length(starts))
+
+    best_x = starts[1]
+    best_f = clamped_f(best_x)
+
+    for start in starts
+        # iterations is capped at the same budget as f_calls_limit - Options'
+        # own default (1_000) would otherwise silently cut a run short before
+        # f_calls_limit binds, for any per_start_budget above that.
+        result = Optim.optimize(clamped_f, start, Optim.NelderMead(), Optim.Options(f_calls_limit=per_start_budget, iterations=per_start_budget))
+        candidate_f = Optim.minimum(result)
+        if candidate_f < best_f
+            best_f = candidate_f
+            best_x = clamp.(Optim.minimizer(result), lower_bounds, upper_bounds)
+        end
+    end
+
+    return best_x
 end
 
 function bboptimize(f, x0, params)

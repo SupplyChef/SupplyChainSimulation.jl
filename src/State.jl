@@ -139,23 +139,6 @@ mutable struct State
     # pattern is a stable property of the network, not of any one trial.
     last_on_hand_snapshot_size::Int64
 
-    # Same self-tuning trick as last_on_hand_snapshot_size above, but for
-    # historical_transportation: unlike on_hand_snapshot (rebuilt fresh each
-    # period), historical_transportation is one Set{Trip} that accumulates
-    # across the whole horizon, so there's nothing to sizehint! per period -
-    # instead reset! sizehint!s it, once per simulate() call, to the
-    # *previous* simulate() call's final unique-trip count (see where this
-    # is written, at the end of simulate(), Simulation.jl). CPU/allocation
-    # profiling of a cold (first-ever) simulate() on a large network found
-    # this Set's incremental rehash/regrow chain, paid unhinted from empty,
-    # as one of the largest single-site CPU/allocation costs in the whole
-    # run - this only ever grows during a record_history=true ("deep") run
-    # (see record_fill!, Simulation.jl), so it costs nothing during
-    # optimize!'s default record_history=false trials, but a deep run still
-    # deserves not to pay repeated regrow costs just to reach the same
-    # final size every time.
-    last_historical_transportation_size::Int64
-
     function State(supply_chain; pending_outbound_order_lines=Dict{Storage, Array{OrderLine, 1}}())
         # get_storage_index/get_product_index/get_location_index/
         # get_lane_index (SupplyChainModeling.jl) cache the Vector+Dict pair
@@ -213,7 +196,6 @@ mutable struct State
                    [],
                    SimMetrics(length(lanes), horizon),
                    [zeros(Int64, horizon) for _ in 1:nlocations, _ in 1:nproducts],
-                   0,
                    0)
                    #,[])
                    
@@ -266,7 +248,6 @@ function reset!(state::State)
     empty!(state.historical_on_hand)
     empty!(state.historical_orders)
     empty!(state.historical_transportation)
-    sizehint!(state.historical_transportation, state.last_historical_transportation_size)
     empty!(state.historical_filled_orders)
     reset!(state.metrics)
     for i in eachindex(state.outbound_order_quantities)

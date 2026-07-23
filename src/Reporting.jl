@@ -75,13 +75,13 @@ end
 
     Gets the total transportation fixed costs.
 """
-function get_total_trip_fixed_costs(state)
-    transportation_costs = 0
-    for trip in state.historical_transportation
-        transportation_costs += get_fixed_cost(trip.route)
-    end
-    return transportation_costs
-end
+# state.metrics.trip_fixed_costs (SimMetrics) already accumulates exactly
+# this total inline, at the same dedup granularity (see record_fill!'s
+# metrics.seen_trips check) - proven equal to the below by
+# assert_metrics_match_history (metrics-equivalence-tests.jl). Reading it
+# back is O(1) and needs no historical_transportation scan at all, unlike
+# every other get_total_* here that still has no metrics equivalent.
+get_total_trip_fixed_costs(state) = state.metrics.trip_fixed_costs
 
 """
     get_total_holding_costs(state)

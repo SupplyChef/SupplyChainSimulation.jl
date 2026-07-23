@@ -516,6 +516,15 @@ function simulate(env::Env, policies, initial_state)
 
     flush_pending_as_lost!(state)
 
+    # See last_historical_transportation_size's field comment (State.jl):
+    # only meaningful when this run actually populated
+    # historical_transportation (record_history=true) - a record_history=false
+    # run leaves it empty throughout, and recording that here would
+    # overwrite a real previous estimate with 0 for no reason.
+    if env.record_history
+        state.last_historical_transportation_size = length(state.historical_transportation)
+    end
+
     return state
 end
 

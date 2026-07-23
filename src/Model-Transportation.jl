@@ -2,12 +2,6 @@ using UUIDs
 
 import Base.isequal
 
-struct Truck
-    capacities
-    
-    fixed_cost
-end
-
 """
 A trip is the basis of transportation in the simulation. It follows a route with a given departure time.
 """

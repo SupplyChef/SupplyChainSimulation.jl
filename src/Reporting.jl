@@ -103,6 +103,21 @@ function get_shipments(state)
 end
 
 """
+    get_used_lanes(state)
+
+Gets the distinct lanes actually shipped on during the run - useful for
+spotting lanes that were built into the network but never used, or for
+breaking transportation cost/volume down by route.
+
+Note: distinct *lanes*, not distinct *trips* - state.historical_transportation
+holds one entry per (lane, departure) actually shipped on, so a lane running
+every period of the horizon still collapses to a single entry here.
+"""
+function get_used_lanes(state)
+    return unique(trip.route for trip in state.historical_transportation)
+end
+
+"""
     get_total_overflow_costs(state)
 
 Gets the total cost of inventory that exceeded a storage's maximum_units and had to be

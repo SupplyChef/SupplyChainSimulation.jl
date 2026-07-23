@@ -826,7 +826,3 @@ end
 
 function get_net_network_inventory(state, location, product)
 end
-
-function get_used_trucks(state)
-    return [trip.truck for trip in state.historical_transportation]
-end

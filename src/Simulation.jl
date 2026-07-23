@@ -175,36 +175,43 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
     sort!(order_lines, by=ol -> (ol.creation_time, ol.due_date))
     #@debug order_lines
 
-    fulfilled_or_dropped = empty!(env.reusable_order_lines_buffer)
-
+    # Compacts order_lines down to just the still-pending lines in a single
+    # O(n) pass, writing survivors back over the entries already visited -
+    # replaces a filter!(ol -> ol ∉ fulfilled_or_dropped, order_lines) that
+    # checked every line against a separately-collected membership list,
+    # i.e. O(n x fulfilled) instead of O(n) (CPU profiling of the
+    # large-network benchmark found that check as a real chunk of
+    # send_inventory!'s time).
+    write_idx = 0
     for order_line in order_lines
+        removed = false
+
         if order_line.due_date < time
             record_drop!(state, order_line, pi)
-            push!(fulfilled_or_dropped, order_line)
             _delete_inbound_order_line_by_index!(state, order_line, pi)
-            continue
-        end
+            removed = true
+        else
+            trip = (ismissing(order_line.trip) || order_line.trip.departure < time) ?
+                   find_next_departure(env, order_line.destination, time, order_line.due_date) :
+                   order_line.trip
 
-        if ismissing(order_line.trip) || order_line.trip.departure < time
-            trip = find_next_departure(env, order_line.destination, time, order_line.due_date)
-            if trip === NULL_TRIP
-                continue
+            if trip !== NULL_TRIP
+                order_line.trip = trip
+                send_inventory!(state, env, order_line.trip, order_line.destination, order_line.product, order_line.quantity, time)
+
+                _delete_inbound_order_line_by_index!(state, order_line, pi)
+                record_fill!(state, env, order_line, pi)
+                push!(state.filled_orders, order_line)
+                removed = true
             end
-            order_line.trip = trip
         end
 
-        send_inventory!(state, env, order_line.trip, order_line.destination, order_line.product, order_line.quantity, time)
-
-        push!(fulfilled_or_dropped, order_line)
-        _delete_inbound_order_line_by_index!(state, order_line, pi)
-
-        record_fill!(state, env, order_line, pi)
-        push!(state.filled_orders, order_line)
+        if !removed
+            write_idx += 1
+            order_lines[write_idx] = order_line
+        end
     end
-
-    if !isempty(fulfilled_or_dropped)
-        filter!(ol -> ol ∉ fulfilled_or_dropped, order_lines)
-    end
+    resize!(order_lines, write_idx)
 end
 
 function send_inventory!(state::State, env::Env, location::ConcreteNode, product::Product, li::Int64, si::Int64, pi::Int64, time::Int)
@@ -223,47 +230,70 @@ function send_inventory!(state::State, env::Env, location::ConcreteNode, product
     #@debug order_lines
 
     #println("send_inventory order_lines $order_lines")
-    fulfilled_order_lines = empty!(env.reusable_order_lines_buffer)
     # Tracked locally and kept in sync with each _remove_on_hand_by_index!
     # below, instead of re-reading on-hand inventory twice per order line.
     available = _on_hand_by_index(state, si, pi)
-    for order_line in order_lines
+
+    # Same O(n) in-place compaction as the Supplier method above (see its
+    # comment), but with an early exit once available hits 0 - nothing left
+    # could be fulfilled this call, so everything from that point on,
+    # including lines not yet visited, must be preserved untouched. The
+    # tail past the break point is copied down after the loop instead of
+    # being visited/decided, since it was never looked at.
+    n = length(order_lines)
+    write_idx = 0
+    last_visited = n
+
+    for i in 1:n
+        order_line = order_lines[i]
+        removed = false
+        should_break = false
+
         if order_line.due_date < time
             record_drop!(state, order_line, pi)
-            push!(fulfilled_order_lines, order_line)
             _delete_inbound_order_line_by_index!(state, order_line, pi)
-            continue
-        end
+            removed = true
+        elseif order_line.quantity <= available
+            trip = (ismissing(order_line.trip) || order_line.trip.departure < time) ?
+                   find_next_departure(env, order_line.destination, time, order_line.due_date) :
+                   order_line.trip
 
-        #println("send_inventory on_hand $(get_on_hand_inventory(state, location, order_line.product) vs $(order_line.quantity)")
-        if order_line.quantity <= available
-            if ismissing(order_line.trip) || order_line.trip.departure < time
-                trip = find_next_departure(env, order_line.destination, time, order_line.due_date)
-                if trip === NULL_TRIP
-                    continue
-                end
+            if trip !== NULL_TRIP
                 order_line.trip = trip
+                send_inventory!(state, env, order_line.trip, order_line.destination, order_line.product, order_line.quantity, time)
+                _remove_on_hand_by_index!(state, si, pi, order_line.quantity)
+                available -= order_line.quantity
+
+                _delete_inbound_order_line_by_index!(state, order_line, pi)
+                record_fill!(state, env, order_line, pi)
+                push!(state.filled_orders, order_line)
+                removed = true
+
+                if available == 0
+                    should_break = true
+                end
             end
+        end
 
-            send_inventory!(state, env, order_line.trip,  order_line.destination, order_line.product, order_line.quantity, time)
-            _remove_on_hand_by_index!(state, si, pi, order_line.quantity)
-            available -= order_line.quantity
+        if !removed
+            write_idx += 1
+            order_lines[write_idx] = order_line
+        end
 
-            push!(fulfilled_order_lines, order_line)
-            _delete_inbound_order_line_by_index!(state, order_line, pi)
-
-            record_fill!(state, env, order_line, pi)
-            push!(state.filled_orders, order_line)
-
-            if available == 0
-                break
-            end
+        if should_break
+            last_visited = i
+            break
         end
     end
 
-    if !isempty(fulfilled_order_lines)
-        filter!(ol -> ol ∉ fulfilled_order_lines, order_lines)
+    if last_visited < n
+        for i in (last_visited + 1):n
+            write_idx += 1
+            order_lines[write_idx] = order_lines[i]
+        end
     end
+
+    resize!(order_lines, write_idx)
 end
 
 # Place orders

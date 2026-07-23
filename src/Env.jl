@@ -71,9 +71,6 @@ struct Env
     # are naturally scenario-local.
     past_orders_buffers::Matrix{Vector{Union{Missing, Int64}}}
 
-    # Reusable buffer to avoid allocating a fresh Vector{OrderLine} inside send_inventory!
-    reusable_order_lines_buffer::Vector{OrderLine}
-
     function Env(supplychain::SupplyChain, initial_states, policies; record_history::Bool=true)
         trips = get_trips(supplychain, policies)
         locations = get_locations(supplychain)
@@ -192,8 +189,7 @@ struct Env
                    Dict{Tuple{ConcreteNode, Product, Int64}, Float64}(),
                    record_history,
                    any(p -> required_lookback(p) > 0, values(policies)),
-                   past_orders_buffers,
-                   OrderLine[])
+                   past_orders_buffers)
     end
 end
 

@@ -590,7 +590,7 @@ next period instead of being swapped for fresh, permanently-retained Sets.
 function snapshot_state!(state::State, time, record_history::Bool)
     # A fresh Dict is needed every period regardless of sizing (it's handed
     # to historical_on_hand below and must outlive this call, so it can't be
-    # a reused/cleared buffer the way reusable_order_lines_buffer is). Not
+    # a buffer that's cleared and reused in place period over period). Not
     # sizehint!'d to length(state.on_hand_totals) (every storage x product
     # pair) - that was the full dense worst case, and CPU profiling of the
     # large-network benchmark found allocating/rehashing a table sized for

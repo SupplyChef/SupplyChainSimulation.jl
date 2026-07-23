@@ -140,22 +140,14 @@ function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}
     f = x -> minimize!(lane_policies, policies, collect(envs), collect(initial_states), x; cost_function=cost_function)
 
     if method === :custom
-        # MaxStepsWithoutProgress's default tracks whatever MaxFuncEvals
-        # actually ends up being (from params if the caller overrode it,
-        # else the 15000 default below) rather than a flat constant: a
-        # fixed 1500 was a reasonable ~10% patience window against the
-        # 15000 default, but stayed exactly 1500 even when a caller (e.g.
-        # benchmark/compare_optimizers.jl, at maxfevals=3000) passed a much
-        # smaller budget - a 50% patience window there, letting bboptimize
-        # grind through nearly its whole budget on problems that had
-        # already converged well before that, instead of stopping early
-        # the way :cma_es/:nelder_mead's own convergence checks do. An
-        # explicit :MaxStepsWithoutProgress in params still overrides this.
+        # :MaxStepsWithoutProgress is deliberately left unset here (unless
+        # params overrides it) rather than hardcoded - bboptimize derives a
+        # default from both :MaxFuncEvals and its own pool_size, since the
+        # two interact (see bboptimize's comment on that default).
         max_func_evals = get(params, :MaxFuncEvals, 15000.0)
         best = SupplyChainSimulation.bboptimize(f,
                          x0,
                         merge(Dict(:MaxFuncEvals => max_func_evals,
-                             :MaxStepsWithoutProgress => max(100.0, 0.1 * max_func_evals),
                              :SearchRange => (-0.0, 5000.0),
                              :NumDimensions => length(x0)), params))
     elseif method === :cma_es
@@ -304,8 +296,23 @@ function bboptimize(f, x0, params)
     t = max(0.1, min(0.9, 6 / length(x0)))
     #println(t)
 
+    # A bigger pool_size dilutes how often any specific slot gets refined
+    # per raw evaluation - each mutation only touches one randomly-chosen
+    # pool member, so a pool 5x the old flat size of 6 needs roughly 5x as
+    # many evaluations to give every slot a comparable chance to improve.
+    # Scaling MaxStepsWithoutProgress's default by the same pool_size/6
+    # ratio that grew the population keeps the *fraction of a full
+    # population cycle* the search is willing to wait roughly constant,
+    # instead of the flat 10%-of-budget alone, which let a real search
+    # quit - with zero improvement ever found - after fewer evaluations
+    # than a single pass through a 30-member pool typically needs (see
+    # test/policy-beergame-tests.jl's "Beer game" test, which caught this
+    # exact case at pool_size=30).
+    max_steps_without_progress = get(params, :MaxStepsWithoutProgress,
+                                      max(100.0, 0.1 * params[:MaxFuncEvals] * (pool_size / 6.0)))
+
     for i in 1:params[:MaxFuncEvals]
-        if i > last_progress + params[:MaxStepsWithoutProgress]
+        if i > last_progress + max_steps_without_progress
             println("$i, $(Dates.now() - start), $best_f, $best_x")
             break
         end

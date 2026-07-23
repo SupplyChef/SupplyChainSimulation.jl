@@ -140,10 +140,22 @@ function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}
     f = x -> minimize!(lane_policies, policies, collect(envs), collect(initial_states), x; cost_function=cost_function)
 
     if method === :custom
+        # MaxStepsWithoutProgress's default tracks whatever MaxFuncEvals
+        # actually ends up being (from params if the caller overrode it,
+        # else the 15000 default below) rather than a flat constant: a
+        # fixed 1500 was a reasonable ~10% patience window against the
+        # 15000 default, but stayed exactly 1500 even when a caller (e.g.
+        # benchmark/compare_optimizers.jl, at maxfevals=3000) passed a much
+        # smaller budget - a 50% patience window there, letting bboptimize
+        # grind through nearly its whole budget on problems that had
+        # already converged well before that, instead of stopping early
+        # the way :cma_es/:nelder_mead's own convergence checks do. An
+        # explicit :MaxStepsWithoutProgress in params still overrides this.
+        max_func_evals = get(params, :MaxFuncEvals, 15000.0)
         best = SupplyChainSimulation.bboptimize(f,
                          x0,
-                        merge(Dict(:MaxFuncEvals => 15000,
-                             :MaxStepsWithoutProgress => 1500,
+                        merge(Dict(:MaxFuncEvals => max_func_evals,
+                             :MaxStepsWithoutProgress => max(100.0, 0.1 * max_func_evals),
                              :SearchRange => (-0.0, 5000.0),
                              :NumDimensions => length(x0)), params))
     elseif method === :cma_es
@@ -273,8 +285,17 @@ function bboptimize(f, x0, params)
     best_x = copy(x0)
     
     last_progress = 0
-    
-    pool_size = 6
+
+    # Standard differential-evolution guidance sizes the population to
+    # several times the parameter count (~5-10x is typical) rather than a
+    # flat constant - a fixed pool_size=6 was fine for newsvendor's 2
+    # parameters (3x) but starved beer_game's 6-parameter search of the
+    # diversity a DE/rand/1-style mutation (below) needs: its convergence
+    # curve was still improving at the very end of its evaluation budget
+    # (see benchmark/compare_optimizers.jl's beer_game results) - the
+    # signature of a population too small to adequately cover the
+    # landscape, not of stopping too early.
+    pool_size = max(6, 5 * length(x0))
     candidate_pool = [rand(length(x0)) .* (params[:SearchRange][2] - params[:SearchRange][1]) .+ params[:SearchRange][1] for i in 1:pool_size]
     #println(candidate_pool)
     pool_f = [f(candidate) for candidate in candidate_pool]

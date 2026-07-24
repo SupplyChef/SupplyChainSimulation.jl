@@ -9,6 +9,9 @@ on:
       trials:
         description: 'Independent trials (distinct seeds) per method, for mean/std/paired-test reporting'
         default: '5'
+      upper:
+        description: 'Upper search bound given to all four methods (lower is fixed at 0.0). Default 5000 matches every *_optimize function''s own built-in default; try something like 200 to test whether that shared default is too large relative to where real policy parameters live for :bayesopt/:cma_es specifically (see compare_optimizers.jl''s compare_optimizers_params docstring).'
+        default: '5000.0'
 
 env:
   JULIA_PKG_SERVER_REGISTRY_PREFERENCE: conservative
@@ -42,3 +45,4 @@ jobs:
         env:
           COMPARE_MAXFEVALS: ${{ inputs.maxfevals }}
           COMPARE_TRIALS: ${{ inputs.trials }}
+          COMPARE_UPPER: ${{ inputs.upper }}

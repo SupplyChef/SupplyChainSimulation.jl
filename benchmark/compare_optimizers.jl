@@ -74,11 +74,23 @@ const METHODS = [:custom, :cma_es, :nelder_mead, :bayesopt]
 function compare_optimizers_params()
     maxfevals = parse(Int, get(ENV, "COMPARE_MAXFEVALS", "3000"))
     trials = parse(Int, get(ENV, "COMPARE_TRIALS", "5"))
-    return (; maxfevals, trials)
+    # Default (5000.0) matches every *_optimize function's own built-in
+    # default, so leaving this unset reproduces prior behavior exactly.
+    # Overridable to test whether that shared default - inherited from
+    # :custom's original DE SearchRange - is simply too large relative to
+    # where these policies' real parameters live (see nelder_mead_optimize's
+    # docstring: an earlier version of *that* method had the identical
+    # failure mode from the same oversized box, fixed by anchoring restarts
+    # near x0 instead of sampling the full box uniformly - :bayesopt's Sobol
+    # design and :cma_es's sigma0 default aren't anchored that way, and both
+    # regressed badly on beer_game's 6-parameter box in the first real
+    # comparison run).
+    upper = parse(Float64, get(ENV, "COMPARE_UPPER", "5000.0"))
+    return (; maxfevals, trials, upper)
 end
 
 """
-    run_search(method, lane_policies, training_scenarios, cost_function; maxfevals, seed)
+    run_search(method, lane_policies, training_scenarios, cost_function; maxfevals, seed, upper)
 
 Reimplements optimize!'s body (see Optimization.jl) for `training_scenarios`
 and `lane_policies`, but wraps `cost_function` with an evaluation-count/
@@ -91,8 +103,14 @@ point in the evaluation budget (forward-filled if the search stopped early).
 Generic over `lane_policies`' shape (one (lane, product) pair or several) and
 over `cost_function` - neither problem-specific detail affects the search
 mechanics themselves.
+
+`upper` (paired with a fixed lower bound of 0.0) is passed to every method
+explicitly rather than relying on each *_optimize function's own default, so
+compare_optimizers_params's COMPARE_UPPER override actually reaches all four
+methods identically - a controlled, single-variable test of whether the
+shared box size itself explains :bayesopt/:cma_es's regressions.
 """
-function run_search(method::Symbol, lane_policies, training_scenarios, cost_function::Function; maxfevals::Int, seed::Int)
+function run_search(method::Symbol, lane_policies, training_scenarios, cost_function::Function; maxfevals::Int, seed::Int, upper::Float64=5000.0)
     initial_states = SupplyChainSimulation.State.(training_scenarios)
     envs = [SupplyChainSimulation.Env(sc, initial_states, lane_policies; record_history=true) for sc in training_scenarios]
 
@@ -124,13 +142,13 @@ function run_search(method::Symbol, lane_policies, training_scenarios, cost_func
     if method === :custom
         best = SupplyChainSimulation.bboptimize(tracked_f, x0,
             Dict(:MaxFuncEvals => maxfevals, :MaxStepsWithoutProgress => maxfevals,
-                 :SearchRange => (-0.0, 5000.0), :NumDimensions => length(x0)))
+                 :SearchRange => (-0.0, upper), :NumDimensions => length(x0)))
     elseif method === :cma_es
         best = SupplyChainSimulation.cma_es_optimize(tracked_f, x0,
-            Dict{Symbol, Any}(:maxfevals => maxfevals, :seed => UInt(seed)))
+            Dict{Symbol, Any}(:maxfevals => maxfevals, :seed => UInt(seed), :upper => upper))
     elseif method === :nelder_mead
         best = SupplyChainSimulation.nelder_mead_optimize(tracked_f, x0,
-            Dict{Symbol, Any}(:maxfevals => maxfevals))
+            Dict{Symbol, Any}(:maxfevals => maxfevals, :upper => upper))
     elseif method === :bayesopt
         # Same maxfevals as every other method, for the same reason they all
         # get it here (a fair, matched-budget comparison) - even though
@@ -141,7 +159,7 @@ function run_search(method::Symbol, lane_policies, training_scenarios, cost_func
         # what this comparison is meant to show, not something to hide by
         # quietly giving it an easier budget than the others.
         best = SupplyChainSimulation.bayesopt_optimize(tracked_f, x0,
-            Dict{Symbol, Any}(:maxfevals => maxfevals))
+            Dict{Symbol, Any}(:maxfevals => maxfevals, :upper => upper))
     else
         error("run_search: unknown method $method")
     end
@@ -361,7 +379,7 @@ function held_out_cost(policy, supply_lane, product, regimes, replications)
     return total_cost, fill_rate
 end
 
-function run_newsvendor_comparison(maxfevals::Int, trials::Int)
+function run_newsvendor_comparison(maxfevals::Int, trials::Int, upper::Float64)
     println("Training ensemble: $(length(TRAINING_REGIMES)) regimes x $TRAINING_REPLICATIONS replications = $(length(TRAINING_REGIMES) * TRAINING_REPLICATIONS) scenarios")
     println("Held-out ensemble: $(length(HELD_OUT_REGIMES)) regimes x $HELD_OUT_REPLICATIONS replications = $(length(HELD_OUT_REGIMES) * HELD_OUT_REPLICATIONS) scenarios")
     println("Target service level: $TARGET_SERVICE_LEVEL (critical-ratio newsvendor optimum)\n")
@@ -377,7 +395,7 @@ function run_newsvendor_comparison(maxfevals::Int, trials::Int)
             policy = BackwardCoverageOrderingPolicy([0.0, 0.0])
             lane_policies = Dict((supply_lane, product) => policy)
 
-            elapsed, checkpoints = run_search(method, lane_policies, training_scenarios, newsvendor_cost; maxfevals, seed)
+            elapsed, checkpoints = run_search(method, lane_policies, training_scenarios, newsvendor_cost; maxfevals, seed, upper)
             training_cost = checkpoints[end]
 
             Random.seed!(seed + 500_000) # held-out draws independent of training, but reproducible and identical across methods within a trial
@@ -457,7 +475,7 @@ function build_beergame_ensemble(count)
     return scenarios, l2, l3, l4, product
 end
 
-function run_beergame_comparison(maxfevals::Int, trials::Int)
+function run_beergame_comparison(maxfevals::Int, trials::Int, upper::Float64)
     println("\nTraining ensemble: $BEERGAME_TRAINING_COUNT scenarios (Poisson(10) demand)")
     println("Held-out ensemble: $BEERGAME_HELD_OUT_COUNT scenarios (fresh Poisson(10) draws)")
     println("Cost function: metrics_cost_function (sales_price=1.0 here, unlike newsvendor's 0.0, so revenue is part of the objective)\n")
@@ -475,7 +493,7 @@ function run_beergame_comparison(maxfevals::Int, trials::Int)
             policy4 = BackwardCoverageOrderingPolicy([0.0, 0.0])
             lane_policies = Dict((l2, product) => policy2, (l3, product) => policy3, (l4, product) => policy4)
 
-            elapsed, checkpoints = run_search(method, lane_policies, training_scenarios, metrics_cost_function; maxfevals, seed)
+            elapsed, checkpoints = run_search(method, lane_policies, training_scenarios, metrics_cost_function; maxfevals, seed, upper)
             training_cost = checkpoints[end]
 
             Random.seed!(seed + 500_000)
@@ -500,15 +518,15 @@ function run_beergame_comparison(maxfevals::Int, trials::Int)
 end
 
 function main()
-    (; maxfevals, trials) = compare_optimizers_params()
+    (; maxfevals, trials, upper) = compare_optimizers_params()
 
-    println("Comparing optimize! methods: maxfevals=$maxfevals, trials=$trials\n")
+    println("Comparing optimize! methods: maxfevals=$maxfevals, trials=$trials, upper=$upper\n")
 
     println("=== newsvendor ===")
-    newsvendor_summary = run_newsvendor_comparison(maxfevals, trials)
+    newsvendor_summary = run_newsvendor_comparison(maxfevals, trials, upper)
 
     println("\n=== beer_game ===")
-    beergame_summary = run_beergame_comparison(maxfevals, trials)
+    beergame_summary = run_beergame_comparison(maxfevals, trials, upper)
 
     summary = join(vcat(newsvendor_summary, [""], beergame_summary), "\n")
     println("\n" * summary)

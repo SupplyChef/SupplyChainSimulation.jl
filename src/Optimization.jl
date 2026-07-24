@@ -201,6 +201,86 @@ function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}
 end
 
 """
+    sensitivity_analysis(lane_policies, supplychains...; cost_function, record_history, options)
+
+Runs a global (Sobol) sensitivity analysis of `cost_function` against every
+policy parameter across `lane_policies`, via GlobalSensitivity.jl - a
+different question from `optimize!`'s "what's the best policy?": "which
+policy parameters actually matter for cost?" Useful as a triage step before
+spending an `optimize!` budget tuning parameters that barely move the
+outcome, or for understanding *why* a policy landed where it did.
+
+Shares `optimize!`'s setup (Env construction, sorted policy keys, x0
+assembly, the same `minimize!`-based evaluator - see `optimize!`'s comment
+on why `sorted_keys`' order has to be deterministic) rather than reimplementing
+it, so the parameter ordering `S1`/`ST` are reported in exactly matches what
+`optimize!` itself searches over.
+
+Restores every policy's original parameters before returning:  `minimize!`
+mutates each policy's parameters as a side effect of evaluating a candidate
+`x` (see its definition above) - without explicitly restoring `x0` afterward,
+this function, despite being a read-only diagnostic, would otherwise leave
+every policy set to whatever the last of GlobalSensitivity.jl's many sampled
+points happened to be, rather than left unchanged as a caller would expect.
+
+Returns a NamedTuple `(parameter_labels, S1, ST)`: `parameter_labels[i]`
+identifies which policy (by the lane(s)/product it's attached to) and which
+parameter index within that policy the `i`'th entry of `S1`/`ST` (first-order
+and total-order Sobol indices) belongs to. A parameter's `S1` close to 0
+means it barely affects `cost_function` on its own within the given bounds;
+`ST` also captures its interactions with other parameters, so `ST >> S1` for
+a parameter flags that it mostly matters *together with* another one, not on
+its own.
+
+`options` accepts:
+- `:lower`, `:upper`: box constraints, each either a scalar (broadcast to
+  every parameter) or a per-parameter vector - same shape/defaults
+  (`0.0`/`5000.0`) as `optimize!`'s other `*_options` dicts.
+- `:samples`: controls evaluation cost - GlobalSensitivity.jl's Sobol method
+  needs `samples * (2 * length(x0) + 2)` real evaluations (some of the
+  `2 * length(x0) + 2` factor is inherent to how Sobol indices are
+  estimated, not a tunable). Default `1000`.
+"""
+function sensitivity_analysis(lane_policies, supplychains...; cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s), record_history::Bool=true, options::Dict{Symbol, Any}=Dict{Symbol, Any}())
+    initial_states = State.(supplychains)
+    envs = [Env(supplychain, initial_states, lane_policies; record_history=record_history) for supplychain in supplychains]
+
+    sorted_keys = sort(collect(keys(lane_policies)); by = k -> (string(k[1]), k[2].name))
+    policies = unique([lane_policies[k] for k in sorted_keys])
+
+    x0 = convert(Array{Float64, 1}, vcat([get_parameters(policy) for policy in policies]...))
+    n = length(x0)
+
+    parameter_labels = String[]
+    for policy in policies
+        matching_keys = ["$(lane) / $(product.name)" for (lane, product) in sorted_keys if lane_policies[(lane, product)] === policy]
+        label_prefix = join(matching_keys, ", ")
+        for k in 1:length(get_parameters(policy))
+            push!(parameter_labels, "$label_prefix param $k")
+        end
+    end
+
+    lower = get(options, :lower, 0.0)
+    upper = get(options, :upper, 5000.0)
+    lower_bounds = lower isa AbstractVector ? convert(Array{Float64, 1}, lower) : fill(convert(Float64, lower), n)
+    upper_bounds = upper isa AbstractVector ? convert(Array{Float64, 1}, upper) : fill(convert(Float64, upper), n)
+    samples = get(options, :samples, 1000)
+
+    f = x -> minimize!(lane_policies, policies, collect(envs), collect(initial_states), x; cost_function=cost_function)
+
+    p_range = [[lower_bounds[i], upper_bounds[i]] for i in 1:n]
+    result = GlobalSensitivity.gsa(f, GlobalSensitivity.Sobol(), p_range; samples=samples)
+
+    i = 1
+    for policy in policies
+        set_parameters!(policy, x0[i:i+length(get_parameters(policy))-1])
+        i = i + length(get_parameters(policy))
+    end
+
+    return (parameter_labels = parameter_labels, S1 = result.S1, ST = result.ST)
+end
+
+"""
     cma_es_optimize(f, x0, options)
 
 Minimizes `f` starting from `x0` with CMAEvolutionStrategy.jl, translating this

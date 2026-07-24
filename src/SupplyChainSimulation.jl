@@ -29,6 +29,7 @@ export set_parameters!
 export get_downstream_customers
 export simulate
 export optimize!
+export sensitivity_analysis
 export metrics_cost_function
 
 export get_sorted_locations
@@ -64,6 +65,7 @@ using Graphs
 import CMAEvolutionStrategy
 import Optim
 import Surrogates
+import GlobalSensitivity
 using SupplyChainModeling
 
 abstract type InventoryOrderingPolicy end

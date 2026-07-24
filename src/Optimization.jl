@@ -86,9 +86,9 @@ end
       suggesting a cheaper local refinement with restarts to escape local optima
       might match its quality in even less time, or find a better optimum with the
       leftover budget spent on more restarts instead of one long population search.
-    - `:bayesopt`: Bayesian optimization (Gaussian-process surrogate + acquisition
-      function), via BayesianOptimization.jl/GaussianProcesses.jl. Tuned via
-      `bayesopt_options` (see below). Worth trying specifically because every
+    - `:bayesopt`: Bayesian optimization (Kriging surrogate + Expected Improvement
+      acquisition function), via Surrogates.jl. Tuned via `bayesopt_options` (see
+      below). Worth trying specifically because every
       evaluation here is a full discrete-event simulation (expensive) over a small
       number of parameters (2-6 in the benchmarks so far) - exactly the regime
       where trading cheap surrogate-model fitting for far fewer real evaluations
@@ -123,17 +123,20 @@ end
       initial space-filling design and the guided acquisition-function search (see
       `:initializer_iterations`). Default `200` - deliberately nowhere near the
       other methods' `15000`: Bayesian optimization trades a much smaller number of
-      expensive real evaluations for the cost of fitting/querying a Gaussian
-      process surrogate at every step, so giving it thousands of evaluations would
-      make that per-step surrogate cost (which grows with the number of points
+      expensive real evaluations for the cost of fitting/querying a Kriging
+      surrogate at every step, so giving it thousands of evaluations would make
+      that per-step surrogate cost (which grows with the number of points
       observed) dominate, not help - see `bayesopt_optimize`'s docstring.
     - `:initializer_iterations`: how many of `:maxfevals` are spent on an initial
       space-filling (Sobol sequence) design before the acquisition-guided search
       begins, rather than on `:maxfevals` itself. Default `min(5 * length(x0),
       maxfevals ÷ 2)`.
-    - `:model_refit_every`: how many observations pass between re-fitting the
-      Gaussian process's own hyperparameters (`MAPGPOptimizer`'s `every`). Default
-      `50`.
+    - `:num_new_samples`: how many candidate points Expected Improvement
+      evaluates *on the cheap surrogate* per real iteration before picking the
+      single best one to actually cost with `f` - this does not consume any of
+      `:maxfevals` itself (see `bayesopt_optimize`'s docstring for why only one
+      real evaluation happens per iteration regardless of this value). Default
+      `100`.
 
     `nelder_mead_options` (only used when `method === :nelder_mead`) accepts:
     - `:lower`, `:upper`: box constraints, same shape/defaults as `cma_es_options`.
@@ -337,10 +340,20 @@ end
 """
     bayesopt_optimize(f, x0, options)
 
-Minimizes `f` via Bayesian optimization (BayesianOptimization.jl, with a
-GaussianProcesses.jl Gaussian-process surrogate), translating this package's
+Minimizes `f` via Bayesian optimization (Surrogates.jl's Kriging surrogate,
+optimized with Expected Improvement), translating this package's
 `optimize!(...; method=:bayesopt, bayesopt_options=...)` options (see
-`optimize!`'s docstring) into `BOpt`'s constructor arguments.
+`optimize!`'s docstring) into Surrogates.jl's API.
+
+An earlier version of this function used BayesianOptimization.jl with a
+GaussianProcesses.jl backend, but BayesianOptimization.jl's registered
+releases only support SpecialFunctions versions incompatible with this
+package's other dependencies (CMAEvolutionStrategy/Distributions already
+require a modern SpecialFunctions) - an unsatisfiable Pkg.resolve() the first
+time this was actually tried in CI, not something visible from reading either
+package's docs. Surrogates.jl (part of the actively-maintained SciML
+ecosystem) has no SpecialFunctions dependency at all, so it doesn't hit the
+same conflict.
 
 Unlike `:custom`/`:cma_es`/`:nelder_mead` - all of which spend their entire
 evaluation budget on real (expensive) calls to `f` - Bayesian optimization
@@ -354,17 +367,21 @@ for the problems this package has been benchmarked against so far (2-6
 parameters), but neither is guaranteed for every caller, which is why this
 method exists alongside the other three rather than replacing any of them.
 
-`x0` isn't used as a search seed the way the other methods use it: `BOpt`
-always begins from its own space-filling (Sobol sequence) initial design
-over `[lower, upper]`, so a caller's starting guess doesn't bias where that
-initial exploration lands. This mirrors how the initial design is meant to
-work (uniform coverage of the box, not biased toward one point) rather than
-being an oversight.
+`x0` isn't used as a search seed the way the other methods use it: the
+initial Kriging surrogate is always built from its own space-filling (Sobol
+sequence) design over `[lower, upper]`, so a caller's starting guess doesn't
+bias where that initial exploration lands - the same reasoning the previous
+BayesianOptimization.jl version's docstring gave, still true here.
 
-Returns `observed_optimizer` (the best point actually evaluated) rather than
-`model_optimizer` (the surrogate's own best guess, which may never have been
-evaluated for real) - the same "trust only what was actually measured"
-principle `:custom`/`:cma_es`/`:nelder_mead` all follow by construction.
+Surrogates.jl represents a point as a plain `Float64` when there's only one
+parameter, but as a `Tuple` once there's more than one (see its own test
+suite) - `point_to_vec` bridges either representation back to the plain
+`Vector{Float64}` `f` expects.
+
+Returns the best point Surrogates.jl actually observed (`argmin` over the
+surrogate's own recorded `x`/`y`), the same "trust only what was actually
+measured" principle `:custom`/`:cma_es`/`:nelder_mead` all follow by
+construction.
 """
 function bayesopt_optimize(f, x0::Array{Float64, 1}, options::Dict{Symbol, Any})
     n = length(x0)
@@ -375,23 +392,25 @@ function bayesopt_optimize(f, x0::Array{Float64, 1}, options::Dict{Symbol, Any})
 
     maxfevals = get(options, :maxfevals, 200)
     initializer_iterations = get(options, :initializer_iterations, min(5 * n, maxfevals ÷ 2))
-    maxiterations = max(1, maxfevals - initializer_iterations)
-    model_refit_every = get(options, :model_refit_every, 50)
+    maxiters = max(1, maxfevals - initializer_iterations)
+    num_new_samples = get(options, :num_new_samples, 100)
 
-    model = GaussianProcesses.ElasticGPE(n,
-                                          mean = GaussianProcesses.MeanConst(0.0),
-                                          kernel = GaussianProcesses.SEArd(zeros(n), 5.0))
-    modeloptimizer = BayesianOptimization.MAPGPOptimizer(every = model_refit_every)
+    point_to_vec(p) = n == 1 ? [convert(Float64, p)] : convert(Array{Float64, 1}, collect(p))
+    surrogate_f = p -> f(point_to_vec(p))
 
-    opt = BayesianOptimization.BOpt(f, model, BayesianOptimization.UpperConfidenceBound(),
-                                     modeloptimizer, lower_bounds, upper_bounds;
-                                     sense = BayesianOptimization.Min,
-                                     maxiterations = maxiterations,
-                                     initializer_iterations = initializer_iterations,
-                                     verbosity = BayesianOptimization.Silent)
+    lb = n == 1 ? lower_bounds[1] : lower_bounds
+    ub = n == 1 ? upper_bounds[1] : upper_bounds
 
-    result = BayesianOptimization.boptimize!(opt)
-    return clamp.(result.observed_optimizer, lower_bounds, upper_bounds)
+    xs = Surrogates.sample(initializer_iterations, lb, ub, Surrogates.SobolSample())
+    ys = surrogate_f.(xs)
+    surrogate = Surrogates.Kriging(xs, ys, lb, ub)
+
+    Surrogates.surrogate_optimize!(surrogate_f, Surrogates.EI(), lb, ub, surrogate,
+                                    Surrogates.SobolSample();
+                                    maxiters = maxiters, num_new_samples = num_new_samples)
+
+    _, index = findmin(surrogate.y)
+    return clamp.(point_to_vec(surrogate.x[index]), lower_bounds, upper_bounds)
 end
 
 function bboptimize(f, x0, params)

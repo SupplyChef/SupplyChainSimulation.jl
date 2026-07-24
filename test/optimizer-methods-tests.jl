@@ -258,9 +258,10 @@ end
     end
 
     @test begin
-        # Exercises bayesopt_optimize's vector-bounds and model_refit_every
-        # option-forwarding branches, which the scalar-bounds test above
-        # doesn't reach.
+        # Exercises bayesopt_optimize's vector-bounds (n > 1, so points are
+        # Tuples internally, not plain Float64) and num_new_samples option-
+        # forwarding branches, which the scalar-bounds test above doesn't
+        # reach.
         horizon = 1
 
         product = Product("product")
@@ -294,7 +295,7 @@ end
         initial_states = [n() for i in 1:5]
         optimize!(policies, initial_states...;
                   method=:bayesopt,
-                  bayesopt_options=Dict{Symbol, Any}(:lower => [0.0, 0.0], :upper => [100.0, 100.0], :maxfevals => 30, :model_refit_every => 5),
+                  bayesopt_options=Dict{Symbol, Any}(:lower => [0.0, 0.0], :upper => [100.0, 100.0], :maxfevals => 30, :num_new_samples => 20),
                   cost_function=metrics_cost_function, record_history=false)
 
         final_states = [simulate(initial_state, policies) for initial_state in initial_states]

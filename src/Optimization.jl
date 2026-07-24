@@ -584,9 +584,19 @@ schedule (whenever the point count has at least doubled since the last
 rebuild - bounding the number of expensive full refits to O(log(maxfevals))
 the same way IPOP-CMA-ES's restarts bound *their* growth, rather than paying
 a full refit's O(points^3) cost every single iteration), and the internal
-early-termination check is dropped entirely - like every other method here,
-`:bayesopt` now spends its whole `:maxfevals` budget rather than stopping
-early on a signal that's proven unreliable for this package's objectives.
+early-termination check is dropped in favor of an explicit `:ei_iterations`
+cap (default `200`, matching this function's own default `:maxfevals`): a
+first version of this fix dropped the early-termination check without
+replacing the runtime bound it happened to also provide, and a
+`benchmark/compare_optimizers.jl` run (which forces `:maxfevals` up to 3000
+to match the other three methods) ran for 30+ minutes and had to be
+cancelled - `num_new_samples` (default 100) candidates scored against a
+growing Kriging surrogate on every one of ~3000 iterations is expensive
+regardless of how correct the acquisition function is. Past `:ei_iterations`
+real evaluations, this function switches to plain space-filling samples
+evaluated directly with no surrogate/EI cost - still real, budget-spending
+evaluations, just without per-point acquisition cost whose marginal value
+is small once the surrogate already has hundreds of points.
 """
 function bayesopt_optimize(f, x0::Array{Float64, 1}, options::Dict{Symbol, Any})
     n = length(x0)
@@ -599,6 +609,22 @@ function bayesopt_optimize(f, x0::Array{Float64, 1}, options::Dict{Symbol, Any})
     initializer_iterations = get(options, :initializer_iterations, min(5 * n, maxfevals ÷ 2))
     maxiters = max(1, maxfevals - initializer_iterations)
     num_new_samples = get(options, :num_new_samples, 100)
+    # EI-guided iterations are the expensive part of this function
+    # (num_new_samples candidates scored against a growing Kriging surrogate
+    # every iteration) - capped independent of maxfevals so a caller forcing
+    # a much larger budget than bayesopt_optimize's own default
+    # (benchmark/compare_optimizers.jl deliberately matches the other three
+    # methods' 3000-eval budget for a fair comparison - see this function's
+    # docstring) doesn't pay that cost thousands of times over: a first
+    # attempt without this cap ran for 30+ minutes and had to be cancelled.
+    # Any budget beyond ei_iterations is spent on plain space-filling
+    # samples instead - still real, informative evaluations, just without
+    # per-point EI scoring, whose marginal value is small once the
+    # surrogate already has hundreds of points. Default 200 matches this
+    # function's own default :maxfevals, so ordinary (non-forced-budget)
+    # callers see unchanged behavior - the cap only binds when maxfevals is
+    # pushed well past that.
+    ei_iterations = min(maxiters, get(options, :ei_iterations, 200))
 
     point_to_vec(p) = n == 1 ? [convert(Float64, p)] : convert(Array{Float64, 1}, collect(p))
     surrogate_f = p -> f(point_to_vec(p))
@@ -619,7 +645,7 @@ function bayesopt_optimize(f, x0::Array{Float64, 1}, options::Dict{Symbol, Any})
     # loop.
     eps = 0.01
     next_refit_at = 2 * length(surrogate.x)
-    for i in 1:maxiters
+    for i in 1:ei_iterations
         candidates = collect(Surrogates.sample(num_new_samples, lb, ub, Surrogates.SobolSample()))
         f_min = minimum(surrogate.y)
 
@@ -662,7 +688,7 @@ function bayesopt_optimize(f, x0::Array{Float64, 1}, options::Dict{Symbol, Any})
 
         y_new = surrogate_f(best_candidate)
 
-        if length(surrogate.x) + 1 >= next_refit_at || i == maxiters
+        if length(surrogate.x) + 1 >= next_refit_at || i == ei_iterations
             surrogate = Surrogates.Kriging(vcat(surrogate.x, [best_candidate]), vcat(surrogate.y, [y_new]), lb, ub)
             next_refit_at = 2 * length(surrogate.x)
         else
@@ -671,7 +697,22 @@ function bayesopt_optimize(f, x0::Array{Float64, 1}, options::Dict{Symbol, Any})
     end
 
     _, index = findmin(surrogate.y)
-    return clamp.(point_to_vec(surrogate.x[index]), lower_bounds, upper_bounds)
+    best_x = surrogate.x[index]
+    best_y = surrogate.y[index]
+
+    # Any budget left after ei_iterations (see above) - plain space-filling
+    # samples evaluated directly, with no surrogate/EI cost at all, since
+    # the surrogate isn't refit again before returning anyway.
+    for _ in 1:(maxiters - ei_iterations)
+        candidate = first(Surrogates.sample(1, lb, ub, Surrogates.RandomSample()))
+        y = surrogate_f(candidate)
+        if y < best_y
+            best_y = y
+            best_x = candidate
+        end
+    end
+
+    return clamp.(point_to_vec(best_x), lower_bounds, upper_bounds)
 end
 
 function bboptimize(f, x0, params)

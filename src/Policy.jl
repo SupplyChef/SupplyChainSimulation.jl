@@ -311,6 +311,23 @@ required_lookback(policy::BackwardCoverageOrderingPolicy)::Int = length(policy.c
 _order_quantity(x::AbstractFloat) = max(0, ceil(Int, x))
 _order_quantity(x::Real) = max(zero(x), x)
 
+"""
+    _as_order_quantity(x::Real)
+
+`place_orders` (Simulation.jl) wraps every `get_order` dispatch branch in a
+blanket `Int(...)` - harmless for the `AbstractFloat`/`Integer` results
+every branch other than `BackwardCoverageOrderingPolicy` always returns (an
+ordinary conversion or a no-op), but `Int(::Dual)` unconditionally throws
+unless every partial happens to be exactly zero (ForwardDiff.jl's own
+source, already confirmed earlier for `ceil(Int, ::Dual)` - `Int` behaves
+the same way) - which breaks the moment `_order_quantity` above hands back
+a genuine (non-`Integer`) `Dual` during differentiation. Same fix as
+`_order_quantity`: pass anything that isn't already `AbstractFloat`/
+`Integer` through unchanged instead of forcing the conversion.
+"""
+_as_order_quantity(x::Union{AbstractFloat, Integer}) = Int(x)
+_as_order_quantity(x::Real) = x
+
 # Shared by both get_order overloads below: the one difference between
 # them is how lane_idx is obtained (a free field read from a Trip already
 # in hand vs. a state.lane_index Dict lookup from a bare Lane) - the

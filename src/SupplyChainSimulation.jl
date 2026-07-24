@@ -63,6 +63,8 @@ using Graphs
 #using BlackBoxOptim
 import CMAEvolutionStrategy
 import Optim
+import BayesianOptimization
+import GaussianProcesses
 using SupplyChainModeling
 
 abstract type InventoryOrderingPolicy end

@@ -86,20 +86,54 @@ end
       suggesting a cheaper local refinement with restarts to escape local optima
       might match its quality in even less time, or find a better optimum with the
       leftover budget spent on more restarts instead of one long population search.
+    - `:bayesopt`: Bayesian optimization (Gaussian-process surrogate + acquisition
+      function), via BayesianOptimization.jl/GaussianProcesses.jl. Tuned via
+      `bayesopt_options` (see below). Worth trying specifically because every
+      evaluation here is a full discrete-event simulation (expensive) over a small
+      number of parameters (2-6 in the benchmarks so far) - exactly the regime
+      where trading cheap surrogate-model fitting for far fewer real evaluations
+      pays off, unlike the other three methods, which all spend thousands of real
+      evaluations even though :cma_es's own convergence curve suggests the actual
+      information content of these problems is exhausted far earlier.
 
     `cma_es_options` (only used when `method === :cma_es`) accepts:
     - `:lower`, `:upper`: box constraints, each either a scalar (broadcast to every
       parameter) or a per-parameter vector. Default `0.0`/`5000.0`, matching
       `:custom`'s default `:SearchRange`.
-    - `:maxfevals`: evaluation budget. Default `15000`, matching `:custom`'s default
-      `:MaxFuncEvals`, so the two methods are comparable under the same budget.
+    - `:maxfevals`: total evaluation budget across all restarts combined. Default
+      `15000`, matching `:custom`'s default `:MaxFuncEvals`, so the methods are
+      comparable under the same budget.
     - `:sigma0`: initial global step size (CMA-ES's `s0`). Defaults to a quarter of
       the bounds' range, a commonly-used rule of thumb when there's no prior on
       where in the box the optimum sits.
+    - `:restarts`: number of *additional* CMA-ES runs beyond the first, each with a
+      bigger population than the last (IPOP-CMA-ES - see `cma_es_optimize`'s
+      docstring for why). Default `3`. Each gets an even share of `:maxfevals`.
+    - `:incpopsize`: population-size multiplier applied per restart. Default `2`.
     - `:popsize`, `:seed`, `:verbosity`: passed straight through to
       `CMAEvolutionStrategy.minimize` when given; otherwise left at that package's
       own defaults (`:verbosity` defaults to `0` here instead, since `:custom`
       already prints its own progress and CMA-ES's is redundant in that context).
+      `:popsize`, if given, is the *first* restart's population size - later
+      restarts still scale up from it by `:incpopsize` each time.
+
+    `bayesopt_options` (only used when `method === :bayesopt`) accepts:
+    - `:lower`, `:upper`: box constraints, same shape/defaults as `cma_es_options`.
+    - `:maxfevals`: total real simulation-evaluation budget, split between the
+      initial space-filling design and the guided acquisition-function search (see
+      `:initializer_iterations`). Default `200` - deliberately nowhere near the
+      other methods' `15000`: Bayesian optimization trades a much smaller number of
+      expensive real evaluations for the cost of fitting/querying a Gaussian
+      process surrogate at every step, so giving it thousands of evaluations would
+      make that per-step surrogate cost (which grows with the number of points
+      observed) dominate, not help - see `bayesopt_optimize`'s docstring.
+    - `:initializer_iterations`: how many of `:maxfevals` are spent on an initial
+      space-filling (Sobol sequence) design before the acquisition-guided search
+      begins, rather than on `:maxfevals` itself. Default `min(5 * length(x0),
+      maxfevals ÷ 2)`.
+    - `:model_refit_every`: how many observations pass between re-fitting the
+      Gaussian process's own hyperparameters (`MAPGPOptimizer`'s `every`). Default
+      `50`.
 
     `nelder_mead_options` (only used when `method === :nelder_mead`) accepts:
     - `:lower`, `:upper`: box constraints, same shape/defaults as `cma_es_options`.
@@ -118,7 +152,7 @@ end
     - `:restart_scale`: restart perturbation size, as a fraction of `:upper - :lower`
       in each dimension. Default `0.2`.
 """
-function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s), record_history::Bool=true, method::Symbol=:custom, cma_es_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), nelder_mead_options::Dict{Symbol, Any}=Dict{Symbol, Any}())
+function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s), record_history::Bool=true, method::Symbol=:custom, cma_es_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), nelder_mead_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), bayesopt_options::Dict{Symbol, Any}=Dict{Symbol, Any}())
     initial_states = State.(supplychains)
     envs = [Env(supplychain, initial_states, lane_policies; record_history=record_history) for supplychain in supplychains]
 
@@ -140,22 +174,20 @@ function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}
     f = x -> minimize!(lane_policies, policies, collect(envs), collect(initial_states), x; cost_function=cost_function)
 
     if method === :custom
-        # :MaxStepsWithoutProgress is deliberately left unset here (unless
-        # params overrides it) rather than hardcoded - bboptimize derives a
-        # default from both :MaxFuncEvals and its own pool_size, since the
-        # two interact (see bboptimize's comment on that default).
-        max_func_evals = get(params, :MaxFuncEvals, 15000.0)
         best = SupplyChainSimulation.bboptimize(f,
                          x0,
-                        merge(Dict(:MaxFuncEvals => max_func_evals,
+                        merge(Dict(:MaxFuncEvals => 15000,
+                             :MaxStepsWithoutProgress => 1500,
                              :SearchRange => (-0.0, 5000.0),
                              :NumDimensions => length(x0)), params))
     elseif method === :cma_es
         best = cma_es_optimize(f, x0, cma_es_options)
     elseif method === :nelder_mead
         best = nelder_mead_optimize(f, x0, nelder_mead_options)
+    elseif method === :bayesopt
+        best = bayesopt_optimize(f, x0, bayesopt_options)
     else
-        error("optimize!: unknown method $(repr(method)); supported methods are :custom, :cma_es, and :nelder_mead")
+        error("optimize!: unknown method $(repr(method)); supported methods are :custom, :cma_es, :nelder_mead, and :bayesopt")
     end
 
     i = 1
@@ -172,8 +204,23 @@ Minimizes `f` starting from `x0` with CMAEvolutionStrategy.jl, translating this
 package's `optimize!(...; method=:cma_es, cma_es_options=...)` options (see
 `optimize!`'s docstring) into `CMAEvolutionStrategy.minimize`'s keyword arguments.
 Split out of `optimize!` so the CMA-ES-specific option handling (scalar-vs-vector
-bounds, the `sigma0` default, forwarding `popsize`/`seed` only when given) doesn't
-clutter the method-dispatch branch above.
+bounds, the `sigma0` default, forwarding `seed` only when given) doesn't clutter
+the method-dispatch branch above.
+
+IPOP-CMA-ES-style restarts (Auger & Hansen, 2005): each of `:restarts` additional
+runs beyond the first multiplies the population size (`:incpopsize`, default 2x)
+from the previous run's, giving later restarts more diversity/global search
+power. `CMAEvolutionStrategy.minimize` often converges - via its own internal
+TolFun/TolX checks - well before exhausting the evaluation budget it's given;
+restarting with a bigger population instead of just accepting an early
+convergence spends that otherwise-unused budget on a better chance to escape
+whatever local optimum the smaller population settled into, rather than being
+wasted. Each restart gets an even share of `:maxfevals`, starts from the same
+`x0` (never a random point or the previous restart's incumbent - a caller who
+already has a good starting guess loses nothing, matching
+`nelder_mead_optimize`'s restarts), and the best result across every restart
+wins - restarting can only find something at least as good as the very first
+run, never worse.
 """
 function cma_es_optimize(f, x0::Array{Float64, 1}, options::Dict{Symbol, Any})
     n = length(x0)
@@ -183,18 +230,36 @@ function cma_es_optimize(f, x0::Array{Float64, 1}, options::Dict{Symbol, Any})
     upper_bounds = upper isa AbstractVector ? convert(Array{Float64, 1}, upper) : fill(convert(Float64, upper), n)
 
     sigma0 = get(options, :sigma0, (upper_bounds[1] - lower_bounds[1]) / 4)
+    maxfevals = get(options, :maxfevals, 15000)
+    restarts = get(options, :restarts, 3)
+    incpopsize = get(options, :incpopsize, 2)
+    per_run_maxfevals = max(1, maxfevals ÷ (restarts + 1))
 
     minimize_kwargs = Dict{Symbol, Any}(
         :lower => lower_bounds,
         :upper => upper_bounds,
-        :maxfevals => get(options, :maxfevals, 15000),
+        :maxfevals => per_run_maxfevals,
         :verbosity => get(options, :verbosity, 0),
     )
-    haskey(options, :popsize) && (minimize_kwargs[:popsize] = options[:popsize])
     haskey(options, :seed) && (minimize_kwargs[:seed] = options[:seed])
 
-    result = CMAEvolutionStrategy.minimize(f, x0, sigma0; minimize_kwargs...)
-    return CMAEvolutionStrategy.xbest(result)
+    popsize = get(options, :popsize, CMAEvolutionStrategy.default_popsize(n))
+
+    result = CMAEvolutionStrategy.minimize(f, x0, sigma0; minimize_kwargs..., popsize=popsize)
+    best_x = CMAEvolutionStrategy.xbest(result)
+    best_f = CMAEvolutionStrategy.fbest(result)
+
+    for _ in 1:restarts
+        popsize *= incpopsize
+        result = CMAEvolutionStrategy.minimize(f, x0, sigma0; minimize_kwargs..., popsize=popsize)
+        candidate_f = CMAEvolutionStrategy.fbest(result)
+        if candidate_f < best_f
+            best_f = candidate_f
+            best_x = CMAEvolutionStrategy.xbest(result)
+        end
+    end
+
+    return best_x
 end
 
 """
@@ -269,6 +334,66 @@ function nelder_mead_optimize(f, x0::Array{Float64, 1}, options::Dict{Symbol, An
     return best_x
 end
 
+"""
+    bayesopt_optimize(f, x0, options)
+
+Minimizes `f` via Bayesian optimization (BayesianOptimization.jl, with a
+GaussianProcesses.jl Gaussian-process surrogate), translating this package's
+`optimize!(...; method=:bayesopt, bayesopt_options=...)` options (see
+`optimize!`'s docstring) into `BOpt`'s constructor arguments.
+
+Unlike `:custom`/`:cma_es`/`:nelder_mead` - all of which spend their entire
+evaluation budget on real (expensive) calls to `f` - Bayesian optimization
+fits a cheap surrogate model of `f` from the points observed so far and uses
+it to pick each next point to actually evaluate, trading surrogate-fitting
+cost for far fewer real evaluations. That trade only pays off when real
+evaluations are expensive relative to the surrogate (true here: `f` is a full
+discrete-event simulation) and the parameter count is small (the surrogate
+model's own cost grows with both dimensions and points observed) - both hold
+for the problems this package has been benchmarked against so far (2-6
+parameters), but neither is guaranteed for every caller, which is why this
+method exists alongside the other three rather than replacing any of them.
+
+`x0` isn't used as a search seed the way the other methods use it: `BOpt`
+always begins from its own space-filling (Sobol sequence) initial design
+over `[lower, upper]`, so a caller's starting guess doesn't bias where that
+initial exploration lands. This mirrors how the initial design is meant to
+work (uniform coverage of the box, not biased toward one point) rather than
+being an oversight.
+
+Returns `observed_optimizer` (the best point actually evaluated) rather than
+`model_optimizer` (the surrogate's own best guess, which may never have been
+evaluated for real) - the same "trust only what was actually measured"
+principle `:custom`/`:cma_es`/`:nelder_mead` all follow by construction.
+"""
+function bayesopt_optimize(f, x0::Array{Float64, 1}, options::Dict{Symbol, Any})
+    n = length(x0)
+    lower = get(options, :lower, 0.0)
+    upper = get(options, :upper, 5000.0)
+    lower_bounds = lower isa AbstractVector ? convert(Array{Float64, 1}, lower) : fill(convert(Float64, lower), n)
+    upper_bounds = upper isa AbstractVector ? convert(Array{Float64, 1}, upper) : fill(convert(Float64, upper), n)
+
+    maxfevals = get(options, :maxfevals, 200)
+    initializer_iterations = get(options, :initializer_iterations, min(5 * n, maxfevals ÷ 2))
+    maxiterations = max(1, maxfevals - initializer_iterations)
+    model_refit_every = get(options, :model_refit_every, 50)
+
+    model = GaussianProcesses.ElasticGPE(n,
+                                          mean = GaussianProcesses.MeanConst(0.0),
+                                          kernel = GaussianProcesses.SEArd(zeros(n), 5.0))
+    modeloptimizer = BayesianOptimization.MAPGPOptimizer(every = model_refit_every)
+
+    opt = BayesianOptimization.BOpt(f, model, BayesianOptimization.UpperConfidenceBound(),
+                                     modeloptimizer, lower_bounds, upper_bounds;
+                                     sense = BayesianOptimization.Min,
+                                     maxiterations = maxiterations,
+                                     initializer_iterations = initializer_iterations,
+                                     verbosity = BayesianOptimization.Silent)
+
+    result = BayesianOptimization.boptimize!(opt)
+    return clamp.(result.observed_optimizer, lower_bounds, upper_bounds)
+end
+
 function bboptimize(f, x0, params)
     start = Dates.now()
     latest = start
@@ -278,16 +403,7 @@ function bboptimize(f, x0, params)
     
     last_progress = 0
 
-    # Standard differential-evolution guidance sizes the population to
-    # several times the parameter count (~5-10x is typical) rather than a
-    # flat constant - a fixed pool_size=6 was fine for newsvendor's 2
-    # parameters (3x) but starved beer_game's 6-parameter search of the
-    # diversity a DE/rand/1-style mutation (below) needs: its convergence
-    # curve was still improving at the very end of its evaluation budget
-    # (see benchmark/compare_optimizers.jl's beer_game results) - the
-    # signature of a population too small to adequately cover the
-    # landscape, not of stopping too early.
-    pool_size = max(6, 5 * length(x0))
+    pool_size = 6
     candidate_pool = [rand(length(x0)) .* (params[:SearchRange][2] - params[:SearchRange][1]) .+ params[:SearchRange][1] for i in 1:pool_size]
     #println(candidate_pool)
     pool_f = [f(candidate) for candidate in candidate_pool]
@@ -296,23 +412,8 @@ function bboptimize(f, x0, params)
     t = max(0.1, min(0.9, 6 / length(x0)))
     #println(t)
 
-    # A bigger pool_size dilutes how often any specific slot gets refined
-    # per raw evaluation - each mutation only touches one randomly-chosen
-    # pool member, so a pool 5x the old flat size of 6 needs roughly 5x as
-    # many evaluations to give every slot a comparable chance to improve.
-    # Scaling MaxStepsWithoutProgress's default by the same pool_size/6
-    # ratio that grew the population keeps the *fraction of a full
-    # population cycle* the search is willing to wait roughly constant,
-    # instead of the flat 10%-of-budget alone, which let a real search
-    # quit - with zero improvement ever found - after fewer evaluations
-    # than a single pass through a 30-member pool typically needs (see
-    # test/policy-beergame-tests.jl's "Beer game" test, which caught this
-    # exact case at pool_size=30).
-    max_steps_without_progress = get(params, :MaxStepsWithoutProgress,
-                                      max(100.0, 0.1 * params[:MaxFuncEvals] * (pool_size / 6.0)))
-
     for i in 1:params[:MaxFuncEvals]
-        if i > last_progress + max_steps_without_progress
+        if i > last_progress + params[:MaxStepsWithoutProgress]
             println("$i, $(Dates.now() - start), $best_f, $best_x")
             break
         end

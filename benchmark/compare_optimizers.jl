@@ -1,8 +1,9 @@
 #=
-Compares optimize!'s three search methods - :custom (the original hand-rolled
-optimizer), :cma_es (CMAEvolutionStrategy.jl), and :nelder_mead (multi-start
-Optim.jl NelderMead) - on two structurally different simulation-optimization
-tasks, under a matched evaluation budget, across several independent trials.
+Compares optimize!'s four search methods - :custom (the original hand-rolled
+optimizer), :cma_es (CMAEvolutionStrategy.jl), :nelder_mead (multi-start
+Optim.jl NelderMead), and :bayesopt (BayesianOptimization.jl) - on two
+structurally different simulation-optimization tasks, under a matched
+evaluation budget, across several independent trials.
 
 :nelder_mead was added after an earlier run of this script showed :cma_es
 converging - and then plateauing - well before exhausting its evaluation
@@ -11,6 +12,16 @@ search with restarts is a genuinely different approach from CMA-ES's
 population-based one, and worth checking whether it matches CMA-ES's
 solution quality in less time, or beats it by spending the leftover budget
 on more restarts instead of one long population search.
+
+:bayesopt was added for the same underlying reason - :cma_es plateauing well
+short of its budget suggests these problems' actual information content is
+exhausted far earlier than thousands of evaluations - but pursues a
+different fix: instead of spending the same number of expensive real
+evaluations more cleverly, use a cheap Gaussian-process surrogate to need
+far fewer of them in the first place. Worth trying specifically because
+every evaluation here is a full discrete-event simulation (expensive) over a
+small number of parameters (2-6 so far) - exactly the regime where trading
+surrogate-fitting cost for real evaluations pays off.
 
 Two problems are compared, not just one:
 - "newsvendor": test/policy-calibration-generalization-tests.jl's single-stage
@@ -58,7 +69,7 @@ using SupplyChainModeling
 using SupplyChainSimulation
 
 const CHECKPOINT_FRACTIONS = [0.1, 0.25, 0.5, 0.75, 1.0]
-const METHODS = [:custom, :cma_es, :nelder_mead]
+const METHODS = [:custom, :cma_es, :nelder_mead, :bayesopt]
 
 function compare_optimizers_params()
     maxfevals = parse(Int, get(ENV, "COMPARE_MAXFEVALS", "3000"))
@@ -119,6 +130,17 @@ function run_search(method::Symbol, lane_policies, training_scenarios, cost_func
             Dict{Symbol, Any}(:maxfevals => maxfevals, :seed => UInt(seed)))
     elseif method === :nelder_mead
         best = SupplyChainSimulation.nelder_mead_optimize(tracked_f, x0,
+            Dict{Symbol, Any}(:maxfevals => maxfevals))
+    elseif method === :bayesopt
+        # Same maxfevals as every other method, for the same reason they all
+        # get it here (a fair, matched-budget comparison) - even though
+        # bayesopt_optimize's own default (200) is deliberately much smaller.
+        # Whether Bayesian optimization is still worthwhile once forced up to
+        # the other methods' scale (its own per-step Gaussian-process fit
+        # cost grows with the number of points observed) is itself part of
+        # what this comparison is meant to show, not something to hide by
+        # quietly giving it an easier budget than the others.
+        best = SupplyChainSimulation.bayesopt_optimize(tracked_f, x0,
             Dict{Symbol, Any}(:maxfevals => maxfevals))
     else
         error("run_search: unknown method $method")

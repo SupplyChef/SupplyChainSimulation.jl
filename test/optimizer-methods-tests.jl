@@ -207,3 +207,97 @@ end
         true
     end
 end
+
+@testset "optimize! method=:bayesopt" begin
+    # Smoke-tests optimize!'s :bayesopt path end to end (BayesianOptimization.jl/
+    # GaussianProcesses.jl wiring in Optimization.jl's bayesopt_optimize) - same
+    # shape/reasoning as the :cma_es/:nelder_mead tests above.
+    @test begin
+        horizon = 1
+
+        product = Product("product")
+
+        supplier = Supplier("supplier")
+        storage = Storage("storage")
+        add_product!(storage, product; unit_holding_cost=1.0)
+        customer = Customer("customer")
+
+        l1 = Lane(storage, customer)
+        l2 = Lane(supplier, storage)
+
+        n() = begin
+            network = SupplyChain(horizon)
+
+            add_supplier!(network, supplier)
+            add_storage!(network, storage)
+            add_customer!(network, customer)
+            add_product!(network, product)
+            add_lane!(network, l1)
+            add_lane!(network, l2)
+
+            add_demand!(network, customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)
+
+            return network
+        end
+
+        policy = OnHandUptoOrderingPolicy(0)
+        policies = Dict((l2, product) => policy)
+
+        initial_states = [n() for i in 1:5]
+        # Small maxfevals keeps this a fast smoke test - the default 200 is
+        # already small (bayesopt_optimize isn't meant to run thousands of
+        # evaluations), but this exercises its default (scalar) bounds path
+        # with an even smaller budget.
+        optimize!(policies, initial_states...;
+                  method=:bayesopt,
+                  bayesopt_options=Dict{Symbol, Any}(:maxfevals => 30),
+                  cost_function=metrics_cost_function, record_history=false)
+
+        final_states = [simulate(initial_state, policies) for initial_state in initial_states]
+        true
+    end
+
+    @test begin
+        # Exercises bayesopt_optimize's vector-bounds and model_refit_every
+        # option-forwarding branches, which the scalar-bounds test above
+        # doesn't reach.
+        horizon = 1
+
+        product = Product("product")
+
+        supplier = Supplier("supplier")
+        storage = Storage("storage")
+        add_product!(storage, product; unit_holding_cost=1.0)
+        customer = Customer("customer")
+
+        l1 = Lane(storage, customer)
+        l2 = Lane(supplier, storage)
+
+        n() = begin
+            network = SupplyChain(horizon)
+
+            add_supplier!(network, supplier)
+            add_storage!(network, storage)
+            add_customer!(network, customer)
+            add_product!(network, product)
+            add_lane!(network, l1)
+            add_lane!(network, l2)
+
+            add_demand!(network, customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)
+
+            return network
+        end
+
+        policy = BackwardCoverageOrderingPolicy([0.0, 0.0])
+        policies = Dict((l2, product) => policy)
+
+        initial_states = [n() for i in 1:5]
+        optimize!(policies, initial_states...;
+                  method=:bayesopt,
+                  bayesopt_options=Dict{Symbol, Any}(:lower => [0.0, 0.0], :upper => [100.0, 100.0], :maxfevals => 30, :model_refit_every => 5),
+                  cost_function=metrics_cost_function, record_history=false)
+
+        final_states = [simulate(initial_state, policies) for initial_state in initial_states]
+        true
+    end
+end

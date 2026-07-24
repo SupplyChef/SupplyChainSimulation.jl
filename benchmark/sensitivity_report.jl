@@ -98,8 +98,14 @@ function run_newsvendor_sensitivity(samples::Int)
     policy = BackwardCoverageOrderingPolicy([0.0, 0.0])
     lane_policies = Dict((supply_lane, product) => policy)
 
+    # record_history=true, unlike beer_game below: newsvendor_cost calls
+    # get_total_lost_sales/get_total_holding_costs (Reporting.jl), which scan
+    # state.historical_orders/historical_on_hand - populated only when Env's
+    # record_history is true (see Env.record_history) - metrics_cost_function
+    # doesn't have this constraint since it reads state.metrics directly,
+    # which is why beer_game's call below can safely use record_history=false.
     return sensitivity_analysis(lane_policies, scenarios...;
-        cost_function=newsvendor_cost, record_history=false,
+        cost_function=newsvendor_cost, record_history=true,
         options=Dict{Symbol, Any}(:lower => 0.0, :upper => 150.0, :samples => samples))
 end
 

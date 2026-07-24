@@ -201,10 +201,69 @@ function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}
 end
 
 """
+    sobol_indices(f, lower, upper; samples)
+
+Computes first-order (`S1`) and total-order (`ST`) Sobol sensitivity indices
+of `f` over the box `lower[i] <= x[i] <= upper[i]`, via the Saltelli
+(2010)/Jansen (1999) estimators - the same estimators a SciML-ecosystem
+sensitivity-analysis package (GlobalSensitivity.jl) would use, reimplemented
+directly here rather than depending on that package: GlobalSensitivity.jl
+bundles many sensitivity methods together, and two of its own transitive
+dependencies (Copulas.jl, needed only for its unrelated Shapley-effects
+method, and ForwardDiff) turned out to require mutually incompatible
+versions of GlobalSensitivity.jl itself once resolved against this
+package's other, already-modern dependencies - not something fixable by
+adjusting a compat bound on our end. Kept as a standalone, generically
+useful function (not folded into `sensitivity_analysis` below) specifically
+so a real SciML package could be swapped in later as a pure implementation
+detail, without `sensitivity_analysis`'s own signature or return shape
+needing to change, if a working dependency path for one ever exists.
+
+Draws two independent `samples x length(lower)` matrices `A`/`B` uniformly
+from the box, plus one `A` with column `i` swapped in from `B` per parameter
+`i` - `samples * (length(lower) + 2)` evaluations of `f` in total. `S1`/`ST`
+are validated in this package's tests against the analytically known Sobol
+indices of a simple linear function (which has no parameter interactions,
+so `S1 == ST` exactly in the infinite-sample limit) rather than only
+smoke-tested, since there is no local Julia available in this project's
+usual workflow to cross-check the estimator against a reference
+implementation interactively.
+"""
+function sobol_indices(f, lower::Array{Float64, 1}, upper::Array{Float64, 1}; samples::Int)
+    d = length(lower)
+    box_range = upper .- lower
+
+    A = [lower .+ rand(d) .* box_range for _ in 1:samples]
+    B = [lower .+ rand(d) .* box_range for _ in 1:samples]
+
+    f_A = f.(A)
+    f_B = f.(B)
+
+    all_f = vcat(f_A, f_B)
+    mean_f = sum(all_f) / length(all_f)
+    var_y = sum((y - mean_f)^2 for y in all_f) / (length(all_f) - 1)
+
+    S1 = zeros(d)
+    ST = zeros(d)
+    for i in 1:d
+        AB_i = [copy(a) for a in A]
+        for j in 1:samples
+            AB_i[j][i] = B[j][i]
+        end
+        f_ABi = f.(AB_i)
+
+        S1[i] = (sum(f_B[j] * (f_ABi[j] - f_A[j]) for j in 1:samples) / samples) / var_y
+        ST[i] = (sum((f_A[j] - f_ABi[j])^2 for j in 1:samples) / (2 * samples)) / var_y
+    end
+
+    return S1, ST
+end
+
+"""
     sensitivity_analysis(lane_policies, supplychains...; cost_function, record_history, options)
 
 Runs a global (Sobol) sensitivity analysis of `cost_function` against every
-policy parameter across `lane_policies`, via GlobalSensitivity.jl - a
+policy parameter across `lane_policies`, via `sobol_indices` above - a
 different question from `optimize!`'s "what's the best policy?": "which
 policy parameters actually matter for cost?" Useful as a triage step before
 spending an `optimize!` budget tuning parameters that barely move the
@@ -216,11 +275,11 @@ on why `sorted_keys`' order has to be deterministic) rather than reimplementing
 it, so the parameter ordering `S1`/`ST` are reported in exactly matches what
 `optimize!` itself searches over.
 
-Restores every policy's original parameters before returning:  `minimize!`
+Restores every policy's original parameters before returning: `minimize!`
 mutates each policy's parameters as a side effect of evaluating a candidate
 `x` (see its definition above) - without explicitly restoring `x0` afterward,
 this function, despite being a read-only diagnostic, would otherwise leave
-every policy set to whatever the last of GlobalSensitivity.jl's many sampled
+every policy set to whatever the last of `sobol_indices`' many sampled
 points happened to be, rather than left unchanged as a caller would expect.
 
 Returns a NamedTuple `(parameter_labels, S1, ST)`: `parameter_labels[i]`
@@ -236,10 +295,8 @@ its own.
 - `:lower`, `:upper`: box constraints, each either a scalar (broadcast to
   every parameter) or a per-parameter vector - same shape/defaults
   (`0.0`/`5000.0`) as `optimize!`'s other `*_options` dicts.
-- `:samples`: controls evaluation cost - GlobalSensitivity.jl's Sobol method
-  needs `samples * (2 * length(x0) + 2)` real evaluations (some of the
-  `2 * length(x0) + 2` factor is inherent to how Sobol indices are
-  estimated, not a tunable). Default `1000`.
+- `:samples`: controls evaluation cost - needs `samples * (length(x0) + 2)`
+  real evaluations (see `sobol_indices`). Default `1000`.
 """
 function sensitivity_analysis(lane_policies, supplychains...; cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s), record_history::Bool=true, options::Dict{Symbol, Any}=Dict{Symbol, Any}())
     initial_states = State.(supplychains)
@@ -268,8 +325,7 @@ function sensitivity_analysis(lane_policies, supplychains...; cost_function=s->-
 
     f = x -> minimize!(lane_policies, policies, collect(envs), collect(initial_states), x; cost_function=cost_function)
 
-    p_range = [[lower_bounds[i], upper_bounds[i]] for i in 1:n]
-    result = GlobalSensitivity.gsa(f, GlobalSensitivity.Sobol(), p_range; samples=samples)
+    S1, ST = sobol_indices(f, lower_bounds, upper_bounds; samples=samples)
 
     i = 1
     for policy in policies
@@ -277,7 +333,7 @@ function sensitivity_analysis(lane_policies, supplychains...; cost_function=s->-
         i = i + length(get_parameters(policy))
     end
 
-    return (parameter_labels = parameter_labels, S1 = result.S1, ST = result.ST)
+    return (parameter_labels = parameter_labels, S1 = S1, ST = ST)
 end
 
 """

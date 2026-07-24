@@ -65,7 +65,6 @@ using Graphs
 import CMAEvolutionStrategy
 import Optim
 import Surrogates
-import GlobalSensitivity
 using SupplyChainModeling
 
 abstract type InventoryOrderingPolicy end

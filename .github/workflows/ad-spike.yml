@@ -1,0 +1,21 @@
+name: AD spike
+
+on:
+  workflow_dispatch:
+
+env:
+  JULIA_PKG_SERVER_REGISTRY_PREFERENCE: conservative
+
+jobs:
+  spike:
+    name: ForwardDiff through minimize!/simulate() feasibility check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v2
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: '1'
+          arch: x64
+      - run: julia --project=benchmark -e 'using Pkg; Pkg.Registry.add("General"); Pkg.resolve(); Pkg.instantiate()'
+      - run: julia --project=benchmark benchmark/ad_spike.jl

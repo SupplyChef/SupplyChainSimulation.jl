@@ -24,7 +24,7 @@ against a pre-existing baseline.
 """
 metrics_cost_function(s) = -s.metrics.sales + s.metrics.lost_sales + s.metrics.holding_costs + s.metrics.trip_fixed_costs + s.metrics.trip_unit_costs + 0.001 * s.metrics.orders
 
-function minimize!(lane_policies, policies, envs::Array{Env, 1}, initial_states::Array{State, 1}, x::AbstractVector{Float64}; cost_function)
+function minimize!(lane_policies, policies, envs::Array{Env, 1}, initial_states::Array{State, 1}, x::AbstractVector{<:Real}; cost_function)
     i = 1
     for policy in policies
         set_parameters!(policy, x[i:i+length(get_parameters(policy))-1])

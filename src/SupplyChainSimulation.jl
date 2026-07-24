@@ -26,6 +26,7 @@ export SingleOrderOrderingPolicy
 export required_lookback
 
 export set_parameters!
+export get_parameters
 export get_downstream_customers
 export simulate
 export optimize!

@@ -64,6 +64,7 @@ using Graphs
 #using Optim
 #using BlackBoxOptim
 import CMAEvolutionStrategy
+import Distributions
 import Optim
 import Surrogates
 using SupplyChainModeling

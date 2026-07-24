@@ -1,5 +1,4 @@
 
-#import Distributions
 using Dates
 
 """
@@ -360,11 +359,30 @@ already has a good starting guess loses nothing, matching
 `nelder_mead_optimize`'s restarts), and the best result across every restart
 wins - restarting can only find something at least as good as the very first
 run, never worse.
+
+Default `:upper` is `200.0`, not the `5000.0` every other `*_optimize`
+function here defaults to: `benchmark/compare_optimizers.jl`'s first real
+head-to-head comparison (5 trials x 3000 evals) showed `:cma_es` regressing
+badly against `:custom` on the 6-parameter beer_game problem (positive/bad
+training cost vs. `:custom`'s negative/good) while tied on the 2-parameter
+newsvendor problem - traced to `sigma0`'s default of `(upper-lower)/4`,
+which comes out to `1250` against the shared `5000.0` box, an enormous step
+size relative to where these policies' real parameters live (order-up-to/
+coverage levels in the tens to low hundreds, confirmed by both the
+sensitivity-report smoke tests' bounds and this fix's own validation run).
+Re-running the same comparison with `upper=200.0` (`sigma0=50`) turned
+`:cma_es` into the best or tied-best method on both problems - unlike
+`:custom`'s search dynamics (population-based, selection-driven, tolerant of
+an oversized box) or `nelder_mead_optimize`'s (anchored to the incumbent,
+not the raw box), CMA-ES's sampling distribution is directly sized by
+`sigma0`, so an oversized box translates directly into an oversized initial
+search radius. Still fully overridable via `:upper`/`:sigma0` for callers
+whose real parameter scale genuinely is in the thousands.
 """
 function cma_es_optimize(f, x0::Array{Float64, 1}, options::Dict{Symbol, Any})
     n = length(x0)
     lower = get(options, :lower, 0.0)
-    upper = get(options, :upper, 5000.0)
+    upper = get(options, :upper, 200.0)
     lower_bounds = lower isa AbstractVector ? convert(Array{Float64, 1}, lower) : fill(convert(Float64, lower), n)
     upper_bounds = upper isa AbstractVector ? convert(Array{Float64, 1}, upper) : fill(convert(Float64, upper), n)
 
@@ -514,15 +532,66 @@ parameter, but as a `Tuple` once there's more than one (see its own test
 suite) - `point_to_vec` bridges either representation back to the plain
 `Vector{Float64}` `f` expects.
 
-Returns the best point Surrogates.jl actually observed (`argmin` over the
-surrogate's own recorded `x`/`y`), the same "trust only what was actually
-measured" principle `:custom`/`:cma_es`/`:nelder_mead` all follow by
-construction.
+Returns the best point actually observed (`argmin` over every point measured,
+across both the initial design and the EI loop), the same "trust only what
+was actually measured" principle `:custom`/`:cma_es`/`:nelder_mead` all
+follow by construction.
+
+Default `:upper` is `200.0`, not `5000.0` - see `cma_es_optimize`'s docstring
+for the shared reasoning (the same `benchmark/compare_optimizers.jl` run that
+found `:cma_es` regressing on beer_game found `:bayesopt` far worse: 300x
+`:custom`'s cost on newsvendor, roughly 10 orders of magnitude worse on
+beer_game).
+
+Unlike `:cma_es`, tightening the box only closed part of `:bayesopt`'s gap
+(newsvendor: 2.79e6 down to 8.7e4, still ~10x `:custom`'s 9.0e3; beer_game:
+3.97e13 down to 2.6e9, still ~2e5x `:custom`'s -1.2e4) - both runs' own
+convergence tables showed the reported cost identical from 10% to 100% of
+the evaluation budget, meaning the search stopped improving almost
+immediately regardless of box size. Reading Surrogates.jl's own
+`surrogate_optimize!(..., EI(), ...)` source (this function no longer calls
+it - see below) turned up two compounding causes, neither fixed by a tighter
+box alone:
+
+1. The Kriging surrogate's `theta` (length-scale) and `p` (smoothness,
+   defaulting to `2.0` - i.e. assumes an infinitely smooth function) are
+   estimated once at construction and never re-estimated: `update!` (the
+   function `surrogate_optimize!` uses to add each new point) explicitly
+   reuses the same `theta`/`p` forever. This package's cost functions are
+   the opposite of smooth - `ceil(Int, deficit)` order-quantity truncation
+   (see `BackwardCoverageOrderingPolicy`/`ForwardCoverageOrderingPolicy` in
+   Policy.jl) and inventory clamps make them full of kinks - so a "this
+   looks smooth" fit from the first ~30 points stays wrong for the rest of
+   the run instead of correcting itself as evidence accumulates.
+2. `surrogate_optimize!`'s early-termination check is `new_EI_max < 1e-6 *
+   (maximum(krig.y) - minimum(krig.y))` - relative to the observed y-range,
+   not an absolute tolerance. In 6 dimensions, even a `[0, 200]` box lets a
+   handful of the initial Sobol samples land in badly-overordered territory
+   with catastrophic cost, which alone inflates that range into the millions
+   - which inflates the absolute EI the search needs to clear to keep going
+   into a threshold no genuine improvement can meet. This is worse for
+   beer_game (6 dimensions, more outlier-prone) than newsvendor (2), matching
+   the gap each still had after the box fix.
+
+Both point to the same underlying issue: Surrogates.jl's basic `Kriging` +
+`EI()` recipe, used as-is, isn't built for a highly non-smooth,
+wide-dynamic-range objective. Rather than a tighter box, this function
+reimplements `surrogate_optimize!`'s EI loop directly (same acquisition
+function, verified against Surrogates.jl's own source) with two changes:
+`theta`/`p` are re-estimated by rebuilding the Kriging surrogate from every
+point observed so far (not just appending via `update!`) on a geometric
+schedule (whenever the point count has at least doubled since the last
+rebuild - bounding the number of expensive full refits to O(log(maxfevals))
+the same way IPOP-CMA-ES's restarts bound *their* growth, rather than paying
+a full refit's O(points^3) cost every single iteration), and the internal
+early-termination check is dropped entirely - like every other method here,
+`:bayesopt` now spends its whole `:maxfevals` budget rather than stopping
+early on a signal that's proven unreliable for this package's objectives.
 """
 function bayesopt_optimize(f, x0::Array{Float64, 1}, options::Dict{Symbol, Any})
     n = length(x0)
     lower = get(options, :lower, 0.0)
-    upper = get(options, :upper, 5000.0)
+    upper = get(options, :upper, 200.0)
     lower_bounds = lower isa AbstractVector ? convert(Array{Float64, 1}, lower) : fill(convert(Float64, lower), n)
     upper_bounds = upper isa AbstractVector ? convert(Array{Float64, 1}, upper) : fill(convert(Float64, upper), n)
 
@@ -539,11 +608,41 @@ function bayesopt_optimize(f, x0::Array{Float64, 1}, options::Dict{Symbol, Any})
 
     xs = Surrogates.sample(initializer_iterations, lb, ub, Surrogates.SobolSample())
     ys = surrogate_f.(xs)
-    surrogate = Surrogates.Kriging(xs, ys, lb, ub)
+    surrogate = Surrogates.Kriging(collect(xs), collect(ys), lb, ub)
 
-    Surrogates.surrogate_optimize!(surrogate_f, Surrogates.EI(), lb, ub, surrogate,
-                                    Surrogates.SobolSample();
-                                    maxiters = maxiters, num_new_samples = num_new_samples)
+    # EI acquisition, matching Surrogates.jl's own EI() formula exactly (see
+    # this function's docstring) - reimplemented directly so the refit
+    # schedule below can replace its internal update!-only/early-stopping
+    # loop.
+    eps = 0.01
+    next_refit_at = 2 * length(surrogate.x)
+    for i in 1:maxiters
+        candidates = Surrogates.sample(num_new_samples, lb, ub, Surrogates.SobolSample())
+        f_min = minimum(surrogate.y)
+
+        best_ei = -Inf
+        best_candidate = candidates[1]
+        for candidate in candidates
+            std = Surrogates.std_error_at_point(surrogate, candidate)
+            u = surrogate(candidate)
+            z = abs(std) > 1.0e-6 ? (f_min - u - eps) / std : 0.0
+            ei = (f_min - u - eps) * Distributions.cdf(Distributions.Normal(), z) +
+                 std * Distributions.pdf(Distributions.Normal(), z)
+            if ei > best_ei
+                best_ei = ei
+                best_candidate = candidate
+            end
+        end
+
+        y_new = surrogate_f(best_candidate)
+
+        if length(surrogate.x) + 1 >= next_refit_at || i == maxiters
+            surrogate = Surrogates.Kriging(vcat(surrogate.x, [best_candidate]), vcat(surrogate.y, [y_new]), lb, ub)
+            next_refit_at = 2 * length(surrogate.x)
+        else
+            Surrogates.update!(surrogate, best_candidate, y_new)
+        end
+    end
 
     _, index = findmin(surrogate.y)
     return clamp.(point_to_vec(surrogate.x[index]), lower_bounds, upper_bounds)

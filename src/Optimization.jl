@@ -610,6 +610,9 @@ function bayesopt_optimize(f, x0::Array{Float64, 1}, options::Dict{Symbol, Any})
     ys = surrogate_f.(xs)
     surrogate = Surrogates.Kriging(collect(xs), collect(ys), lb, ub)
 
+    point_distance(a, b) = n == 1 ? abs(a - b) : sqrt(sum((collect(a) .- collect(b)) .^ 2))
+    dtol = 1.0e-3 * point_distance(lb, ub)
+
     # EI acquisition, matching Surrogates.jl's own EI() formula exactly (see
     # this function's docstring) - reimplemented directly so the refit
     # schedule below can replace its internal update!-only/early-stopping
@@ -617,21 +620,44 @@ function bayesopt_optimize(f, x0::Array{Float64, 1}, options::Dict{Symbol, Any})
     eps = 0.01
     next_refit_at = 2 * length(surrogate.x)
     for i in 1:maxiters
-        candidates = Surrogates.sample(num_new_samples, lb, ub, Surrogates.SobolSample())
+        candidates = collect(Surrogates.sample(num_new_samples, lb, ub, Surrogates.SobolSample()))
         f_min = minimum(surrogate.y)
 
-        best_ei = -Inf
-        best_candidate = candidates[1]
-        for candidate in candidates
+        evaluations = Vector{Float64}(undef, length(candidates))
+        for (j, candidate) in enumerate(candidates)
             std = Surrogates.std_error_at_point(surrogate, candidate)
             u = surrogate(candidate)
             z = abs(std) > 1.0e-6 ? (f_min - u - eps) / std : 0.0
-            ei = (f_min - u - eps) * Distributions.cdf(Distributions.Normal(), z) +
-                 std * Distributions.pdf(Distributions.Normal(), z)
-            if ei > best_ei
-                best_ei = ei
+            evaluations[j] = (f_min - u - eps) * Distributions.cdf(Distributions.Normal(), z) +
+                              std * Distributions.pdf(Distributions.Normal(), z)
+        end
+
+        # Surrogates.sample(..., SobolSample()) is a deterministic
+        # low-discrepancy sequence - a fresh call with the same
+        # num_new_samples/lb/ub returns the *same* points every iteration,
+        # so the EI argmax can (and, empirically, does) re-pick a point
+        # already in surrogate.x. Kriging's correlation matrix is singular
+        # for duplicate/near-duplicate x's, and Surrogates.Kriging doesn't
+        # throw on that - it prints "cannot build Kriging" and returns
+        # `nothing`, which then crashes on the next access. Skip any
+        # candidate within dtol of an existing point (Surrogates.jl's own
+        # surrogate_optimize! does the same dedup, with the same dtol
+        # formula) and fall back to a genuinely non-deterministic draw if
+        # every candidate this round turns out to be a duplicate.
+        best_candidate = nothing
+        while !isempty(candidates)
+            index_max = argmax(evaluations)
+            candidate = candidates[index_max]
+            if any(point_distance(candidate, x) < dtol for x in surrogate.x)
+                deleteat!(candidates, index_max)
+                deleteat!(evaluations, index_max)
+            else
                 best_candidate = candidate
+                break
             end
+        end
+        if best_candidate === nothing
+            best_candidate = first(Surrogates.sample(1, lb, ub, Surrogates.RandomSample()))
         end
 
         y_new = surrogate_f(best_candidate)

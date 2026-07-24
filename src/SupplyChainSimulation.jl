@@ -26,9 +26,11 @@ export SingleOrderOrderingPolicy
 export required_lookback
 
 export set_parameters!
+export get_parameters
 export get_downstream_customers
 export simulate
 export optimize!
+export sensitivity_analysis
 export metrics_cost_function
 
 export get_sorted_locations
@@ -63,6 +65,7 @@ using Graphs
 #using BlackBoxOptim
 import CMAEvolutionStrategy
 import Optim
+import Surrogates
 using SupplyChainModeling
 
 abstract type InventoryOrderingPolicy end

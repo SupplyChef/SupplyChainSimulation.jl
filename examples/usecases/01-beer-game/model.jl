@@ -246,6 +246,30 @@ function classic_score(states, product, horizon; holding_rate=0.1, backlog_rate=
     return (per_stage = stage_totals, total = sum(values(stage_totals)))
 end
 
+# --- Same formula as classic_score above, but as a per-state closure usable
+#     directly as optimize!'s cost_function - i.e. the actual beer-game cost
+#     (holding + backlog at every internal stage, holding + lost-sales proxy
+#     at retail) as the thing optimize! minimizes, not just something
+#     computed after the fact for reporting. metrics_cost_function (used by
+#     every optimize! call above) reads only state.metrics, which has no
+#     backlog field at all - SimMetrics tracks sales/lost_sales/holding_costs/
+#     trip costs/orders and nothing else (see Metrics.jl) - so internal
+#     backlog has been free in every optimization on this page so far. This
+#     function needs the historical arrays classic_score's helpers scan
+#     (onhand_series/backlog_series/get_total_lost_sales), so - unlike every
+#     optimize! call above - it requires record_history=true, and is
+#     correspondingly slower per trial.
+function classic_cost_function(state)
+    holding_rate = 0.1
+    backlog_rate = 0.2
+    total = holding_rate * sum(onhand_series(state, retailer, product, HORIZON)) + get_total_lost_sales(state)
+    for node in (wholesaler, factory, supplier)
+        total += holding_rate * sum(onhand_series(state, node, product, HORIZON))
+        total += backlog_rate * sum(backlog_series(state, node, product, HORIZON))
+    end
+    return total
+end
+
 # --- Sterman's (1989) "anchor and adjust" heuristic - a published, measured
 #     model of how real humans play the beer game, not a policy this package
 #     ships. Each period: order = forecast + alpha_stock*(desired_stock -
@@ -514,6 +538,41 @@ big_opt_cover = Dict(
     "l4_supplier_to_factory" => big_opt_policy4.cover,
 )
 
+# --- Follow-up: re-tune both policy families against the *actual* beer-game
+#     cost (classic_cost_function, backlog included) instead of
+#     metrics_cost_function, to test whether the missing backlog term above
+#     is what let BackwardCoverageOrderingPolicy's blow-up - and
+#     NetUptoOrderingPolicy's zero-buffer wholesaler - look cheap. Needs
+#     record_history=true, so these two calls are slower per trial than every
+#     optimize! call above; both still use the default 15000-eval budget.
+classic_tuned_naive_policy2 = NetUptoOrderingPolicy(0)
+classic_tuned_naive_policy3 = NetUptoOrderingPolicy(0)
+classic_tuned_naive_policy4 = NetUptoOrderingPolicy(0)
+classic_tuned_naive_policies = Dict((l2, product) => classic_tuned_naive_policy2, (l3, product) => classic_tuned_naive_policy3, (l4, product) => classic_tuned_naive_policy4)
+scenarios_for_classic_tuned_naive = build_scenarios(SCENARIO_COUNT, CALIBRATION_SEED)
+optimize!(classic_tuned_naive_policies, scenarios_for_classic_tuned_naive...; cost_function=classic_cost_function, record_history=true)
+classic_tuned_naive_states = [simulate(s, classic_tuned_naive_policies) for s in scenarios_for_classic_tuned_naive]
+classic_tuned_naive_metrics = full_metrics(classic_tuned_naive_states, product, HORIZON)
+classic_tuned_naive_targets = Dict(
+    "l2_wholesaler_to_retailer" => classic_tuned_naive_policy2.upto,
+    "l3_factory_to_wholesaler" => classic_tuned_naive_policy3.upto,
+    "l4_supplier_to_factory" => classic_tuned_naive_policy4.upto,
+)
+
+classic_opt_policy2 = BackwardCoverageOrderingPolicy([0.0, 0.0])
+classic_opt_policy3 = BackwardCoverageOrderingPolicy([0.0, 0.0])
+classic_opt_policy4 = BackwardCoverageOrderingPolicy([0.0, 0.0])
+classic_opt_policies = Dict((l2, product) => classic_opt_policy2, (l3, product) => classic_opt_policy3, (l4, product) => classic_opt_policy4)
+scenarios_for_classic_opt = build_scenarios(SCENARIO_COUNT, CALIBRATION_SEED)
+optimize!(classic_opt_policies, scenarios_for_classic_opt...; cost_function=classic_cost_function, record_history=true)
+classic_opt_states = [simulate(s, classic_opt_policies) for s in scenarios_for_classic_opt]
+classic_opt_metrics = full_metrics(classic_opt_states, product, HORIZON)
+classic_opt_cover = Dict(
+    "l2_wholesaler_to_retailer" => classic_opt_policy2.cover,
+    "l3_factory_to_wholesaler" => classic_opt_policy3.cover,
+    "l4_supplier_to_factory" => classic_opt_policy4.cover,
+)
+
 # Known-good values from test/policy-beergame-tests.jl's beer_game() test,
 # for the exact same seed/config/policy family - printed as a sanity check,
 # not asserted, since minor package-version drift could shift float results.
@@ -560,6 +619,10 @@ results = Dict(
     "equiv_metrics" => equiv_metrics,
     "big_opt_metrics" => big_opt_metrics,
     "big_opt_cover" => big_opt_cover,
+    "classic_tuned_naive_metrics" => classic_tuned_naive_metrics,
+    "classic_tuned_naive_targets" => classic_tuned_naive_targets,
+    "classic_opt_metrics" => classic_opt_metrics,
+    "classic_opt_cover" => classic_opt_cover,
 )
 
 open(joinpath(@__DIR__, "results.json"), "w") do io
@@ -603,3 +666,9 @@ println("  fill_rate=$(round(equiv_metrics.aggregate.fill_rate; digits=4))  tota
 println("\nBigger-budget BackwardCoverageOrderingPolicy rerun (60000 vs 15000 evals):")
 println("  cover: ", big_opt_cover)
 println("  fill_rate=$(round(big_opt_metrics.aggregate.fill_rate; digits=4))  total_cost=$(round(big_opt_metrics.costs.total_cost; digits=1))")
+println("\nTuned NetUptoOrderingPolicy under the real beer-game cost (holding+backlog, not metrics_cost_function):")
+println("  targets: ", classic_tuned_naive_targets)
+println("  fill_rate=$(round(classic_tuned_naive_metrics.aggregate.fill_rate; digits=4))  classic_score=$(round(classic_tuned_naive_metrics.classic.total; digits=1))  bullwhip=$(classic_tuned_naive_metrics.bullwhip)")
+println("\nBackwardCoverageOrderingPolicy under the real beer-game cost (holding+backlog, not metrics_cost_function):")
+println("  cover: ", classic_opt_cover)
+println("  fill_rate=$(round(classic_opt_metrics.aggregate.fill_rate; digits=4))  classic_score=$(round(classic_opt_metrics.classic.total; digits=1))  bullwhip=$(classic_opt_metrics.bullwhip)")

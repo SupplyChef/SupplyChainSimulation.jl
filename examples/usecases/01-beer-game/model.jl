@@ -404,7 +404,11 @@ end
 #     problem-specific knowledge: search once broad (discover roughly where
 #     good solutions live for THIS problem), then search again in a much
 #     narrower range centered on whatever that first pass actually found -
-#     no package change, no hardcoded numbers, adapts to any problem.
+#     no hardcoded numbers, adapts to any problem. (One small package fix was
+#     needed regardless: optimize!'s own params keyword was typed
+#     Dict{Symbol, Float64}, which can't hold a :SearchRange override at all
+#     - a Tuple, not a Float64 - so passing one always threw a TypeError,
+#     independent of this function. See Optimization.jl in this branch.)
 function optimize_coarse_to_fine!(lane_policies, supplychains...; cost_function, record_history=false, customer_backlog=false,
                                    coarse_params=Dict{Symbol,Float64}(), refine_shrink=20.0, refine_params=Dict{Symbol,Float64}())
     optimize!(lane_policies, supplychains...; cost_function=cost_function, record_history=record_history, customer_backlog=customer_backlog, params=coarse_params)

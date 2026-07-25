@@ -12,7 +12,6 @@
 # independently re-resolving location_index[location]/storage_index[location]/
 # product_index[product] via its own Dict lookup.
 function receive_inventory!(state::State, env::Env, location::Storage, product, li::Int64, si::Int64, pi::Int64, time)
-    #println(state)
     quantity = _in_transit_by_index(state, li, pi, time)
     max_capacity = get_maximum_storage(location, product)
 
@@ -39,7 +38,6 @@ function receive_inventory!(state::State, env::Env, location::Storage, product, 
 end
 
 function receive_inventory!(state::State, env::Env, location::Customer, product, li::Int64, si::Int64, pi::Int64, time)
-    #println(state)
     # si unused: Customers have no on-hand/overflow inventory of their own
     # (see the Storage method above) - see this section's header comment
     # for why it's still accepted here.
@@ -53,7 +51,6 @@ end
 
 # Send inventory (detailed)
 function send_inventory!(state::State, env::Env, trip::Trip, destination, product, quantity, time)
-    #println("send_inventory_low $destination $product $quantity $time")
     if time + get_leadtime(trip.route, destination) > get_horizon(state)
         return
     end
@@ -215,7 +212,6 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
 end
 
 function send_inventory!(state::State, env::Env, location::ConcreteNode, product::Product, li::Int64, si::Int64, pi::Int64, time::Int)
-    #println("send_inventory $location $product $time")
     # si is 0 for a Customer/Supplier reaching this generic method (not a
     # Storage): _on_hand_by_index's si==0 guard then keeps available at 0,
     # which the `quantity <= available` check below already relies on to
@@ -229,7 +225,6 @@ function send_inventory!(state::State, env::Env, location::ConcreteNode, product
     sort!(order_lines, by=ol -> (ol.creation_time, ol.due_date))
     #@debug order_lines
 
-    #println("send_inventory order_lines $order_lines")
     # Tracked locally and kept in sync with each _remove_on_hand_by_index!
     # below, instead of re-reading on-hand inventory twice per order line.
     available = _on_hand_by_index(state, si, pi)
@@ -337,7 +332,6 @@ end
 function place_orders(state::State, env::Env, location::ConcreteNode, product::Product, li::Int64, si::Int64, pi::Int64, time::Int, orders::Array{OrderLine, 1})
     empty!(orders)
     for trip in get_inbound_trips(env, location, time)
-        #println(policies)
         policy = get(trip.policies, product, nothing)
         if !isnothing(policy)
             # Hand-written union split, inlined directly here rather than
@@ -369,13 +363,7 @@ function place_orders(state::State, env::Env, location::ConcreteNode, product::P
                 # reads trip.lane_index directly instead of hashing
                 # trip.route through state.lane_index, since trip is
                 # already in hand at this exact call site.
-                #
-                # _as_order_quantity, not a blanket Int(...) (unlike every
-                # other branch here): this policy's get_order can return a
-                # continuous (non-Integer) value during AD-based
-                # differentiation of optimize!'s cost function - see
-                # Policy.jl's _order_quantity/_as_order_quantity comments.
-                _as_order_quantity(get_order(policy::BackwardCoverageOrderingPolicy, state, env, location, trip, product, li, si, pi, time))
+                Int(get_order(policy::BackwardCoverageOrderingPolicy, state, env, location, trip, product, li, si, pi, time))
             elseif policy isa SingleOrderOrderingPolicy
                 Int(get_order(policy::SingleOrderOrderingPolicy, state, env, location, trip.route, product, li, si, pi, time))
             else

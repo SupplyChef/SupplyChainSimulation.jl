@@ -10,7 +10,7 @@ using Random
         Random.seed!(1)
 
         horizon = 20
-  
+
         product = Product("product")
 
         supplier = Supplier("supplier")
@@ -179,7 +179,7 @@ using Random
 
             return network
         end
-        
+
         initial_states = [n() for i in 1:30]
 
         # None of docs.jl's tests use BackwardCoverageOrderingPolicy or

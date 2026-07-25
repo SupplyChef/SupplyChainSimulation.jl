@@ -11,13 +11,13 @@ using Distributions: rand, Poisson
         storage = Storage("storage")
         add_product!(storage, product; unit_holding_cost=0.1, maximum_age=0)
         customer = Customer("customer")
-        
+
         l1 = Lane(storage, customer)
         l2 = Lane(supplier, storage)
 
         n() = begin
             network = SupplyChain(horizon)
-            
+
             add_supplier!(network, supplier)
             add_storage!(network, storage)
             add_customer!(network, customer)

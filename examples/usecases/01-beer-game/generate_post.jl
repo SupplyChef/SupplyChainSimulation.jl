@@ -26,6 +26,12 @@ s1 = results.optimized_in_sample_scenario1
 # own Symbol/String indexing support.
 as_dict(obj) = Dict(string(k) => Float64(v) for (k, v) in pairs(obj))
 
+# Same rationale as as_dict, but for objects whose values are themselves
+# nested JSON3 objects (not scalars) - e.g. anchor_adjust_results/
+# human_panic_results, keyed by a numeric-looking string ("1.0", "0.4", ...)
+# that dot-access can't reach anyway.
+as_obj_dict(obj) = Dict(string(k) => v for (k, v) in pairs(obj))
+
 naive_bw = as_dict(results.naive_bullwhip_ratios)
 opt_bw = as_dict(results.optimized_bullwhip_ratios)
 naive_cv = as_dict(results.naive_inventory_cv)
@@ -56,6 +62,55 @@ end
 cover2 = join(round.(Float64.(results.tuned_policy_cover.l2_wholesaler_to_retailer); digits=2), ", ")
 cover3 = join(round.(Float64.(results.tuned_policy_cover.l3_factory_to_wholesaler); digits=2), ", ")
 cover4 = join(round.(Float64.(results.tuned_policy_cover.l4_supplier_to_factory); digits=2), ", ")
+
+# --- Follow-up 1/2: same policy family, tuned properly (NetUptoOrderingPolicy
+#     via optimize!) vs. the searched family given 4x the budget. ---
+tn = results.tuned_naive_metrics
+tn_targets = results.tuned_naive_targets
+tn_bw = as_dict(tn.bullwhip)
+tn_cv = as_dict(tn.inventory_cv)
+tn_total_cost = Float64(tn.costs.total_cost)
+
+bo = results.big_opt_metrics
+bo_cover = results.big_opt_cover
+bo_total_cost = Float64(bo.costs.total_cost)
+
+family_beats_naive_pct = round(abs(tn_total_cost - naive_total_cost) / abs(naive_total_cost) * 100; digits=1)
+family_beats_optimized_pct = round(abs(tn_total_cost - optimized_total_cost) / abs(optimized_total_cost) * 100; digits=1)
+# cost_function is -sales+lost_sales+holding+..., so more negative = cheaper;
+# "helped" means the bigger-budget rerun's cost beat the original 15k-eval run.
+bigger_budget_helped = bo_total_cost < optimized_total_cost
+budget_verdict = if bigger_budget_helped
+    """4x the search budget did lower the cost somewhat, from $(fmt(optimized_total_cost)) to $(fmt(bo_total_cost)) — but fill rate actually *dropped* further, from $(pct(opt_in.fill_rate)) to $(pct(Float64(bo.aggregate.fill_rate))), and total cost is still nowhere near the tuned-naive result above. That's the signature of a genuinely bad fit between policy family and network, not an under-converged search: more compute finds a somewhat better point inside a bad family, not a fundamentally different, stable one."""
+else
+    """4x the search budget bought essentially nothing: total cost went from $(fmt(optimized_total_cost)) to $(fmt(bo_total_cost)), no better, while fill rate dropped from $(pct(opt_in.fill_rate)) to $(pct(Float64(bo.aggregate.fill_rate))). That's the signature of a genuinely bad fit between policy family and network, not an under-converged search: more compute doesn't fix it."""
+end
+
+# --- Follow-up 3: Sterman's anchor-and-adjust sweep (published, measured
+#     human-ordering heuristic) and the human-panic variant (same heuristic
+#     plus a positive safety-stock cushion). ---
+aa_dict = as_obj_dict(results.anchor_adjust_results)
+sweep_weights = ["1.0", "0.8", "0.6", "0.4", "0.2"]
+sweep_rows = join([
+    let r = aa_dict[w], bw = as_dict(r.bullwhip)
+        "| $(w) | $(pct(Float64(r.aggregate.fill_rate))) | $(ratio(bw["factory_orders (l4)"])) | $(fmt(Float64(r.costs.total_cost))) |"
+    end
+    for w in sweep_weights
+], "\n")
+
+hp_alpha = results.human_panic_alpha_supply_line
+hp_dict = as_obj_dict(results.human_panic_results)
+panic_levels = ["0.0", "5.0", "10.0", "20.0"]
+panic_rows = join([
+    let r = hp_dict[d], bw = as_dict(r.bullwhip)
+        "| $(d) | $(pct(Float64(r.aggregate.fill_rate))) | $(ratio(bw["retailer_orders (l2)"])) | $(ratio(bw["wholesaler_orders (l3)"])) | $(ratio(bw["factory_orders (l4)"])) | $(fmt(Float64(r.costs.total_cost))) |"
+    end
+    for d in panic_levels
+], "\n")
+panic_factory_bw_low = as_dict(hp_dict["0.0"].bullwhip)["factory_orders (l4)"]
+panic_factory_bw_high = as_dict(hp_dict["20.0"].bullwhip)["factory_orders (l4)"]
+panic_fill_low = Float64(hp_dict["0.0"].aggregate.fill_rate)
+panic_fill_high = Float64(hp_dict["20.0"].aggregate.fill_rate)
 
 post = """
 # The Beer Game, "Solved"? What an Optimizer Actually Did to the Bullwhip Effect
@@ -154,6 +209,55 @@ The backlog picture backs this up from a different angle. Customer orders never 
 
 (The supplier's backlog should read ~0 in every column — it's modeled with unconstrained throughput, so it never has to queue an order. That's a sanity check on this measurement, not a finding.)
 
+## A fair fight: tuning the *right* family beats tuning harder within the wrong one
+
+Everything above compares an **untuned** `NetUptoOrderingPolicy` against a **tuned** `BackwardCoverageOrderingPolicy` — not a fair fight. Two follow-ups close that gap:
+
+1. Tune `NetUptoOrderingPolicy`'s own (single) parameter per echelon with `optimize!`, the same way `BackwardCoverageOrderingPolicy` was tuned above.
+2. Give `BackwardCoverageOrderingPolicy` **4x the search budget** (60,000 evaluations and 6,000 no-progress steps, vs. the default 15,000/1,500) to check whether the original result was under-converged.
+
+| Policy | Fill rate | Total cost (`optimize!`'s objective) |
+|---|---|---|
+| Naive `NetUptoOrderingPolicy` (untuned) | $(pct(naive.fill_rate)) | $(fmt(naive_total_cost)) |
+| **Tuned `NetUptoOrderingPolicy`** | **$(pct(Float64(tn.aggregate.fill_rate)))** | **$(fmt(tn_total_cost))** |
+| `BackwardCoverageOrderingPolicy` (15,000 evals) | $(pct(opt_in.fill_rate)) | $(fmt(optimized_total_cost)) |
+| `BackwardCoverageOrderingPolicy` (60,000 evals) | $(pct(Float64(bo.aggregate.fill_rate))) | $(fmt(bo_total_cost)) |
+
+Tuning the *simple, correct-shaped* family wins outright: the tuned `NetUptoOrderingPolicy` is $(family_beats_naive_pct)% cheaper than the untuned naive baseline **and** $(family_beats_optimized_pct)% cheaper than the searched `BackwardCoverageOrderingPolicy` — while also posting the best fill rate of any configuration on this page. $(budget_verdict)
+
+The targets `optimize!` found for the tuned naive policy are worth reading closely:
+
+| Lane | Untuned target | Tuned target |
+|---|---|---|
+| wholesaler → retailer (retailer's own target) | $(results.naive_targets.l2_wholesaler_to_retailer) | $(tn_targets.l2_wholesaler_to_retailer) |
+| factory → wholesaler (wholesaler's own target) | $(results.naive_targets.l3_factory_to_wholesaler) | $(tn_targets.l3_factory_to_wholesaler) |
+| supplier → factory (factory's own target) | $(results.naive_targets.l4_supplier_to_factory) | $(tn_targets.l4_supplier_to_factory) |
+
+The optimizer didn't spread the safety margin evenly — it moved almost all of it to the **retailer** (target roughly doubled) and cut the **wholesaler's** to $(tn_targets.l3_factory_to_wholesaler). The next section explains why, and what it costs the wholesaler in practice.
+
+## Who's actually keeping this chain cheap — and what it risks
+
+The cost function only ever charges `lost_sales` at the customer interface — a retailer stockout. A wholesaler or factory stockout is internal backlog: it never expires, and it costs only the marginal holding-cost differential of carrying less stock, not a "lost sale" line item. Handed that asymmetry, `optimize!` did the economically correct thing: it pushed the visible safety buffer to the node whose stockouts are actually charged (the retailer) and let the node whose stockouts are nearly free in this objective (the wholesaler) run with almost no cushion at all.
+
+The inventory-volatility signature makes this concrete — coefficient of variation (std/mean) of on-hand inventory under the tuned policy:
+
+| Node | Inventory CV |
+|---|---|
+| Retailer | $(round(tn_cv["retailer"]; digits=2)) |
+| Wholesaler | **$(round(tn_cv["wholesaler"]; digits=2))** |
+| Factory | $(round(tn_cv["factory"]; digits=2)) |
+
+That's not a rounding artifact of a near-zero average — the backlog numbers confirm it in real units. Averaged across all $(results.scenario_count) scenarios, the wholesaler's queue of unfilled internal orders:
+
+| | Untuned naive | Tuned |
+|---|---|---|
+| Peak backlog | $(fmt(Float64(results.naive_backlog.peak.wholesaler))) units | **$(fmt(Float64(tn.backlog.peak.wholesaler))) units** |
+| Ending backlog | $(fmt(Float64(results.naive_backlog.ending.wholesaler))) units | **$(fmt(Float64(tn.backlog.ending.wholesaler))) units** |
+
+Under the cost-minimal tuned policy, the wholesaler ends the average 200-period run still carrying about $(fmt(Float64(tn.backlog.ending.wholesaler))) units of permanent unfilled backorder — nearly $(round(Float64(tn.backlog.ending.wholesaler) / Float64(results.naive_backlog.ending.wholesaler); digits=1))x the untuned baseline — and peaks at $(fmt(Float64(tn.backlog.peak.wholesaler))) mid-run. That's the real content behind "the wholesaler is keeping this chain cheap": it's absorbing the volatility the model doesn't charge for, not damping it.
+
+**Could a real wholesaler run this way?** Not for free. A distributor deliberately held at a near-zero safety-stock target would in practice be paying for this policy through channels the model doesn't price: constant expediting to plug the gaps, working-capital swings as on-hand oscillates between small overage and real shortfall, and the commercial/contractual cost of frequently under-shipping the retailer it supplies. None of that shows up in `metrics_cost_function` — only the terminal customer-facing miss does. The $(family_beats_naive_pct)% cost saving this section reports is real *under this cost function*; it is not free in an operation where a mid-chain stockout has consequences the model can't see.
+
 ## Is the "optimized" policy actually cheaper? Checking, not assuming.
 
 Everything above raises an obvious question this analysis shouldn't skip: if the optimized policy has worse fill rate *and* far worse bullwhip, is it at least genuinely cheaper under the cost function `optimize!` was minimizing? That's worth checking directly rather than assuming — `optimize!` only ever searched `BackwardCoverageOrderingPolicy` parameters here, so there was never a guarantee it could reach something as good as the naive `NetUptoOrderingPolicy` baseline, which lives in a different, entirely unsearched policy family.
@@ -186,6 +290,40 @@ $(classic_verdict)
 
 This distinction matters beyond bookkeeping: a permanently-lost-sale model and an eventually-fulfilled-backorder model reward *completely different* policies. A model where stockouts are forgiven (backlogged, filled later) can rationally tolerate more short-term volatility than one where every miss is gone for good — so a policy tuned against this package's lost-sales convention isn't just numerically different from one tuned against the classic game's convention, it's answering a different question. Worth stating plainly rather than glossing over: **this whole post measures against this package's convention, not the original board game's**, and that choice is a real driver of everything above, not a footnote.
 
+## What do real humans actually do? The Sterman anchor-and-adjust sweep
+
+Every policy above is a rational optimizer's answer. But the original beer game is famous precisely because *real people* playing it — including people who understand supply chains — still produce the bullwhip effect. John Sterman's 1989 study modeled how people actually order with an "anchor and adjust" heuristic: each period, order = forecast + (how far on-hand is from a desired stock level) + (how far the pipeline is from where it should be). The measured finding, replicated since (Croson & Donohue found 98% of players in the original study, and roughly 64% in a later replication, systematically underweight the pipeline term) is that people don't fully trust an order they've already placed is "on the way" — a delayed shipment reads as a fresh shortfall on top of what's already coming.
+
+Holding the desired-stock term at zero (i.e., "I want to run lean, no cushion") and sweeping how much of the pipeline people credit:
+
+| Pipeline credit | Fill rate | Factory bullwhip | Total cost |
+|---|---|---|---|
+$(sweep_rows)
+
+At full pipeline credit (1.0) this is algebraically identical to the naive baseline — that's a built-in correctness check, not a coincidence. As people trust the pipeline less, fill rate falls and cost gets worse, but bullwhip *doesn't* — it stays roughly flat to mildly *higher* than naive, not the dramatic panic-buying spikes the beer game is known for. The reason is structural: with desired stock pinned at zero, there's no term pulling orders *up* when on-hand runs low, only the pipeline-credit term — so underweighting it produces steady under-ordering, not overshoot.
+
+## Does a safety-stock cushion reproduce genuine panic-buying?
+
+Real players don't anchor on wanting zero inventory — they want a visible cushion, and it's the *gap* between that cushion and what's actually on the shelf, compounded by not trusting the pipeline, that plausibly drives real overshoot. Holding pipeline credit fixed at $(hp_alpha) (inside the 0.3–0.5 range Croson & Donohue's replications measured for real players) and sweeping the desired safety cushion up from zero:
+
+| Desired stock cushion | Fill rate | Retailer bullwhip | Wholesaler bullwhip | Factory bullwhip | Total cost |
+|---|---|---|---|---|---|
+$(panic_rows)
+
+This is the result that actually looks like the beer game: as the cushion target rises, bullwhip climbs steadily at every echelon — factory bullwhip goes from $(ratio(panic_factory_bw_low)) at zero cushion to **$(ratio(panic_factory_bw_high))** at a cushion of 20, higher than even the untuned naive baseline's $(ratio(naive_bw["factory_orders (l4)"])). Fill rate also improves sharply ($(pct(panic_fill_low)) → $(pct(panic_fill_high))), which is the honest, slightly uncomfortable finding: wanting a visible buffer and not fully trusting the pipeline is a *worse* combination for order-stream stability than either bias alone, even though it serves customers better. That's the actual mechanism behind "people panic-order" — not irrationality, but a reasonable desire for a safety margin colliding with a reasonable distrust of a shipment that hasn't arrived yet, and the two compounding upstream.
+
+## Should SupplyChainSimulation.jl keep `BackwardCoverageOrderingPolicy`?
+
+Given everything above, it's worth asking directly instead of leaving it implied. `get_order` for this policy targets a multiple of **its own last order** — not demand, not any downstream signal:
+
+```
+target = last_order × (cover[1] + cover[2]) + cover[2]
+```
+
+Any tuning where that multiplier exceeds 1 is a positive feedback loop by construction: a small uptick in what this node ordered last period raises this period's target by more than the uptick, which produces a bigger order next period, which raises the target again. The tuned parameters found above (target ≈ $(round(Float64(results.tuned_policy_cover.l2_wholesaler_to_retailer[1]) + Float64(results.tuned_policy_cover.l2_wholesaler_to_retailer[2]); digits=1))× the retailer's last order) land well inside that unstable regime, and $(bigger_budget_helped ? "quadrupling the search budget only found a different point inside the same unstable regime (still ≈$(round(Float64(bo_cover.l2_wholesaler_to_retailer[1]) + Float64(bo_cover.l2_wholesaler_to_retailer[2]); digits=1))×), not a way out of it" : "quadrupling the search budget didn't move it out either"). That's why we fixed a misleading docstring on this policy in the same branch as this post (it previously claimed to cover "based on past demand," but `get_order` never reads `state.demand` at all).
+
+Our recommendation: **keep the policy**, but stop treating a run of it as "the optimized answer." It's a legitimate, if fragile, control-law primitive — the class of policies that extrapolate from their own recent decisions is a real one, and it may behave fine on a network with different dynamics. What this page demonstrates isn't that the policy is broken; it's that **policy-family choice matters more than search budget**, which the "fair fight" section above shows directly: tuning the right family (a simple order-up-to rule) beat both tuning this one *and* giving this one 4x the compute.
+
 ## Can this be replicated in a real supply chain? Why, and why not.
 
 **Why not, mostly:**
@@ -193,8 +331,9 @@ This distinction matters beyond bookkeeping: a permanently-lost-sale model and a
 1. **A ~$(ratio(opt_bw["retailer_orders (l2)"])) order-variance swing is not something a real operation can execute for free**, even if a cost function says it's cheap. Trucking capacity is booked in advance. Production lines have changeover costs and minimum run lengths. A supplier asked to ship 30x more or less than usual with no forward notice will build in padding, refuse, or renegotiate the contract — none of which this simulation's unconstrained, infinite-throughput supplier node has to deal with.
 2. **The holding-cost model is linear and flat.** A factory whose inventory coefficient of variation is $(round(opt_cv["factory"]; digits=2)) faces real working-capital, warehouse-capacity, and obsolescence risk that a constant `\$0.10 per unit per period` charge doesn't capture. In practice, that volatility has a cost this model is blind to.
 3. **This is still a centralized result.** `optimize!` set all three echelons' rules jointly, with one shared objective. Even a company willing to tolerate this much internal volatility would need the automation and cross-echelon authority to execute it without every swing triggering a manual override from whoever's job it is to explain a tripled order to their boss.
+4. **The tuned naive policy's own answer — starve the wholesaler's buffer to zero — carries the same problem in a quieter form.** It's cheaper *in this cost function* specifically because the function doesn't price the operational cost of chronic mid-chain backlog. A real wholesaler asked to run this way would be paying for it through expediting, working capital, and its own relationship with the retailer — costs this model doesn't see.
 
-**Why it's still worth knowing:** it's a sharper, more useful result than "the optimizer solves the bullwhip" would have been. It shows precisely how sensitive an "optimal" ordering policy is to the cost assumptions it's handed — change the weight on order-quantity stability, or cap the supplier's throughput, and you'd likely get a genuinely different, smoother policy. That's a concrete, testable next experiment (a natural Part 2: sweep an order-change penalty and a supplier capacity constraint, and see what it takes to get a policy that's both cheap *and* operationally sane) rather than a vague caveat.
+**Why it's still worth knowing:** it's a sharper, more useful result than "the optimizer solves the bullwhip" would have been. It shows precisely how sensitive an "optimal" ordering policy is to the cost assumptions it's handed — change the weight on order-quantity stability, or cap the supplier's throughput, or charge internal backlog something closer to its real operational cost, and you'd likely get a genuinely different, smoother policy. That's a concrete, testable next experiment (a natural Part 2: sweep an order-change penalty, a supplier capacity constraint, and an internal-backlog cost, and see what it takes to get a policy that's both cheap *and* operationally sane) rather than a vague caveat.
 
 ## The generalization check
 

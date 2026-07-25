@@ -324,10 +324,10 @@ function SupplyChainSimulation.get_order(policy::AnchorAndAdjustOrderingPolicy, 
     return max(0, round(Int, order))
 end
 
-function run_anchor_and_adjust(alpha_supply_line, product, horizon, scenario_count, seed)
-    policy2 = AnchorAndAdjustOrderingPolicy(1.0, alpha_supply_line, 0.0)
-    policy3 = AnchorAndAdjustOrderingPolicy(1.0, alpha_supply_line, 0.0)
-    policy4 = AnchorAndAdjustOrderingPolicy(1.0, alpha_supply_line, 0.0)
+function run_anchor_and_adjust(alpha_supply_line, product, horizon, scenario_count, seed; desired_stock=0.0)
+    policy2 = AnchorAndAdjustOrderingPolicy(1.0, alpha_supply_line, desired_stock)
+    policy3 = AnchorAndAdjustOrderingPolicy(1.0, alpha_supply_line, desired_stock)
+    policy4 = AnchorAndAdjustOrderingPolicy(1.0, alpha_supply_line, desired_stock)
     policies = Dict((l2, product) => policy2, (l3, product) => policy3, (l4, product) => policy4)
     scenarios = build_scenarios(scenario_count, seed)
     states = [simulate(s, policies) for s in scenarios]
@@ -406,6 +406,28 @@ let
         error("AnchorAndAdjustOrderingPolicy at alpha_supply_line=1.0 does not match the naive baseline - get_order is not being reached (see the note above SupplyChainSimulation.get_order's definition).")
     end
 end
+
+# --- Follow-up 3: does the desired_stock=0 sweep above actually rule out
+#     genuine panic/over-ordering by construction? At desired_stock=0,
+#     alpha_stock=1 anchors the stock-adjustment term at "I want zero
+#     inventory sitting around" - there is no floor pulling orders *up* when
+#     on-hand runs low, only the supply-line term, which is why that sweep
+#     showed chronic *under*-ordering as alpha_supply_line fell rather than
+#     the panic-buying Croson & Donohue describe. Real players don't anchor
+#     on zero inventory - they want a visible cushion, and it's the gap
+#     between that cushion and what's actually on the shelf, compounded by
+#     not fully believing the pipeline will arrive, that produces genuine
+#     overshoot. This holds alpha_supply_line fixed at 0.4 - inside the
+#     0.3-0.5 range Croson & Donohue's replications found for real players -
+#     and sweeps desired_stock up from 0 to see whether adding that cushion
+#     term is what actually reproduces panic ordering (bullwhip ratio > 1,
+#     not < 1) rather than just shifting the same damped behavior upward.
+const HUMAN_PANIC_ALPHA_SUPPLY_LINE = 0.4
+const DESIRED_STOCK_LEVELS = [0.0, 5.0, 10.0, 20.0]
+human_panic_results = Dict(
+    string(d) => run_anchor_and_adjust(HUMAN_PANIC_ALPHA_SUPPLY_LINE, product, HORIZON, SCENARIO_COUNT, CALIBRATION_SEED; desired_stock=d)
+    for d in DESIRED_STOCK_LEVELS
+)
 
 # --- Optimized: BackwardCoverageOrderingPolicy at each upstream echelon,
 #     tuned jointly by optimize!() against the same 30 calibration scenarios. ---
@@ -512,6 +534,8 @@ results = Dict(
         "l4_supplier_to_factory" => opt_policy4.cover,
     ),
     "anchor_adjust_results" => anchor_adjust_results,
+    "human_panic_alpha_supply_line" => HUMAN_PANIC_ALPHA_SUPPLY_LINE,
+    "human_panic_results" => human_panic_results,
     "tuned_naive_metrics" => tuned_naive_metrics,
     "tuned_naive_targets" => tuned_naive_targets,
     "big_opt_metrics" => big_opt_metrics,
@@ -545,6 +569,11 @@ println("\nAnchor-and-adjust sweep (fill_rate, total_cost by alpha_supply_line):
 for w in SUPPLY_LINE_WEIGHTS
     r = anchor_adjust_results[string(w)]
     println("  alpha_supply_line=$(w): fill_rate=$(round(r.aggregate.fill_rate; digits=4))  total_cost=$(round(r.costs.total_cost; digits=1))")
+end
+println("\nHuman-panic sweep (alpha_supply_line=$(HUMAN_PANIC_ALPHA_SUPPLY_LINE) fixed, desired_stock swept - fill_rate, bullwhip, total_cost):")
+for d in DESIRED_STOCK_LEVELS
+    r = human_panic_results[string(d)]
+    println("  desired_stock=$(d): fill_rate=$(round(r.aggregate.fill_rate; digits=4))  bullwhip=$(r.bullwhip)  total_cost=$(round(r.costs.total_cost; digits=1))")
 end
 println("\nTuned NetUptoOrderingPolicy (fair tuned-vs-tuned comparison):")
 println("  targets: ", tuned_naive_targets)

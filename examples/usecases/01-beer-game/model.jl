@@ -596,6 +596,22 @@ classic_opt_cover = Dict(
     "l4_supplier_to_factory" => classic_opt_policy4.cover,
 )
 
+# --- Follow-up: same question as equiv_metrics above, but for the real
+#     (backlog-priced) cost - is classic_opt's collapse to a low fill rate
+#     another search failure, or does BackwardCoverageOrderingPolicy's own
+#     search space genuinely not contain the classic_tuned_naive optimum
+#     under this cost? At cover[1]=0 it's still algebraically identical to
+#     NetUptoOrderingPolicy(upto=cover[2]), same as before - this plugs in
+#     the already-known classic_tuned_naive targets directly, no optimize!
+#     call, to test whether classic_opt's search found that corner or not.
+classic_equiv_policy2 = BackwardCoverageOrderingPolicy([0.0, Float64(classic_tuned_naive_policy2.upto)])
+classic_equiv_policy3 = BackwardCoverageOrderingPolicy([0.0, Float64(classic_tuned_naive_policy3.upto)])
+classic_equiv_policy4 = BackwardCoverageOrderingPolicy([0.0, Float64(classic_tuned_naive_policy4.upto)])
+classic_equiv_policies = Dict((l2, product) => classic_equiv_policy2, (l3, product) => classic_equiv_policy3, (l4, product) => classic_equiv_policy4)
+scenarios_for_classic_equiv = build_scenarios(SCENARIO_COUNT, CALIBRATION_SEED)
+classic_equiv_states = [simulate(s, classic_equiv_policies) for s in scenarios_for_classic_equiv]
+classic_equiv_metrics = full_metrics(classic_equiv_states, product, HORIZON)
+
 # Known-good values from test/policy-beergame-tests.jl's beer_game() test,
 # for the exact same seed/config/policy family - printed as a sanity check,
 # not asserted, since minor package-version drift could shift float results.
@@ -646,6 +662,7 @@ results = Dict(
     "classic_tuned_naive_targets" => classic_tuned_naive_targets,
     "classic_opt_metrics" => classic_opt_metrics,
     "classic_opt_cover" => classic_opt_cover,
+    "classic_equiv_metrics" => classic_equiv_metrics,
 )
 
 open(joinpath(@__DIR__, "results.json"), "w") do io
@@ -695,3 +712,5 @@ println("  fill_rate=$(round(classic_tuned_naive_metrics.aggregate.fill_rate; di
 println("\nBackwardCoverageOrderingPolicy under the real beer-game cost (holding+backlog, not metrics_cost_function):")
 println("  cover: ", classic_opt_cover)
 println("  fill_rate=$(round(classic_opt_metrics.aggregate.fill_rate; digits=4))  classic_score=$(round(classic_opt_metrics.classic.total; digits=1))  bullwhip=$(classic_opt_metrics.bullwhip)")
+println("\nBackwardCoverageOrderingPolicy at cover[1]=0, targets == classic_tuned_naive (no optimize! call - is THIS optimum reachable too?):")
+println("  fill_rate=$(round(classic_equiv_metrics.aggregate.fill_rate; digits=4))  classic_score=$(round(classic_equiv_metrics.classic.total; digits=1))")

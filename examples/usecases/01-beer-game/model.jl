@@ -476,6 +476,25 @@ tuned_naive_targets = Dict(
     "l4_supplier_to_factory" => tuned_naive_policy4.upto,
 )
 
+# --- Follow-up: is the tuned-naive optimum actually reachable by
+#     BackwardCoverageOrderingPolicy's own search space, or structurally out
+#     of reach? At cover[1]=0, the `weights` accumulator in get_order never
+#     leaves 0, so the `if weights != 0` branch is skipped entirely and
+#     `coverage` collapses to the bare constant `cover[2]` - algebraically
+#     identical to NetUptoOrderingPolicy(upto=cover[2]). That point sits
+#     inside the same [0,5000] SearchRange optimize! searched above. Running
+#     it directly (no optimize! call - this is just plugging in the known
+#     tuned-naive targets) tests whether optimize!'s failure to find anything
+#     close to that result is a genuine search failure or a structural limit
+#     of this policy family.
+equiv_policy2 = BackwardCoverageOrderingPolicy([0.0, Float64(tuned_naive_policy2.upto)])
+equiv_policy3 = BackwardCoverageOrderingPolicy([0.0, Float64(tuned_naive_policy3.upto)])
+equiv_policy4 = BackwardCoverageOrderingPolicy([0.0, Float64(tuned_naive_policy4.upto)])
+equiv_policies = Dict((l2, product) => equiv_policy2, (l3, product) => equiv_policy3, (l4, product) => equiv_policy4)
+scenarios_for_equiv = build_scenarios(SCENARIO_COUNT, CALIBRATION_SEED)
+equiv_states = [simulate(s, equiv_policies) for s in scenarios_for_equiv]
+equiv_metrics = full_metrics(equiv_states, product, HORIZON)
+
 # --- Follow-up 2: rerun the original BackwardCoverageOrderingPolicy search
 #     with 4x the evaluation budget (60000 vs. the default 15000) and 4x the
 #     no-progress patience, same starting point, to check whether the
@@ -538,6 +557,7 @@ results = Dict(
     "human_panic_results" => human_panic_results,
     "tuned_naive_metrics" => tuned_naive_metrics,
     "tuned_naive_targets" => tuned_naive_targets,
+    "equiv_metrics" => equiv_metrics,
     "big_opt_metrics" => big_opt_metrics,
     "big_opt_cover" => big_opt_cover,
 )
@@ -578,6 +598,8 @@ end
 println("\nTuned NetUptoOrderingPolicy (fair tuned-vs-tuned comparison):")
 println("  targets: ", tuned_naive_targets)
 println("  fill_rate=$(round(tuned_naive_metrics.aggregate.fill_rate; digits=4))  total_cost=$(round(tuned_naive_metrics.costs.total_cost; digits=1))")
+println("\nBackwardCoverageOrderingPolicy at cover[1]=0 (algebraically == tuned-naive, no optimize! call - is the optimum reachable at all?):")
+println("  fill_rate=$(round(equiv_metrics.aggregate.fill_rate; digits=4))  total_cost=$(round(equiv_metrics.costs.total_cost; digits=1))")
 println("\nBigger-budget BackwardCoverageOrderingPolicy rerun (60000 vs 15000 evals):")
 println("  cover: ", big_opt_cover)
 println("  fill_rate=$(round(big_opt_metrics.aggregate.fill_rate; digits=4))  total_cost=$(round(big_opt_metrics.costs.total_cost; digits=1))")

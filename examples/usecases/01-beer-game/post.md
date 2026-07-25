@@ -94,6 +94,55 @@ The backlog picture backs this up from a different angle. Customer orders never 
 
 (The supplier's backlog should read ~0 in every column — it's modeled with unconstrained throughput, so it never has to queue an order. That's a sanity check on this measurement, not a finding.)
 
+## A fair fight: tuning the *right* family beats tuning harder within the wrong one
+
+Everything above compares an **untuned** `NetUptoOrderingPolicy` against a **tuned** `BackwardCoverageOrderingPolicy` — not a fair fight. Two follow-ups close that gap:
+
+1. Tune `NetUptoOrderingPolicy`'s own (single) parameter per echelon with `optimize!`, the same way `BackwardCoverageOrderingPolicy` was tuned above.
+2. Give `BackwardCoverageOrderingPolicy` **4x the search budget** (60,000 evaluations and 6,000 no-progress steps, vs. the default 15,000/1,500) to check whether the original result was under-converged.
+
+| Policy | Fill rate | Total cost (`optimize!`'s objective) |
+|---|---|---|
+| Naive `NetUptoOrderingPolicy` (untuned) | 95.6% | -34289.1 |
+| **Tuned `NetUptoOrderingPolicy`** | **96.1%** | **-40359.8** |
+| `BackwardCoverageOrderingPolicy` (15,000 evals) | 94.4% | -19580.8 |
+| `BackwardCoverageOrderingPolicy` (60,000 evals) | 92.5% | -27174.7 |
+
+Tuning the *simple, correct-shaped* family wins outright: the tuned `NetUptoOrderingPolicy` is 17.7% cheaper than the untuned naive baseline **and** 106.1% cheaper than the searched `BackwardCoverageOrderingPolicy` — while also posting the best fill rate of any configuration on this page. 4x the search budget did lower the cost somewhat, from -19580.8 to -27174.7 — but fill rate actually *dropped* further, from 94.4% to 92.5%, and total cost is still nowhere near the tuned-naive result above. That's the signature of a genuinely bad fit between policy family and network, not an under-converged search: more compute finds a somewhat better point inside a bad family, not a fundamentally different, stable one.
+
+The targets `optimize!` found for the tuned naive policy are worth reading closely:
+
+| Lane | Untuned target | Tuned target |
+|---|---|---|
+| wholesaler → retailer (retailer's own target) | 30 | 66 |
+| factory → wholesaler (wholesaler's own target) | 30 | 0 |
+| supplier → factory (factory's own target) | 50 | 35 |
+
+The optimizer didn't spread the safety margin evenly — it moved almost all of it to the **retailer** (target roughly doubled) and cut the **wholesaler's** to 0. The next section explains why, and what it costs the wholesaler in practice.
+
+## Who's actually keeping this chain cheap — and what it risks
+
+The cost function only ever charges `lost_sales` at the customer interface — a retailer stockout. A wholesaler or factory stockout is internal backlog: it never expires, and it costs only the marginal holding-cost differential of carrying less stock, not a "lost sale" line item. Handed that asymmetry, `optimize!` did the economically correct thing: it pushed the visible safety buffer to the node whose stockouts are actually charged (the retailer) and let the node whose stockouts are nearly free in this objective (the wholesaler) run with almost no cushion at all.
+
+The inventory-volatility signature makes this concrete — coefficient of variation (std/mean) of on-hand inventory under the tuned policy:
+
+| Node | Inventory CV |
+|---|---|
+| Retailer | 0.51 |
+| Wholesaler | **6.43** |
+| Factory | 0.81 |
+
+That's not a rounding artifact of a near-zero average — the backlog numbers confirm it in real units. Averaged across all 30 scenarios, the wholesaler's queue of unfilled internal orders:
+
+| | Untuned naive | Tuned |
+|---|---|---|
+| Peak backlog | 25.0 units | **59.4 units** |
+| Ending backlog | 10.1 units | **39.1 units** |
+
+Under the cost-minimal tuned policy, the wholesaler ends the average 200-period run still carrying about 39.1 units of permanent unfilled backorder — nearly 3.9x the untuned baseline — and peaks at 59.4 mid-run. That's the real content behind "the wholesaler is keeping this chain cheap": it's absorbing the volatility the model doesn't charge for, not damping it.
+
+**Could a real wholesaler run this way?** Not for free. A distributor deliberately held at a near-zero safety-stock target would in practice be paying for this policy through channels the model doesn't price: constant expediting to plug the gaps, working-capital swings as on-hand oscillates between small overage and real shortfall, and the commercial/contractual cost of frequently under-shipping the retailer it supplies. None of that shows up in `metrics_cost_function` — only the terminal customer-facing miss does. The 17.7% cost saving this section reports is real *under this cost function*; it is not free in an operation where a mid-chain stockout has consequences the model can't see.
+
 ## Is the "optimized" policy actually cheaper? Checking, not assuming.
 
 Everything above raises an obvious question this analysis shouldn't skip: if the optimized policy has worse fill rate *and* far worse bullwhip, is it at least genuinely cheaper under the cost function `optimize!` was minimizing? That's worth checking directly rather than assuming — `optimize!` only ever searched `BackwardCoverageOrderingPolicy` parameters here, so there was never a guarantee it could reach something as good as the naive `NetUptoOrderingPolicy` baseline, which lives in a different, entirely unsearched policy family.
@@ -126,6 +175,47 @@ Under this scoring convention, optimized is **522.3% more expensive** than naive
 
 This distinction matters beyond bookkeeping: a permanently-lost-sale model and an eventually-fulfilled-backorder model reward *completely different* policies. A model where stockouts are forgiven (backlogged, filled later) can rationally tolerate more short-term volatility than one where every miss is gone for good — so a policy tuned against this package's lost-sales convention isn't just numerically different from one tuned against the classic game's convention, it's answering a different question. Worth stating plainly rather than glossing over: **this whole post measures against this package's convention, not the original board game's**, and that choice is a real driver of everything above, not a footnote.
 
+## What do real humans actually do? The Sterman anchor-and-adjust sweep
+
+Every policy above is a rational optimizer's answer. But the original beer game is famous precisely because *real people* playing it — including people who understand supply chains — still produce the bullwhip effect. John Sterman's 1989 study modeled how people actually order with an "anchor and adjust" heuristic: each period, order = forecast + (how far on-hand is from a desired stock level) + (how far the pipeline is from where it should be). The measured finding, replicated since (Croson & Donohue found 98% of players in the original study, and roughly 64% in a later replication, systematically underweight the pipeline term) is that people don't fully trust an order they've already placed is "on the way" — a delayed shipment reads as a fresh shortfall on top of what's already coming.
+
+Holding the desired-stock term at zero (i.e., "I want to run lean, no cushion") and sweeping how much of the pipeline people credit:
+
+| Pipeline credit | Fill rate | Factory bullwhip | Total cost |
+|---|---|---|---|
+| 1.0 | 95.6% | 4.0x | -34289.1 |
+| 0.8 | 88.3% | 2.5x | -28844.4 |
+| 0.6 | 74.0% | 2.0x | -12406.4 |
+| 0.4 | 61.2% | 1.9x | 864.8 |
+| 0.2 | 47.6% | 1.8x | 14781.1 |
+
+At full pipeline credit (1.0) this is algebraically identical to the naive baseline — that's a built-in correctness check, not a coincidence. As people trust the pipeline less, fill rate falls and cost gets worse, but bullwhip *doesn't* — it stays roughly flat to mildly *higher* than naive, not the dramatic panic-buying spikes the beer game is known for. The reason is structural: with desired stock pinned at zero, there's no term pulling orders *up* when on-hand runs low, only the pipeline-credit term — so underweighting it produces steady under-ordering, not overshoot.
+
+## Does a safety-stock cushion reproduce genuine panic-buying?
+
+Real players don't anchor on wanting zero inventory — they want a visible cushion, and it's the *gap* between that cushion and what's actually on the shelf, compounded by not trusting the pipeline, that plausibly drives real overshoot. Holding pipeline credit fixed at 0.4 (inside the 0.3–0.5 range Croson & Donohue's replications measured for real players) and sweeping the desired safety cushion up from zero:
+
+| Desired stock cushion | Fill rate | Retailer bullwhip | Wholesaler bullwhip | Factory bullwhip | Total cost |
+|---|---|---|---|---|---|
+| 0.0 | 61.2% | 2.5x | 1.7x | 1.9x | 864.8 |
+| 5.0 | 74.6% | 3.0x | 2.7x | 3.0x | -12251.5 |
+| 10.0 | 85.8% | 3.1x | 3.6x | 4.7x | -21274.9 |
+| 20.0 | 97.7% | 2.0x | 4.3x | 6.9x | -22511.0 |
+
+This is the result that actually looks like the beer game: as the cushion target rises, bullwhip climbs steadily at every echelon — factory bullwhip goes from 1.9x at zero cushion to **6.9x** at a cushion of 20, higher than even the untuned naive baseline's 4.0x. Fill rate also improves sharply (61.2% → 97.7%), which is the honest, slightly uncomfortable finding: wanting a visible buffer and not fully trusting the pipeline is a *worse* combination for order-stream stability than either bias alone, even though it serves customers better. That's the actual mechanism behind "people panic-order" — not irrationality, but a reasonable desire for a safety margin colliding with a reasonable distrust of a shipment that hasn't arrived yet, and the two compounding upstream.
+
+## Should SupplyChainSimulation.jl keep `BackwardCoverageOrderingPolicy`?
+
+Given everything above, it's worth asking directly instead of leaving it implied. `get_order` for this policy targets a multiple of **its own last order** — not demand, not any downstream signal:
+
+```
+target = last_order × (cover[1] + cover[2]) + cover[2]
+```
+
+Any tuning where that multiplier exceeds 1 is a positive feedback loop by construction: a small uptick in what this node ordered last period raises this period's target by more than the uptick, which produces a bigger order next period, which raises the target again. The tuned parameters found above (target ≈ 9.5× the retailer's last order) land well inside that unstable regime, and quadrupling the search budget only found a different point inside the same unstable regime (still ≈8.4×), not a way out of it. That's why we fixed a misleading docstring on this policy in the same branch as this post (it previously claimed to cover "based on past demand," but `get_order` never reads `state.demand` at all).
+
+Our recommendation: **keep the policy**, but stop treating a run of it as "the optimized answer." It's a legitimate, if fragile, control-law primitive — the class of policies that extrapolate from their own recent decisions is a real one, and it may behave fine on a network with different dynamics. What this page demonstrates isn't that the policy is broken; it's that **policy-family choice matters more than search budget**, which the "fair fight" section above shows directly: tuning the right family (a simple order-up-to rule) beat both tuning this one *and* giving this one 4x the compute.
+
 ## Can this be replicated in a real supply chain? Why, and why not.
 
 **Why not, mostly:**
@@ -133,8 +223,9 @@ This distinction matters beyond bookkeeping: a permanently-lost-sale model and a
 1. **A ~37.0x order-variance swing is not something a real operation can execute for free**, even if a cost function says it's cheap. Trucking capacity is booked in advance. Production lines have changeover costs and minimum run lengths. A supplier asked to ship 30x more or less than usual with no forward notice will build in padding, refuse, or renegotiate the contract — none of which this simulation's unconstrained, infinite-throughput supplier node has to deal with.
 2. **The holding-cost model is linear and flat.** A factory whose inventory coefficient of variation is 2.02 faces real working-capital, warehouse-capacity, and obsolescence risk that a constant `$0.10 per unit per period` charge doesn't capture. In practice, that volatility has a cost this model is blind to.
 3. **This is still a centralized result.** `optimize!` set all three echelons' rules jointly, with one shared objective. Even a company willing to tolerate this much internal volatility would need the automation and cross-echelon authority to execute it without every swing triggering a manual override from whoever's job it is to explain a tripled order to their boss.
+4. **The tuned naive policy's own answer — starve the wholesaler's buffer to zero — carries the same problem in a quieter form.** It's cheaper *in this cost function* specifically because the function doesn't price the operational cost of chronic mid-chain backlog. A real wholesaler asked to run this way would be paying for it through expediting, working capital, and its own relationship with the retailer — costs this model doesn't see.
 
-**Why it's still worth knowing:** it's a sharper, more useful result than "the optimizer solves the bullwhip" would have been. It shows precisely how sensitive an "optimal" ordering policy is to the cost assumptions it's handed — change the weight on order-quantity stability, or cap the supplier's throughput, and you'd likely get a genuinely different, smoother policy. That's a concrete, testable next experiment (a natural Part 2: sweep an order-change penalty and a supplier capacity constraint, and see what it takes to get a policy that's both cheap *and* operationally sane) rather than a vague caveat.
+**Why it's still worth knowing:** it's a sharper, more useful result than "the optimizer solves the bullwhip" would have been. It shows precisely how sensitive an "optimal" ordering policy is to the cost assumptions it's handed — change the weight on order-quantity stability, or cap the supplier's throughput, or charge internal backlog something closer to its real operational cost, and you'd likely get a genuinely different, smoother policy. That's a concrete, testable next experiment (a natural Part 2: sweep an order-change penalty, a supplier capacity constraint, and an internal-backlog cost, and see what it takes to get a policy that's both cheap *and* operationally sane) rather than a vague caveat.
 
 ## The generalization check
 

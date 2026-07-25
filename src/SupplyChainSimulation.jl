@@ -1,9 +1,6 @@
 module SupplyChainSimulation
 
-export Network
 export Product
-export Bundle
-export Order
 export OrderLine
 
 export State
@@ -51,6 +48,7 @@ export get_total_overflow_costs
 export get_on_hand_inventory
 export get_overflow_inventory
 export remove_on_hand_inventory!
+export get_used_lanes
 
 export get_trips
 
@@ -117,7 +115,7 @@ end
     eoq_cost_rate(demand_rate, ordering_cost, holding_cost_rate)
 
     Computes the total cost per time period of ordering the economic ordering quantity.
-    
+
     See also [`eoq_quantity`](@ref).
 """
 function eoq_cost_rate(demand_rate, ordering_cost, holding_cost_rate)

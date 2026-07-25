@@ -91,7 +91,7 @@ function get_order(policy::ProductQuantityOrderingPolicy, state::State, env::Env
         return order
     else
         return 0
-    end 
+    end
 end
 
 function get_order(policy::ProductQuantityOrderingPolicy, state::State, env::Env, location::ConcreteNode, lane::Lane, product::Product, time::Int64)::Int64
@@ -250,7 +250,6 @@ function get_order(policy::ForwardCoverageOrderingPolicy, state::State, env::Env
     # producing a NaN/Inf. 1e15 is far above any real order quantity, so this
     # doesn't change behavior for finite, in-range deficits.
     order = (isfinite(deficit) && deficit < 1e15) ? max(0, ceil(Int, deficit)) : 0
-    #println("cover $(policy.cover); mean demand $mean_demand; coverage $coverage; net inventory $net_inventory; order $order; time $time")
     return order
 end
 
@@ -265,13 +264,7 @@ end
 Orders inventory to cover the coming periods based on past demand.
 """
 mutable struct BackwardCoverageOrderingPolicy <: InventoryOrderingPolicy
-    # `Real`, not `Float64`: normal (non-AD) callers always construct/assign
-    # plain `Float64` values here, so this changes nothing for them - but a
-    # concretely-`Float64` field couldn't hold a `ForwardDiff.Dual` during
-    # gradient-based differentiation of `optimize!`'s cost function w.r.t.
-    # these parameters (see `minimize!`'s and `_backward_coverage_order`'s
-    # comments for the rest of what that requires).
-    cover::Vector{Real}
+    cover::Vector{Float64}
 end
 
 """
@@ -283,7 +276,7 @@ function get_parameters(policy::BackwardCoverageOrderingPolicy)
     return policy.cover
 end
 
-function set_parameters!(policy::BackwardCoverageOrderingPolicy, values::AbstractVector{<:Real})
+function set_parameters!(policy::BackwardCoverageOrderingPolicy, values::Array{Float64, 1})
     policy.cover = values
 end
 
@@ -295,38 +288,6 @@ end
 `outbound_order_quantities` for this policy's `(location, product)`.
 """
 required_lookback(policy::BackwardCoverageOrderingPolicy)::Int = length(policy.cover)
-
-# `ceil(Int, ...)`'s AbstractFloat branch is exactly today's behavior for
-# every existing (non-AD) caller - production `simulate()` always calls
-# `get_order` with plain `Float64` policy parameters, never anything else.
-# The fallback branch only activates for other `Real` subtypes, in practice
-# `ForwardDiff.Dual` during gradient-based differentiation of `optimize!`'s
-# cost function: `ceil(Int, ::Dual)` (see ForwardDiff.jl's own source)
-# unconditionally discards the derivative and returns a plain `Int`, which
-# would zero the gradient through *every* evaluation, not just the rare
-# threshold crossing where an order quantity's integer rounding is
-# genuinely non-differentiable. Treating the order quantity as continuous
-# during differentiation is the same simplification classical pathwise/IPA
-# gradient estimators for inventory systems make (Glasserman & Tayur, 1995).
-_order_quantity(x::AbstractFloat) = max(0, ceil(Int, x))
-_order_quantity(x::Real) = max(zero(x), x)
-
-"""
-    _as_order_quantity(x::Real)
-
-`place_orders` (Simulation.jl) wraps every `get_order` dispatch branch in a
-blanket `Int(...)` - harmless for the `AbstractFloat`/`Integer` results
-every branch other than `BackwardCoverageOrderingPolicy` always returns (an
-ordinary conversion or a no-op), but `Int(::Dual)` unconditionally throws
-unless every partial happens to be exactly zero (ForwardDiff.jl's own
-source, already confirmed earlier for `ceil(Int, ::Dual)` - `Int` behaves
-the same way) - which breaks the moment `_order_quantity` above hands back
-a genuine (non-`Integer`) `Dual` during differentiation. Same fix as
-`_order_quantity`: pass anything that isn't already `AbstractFloat`/
-`Integer` through unchanged instead of forcing the conversion.
-"""
-_as_order_quantity(x::Union{AbstractFloat, Integer}) = Int(x)
-_as_order_quantity(x::Real) = x
 
 # Shared by both get_order overloads below: the one difference between
 # them is how lane_idx is obtained (a free field read from a Trip already
@@ -363,7 +324,7 @@ _as_order_quantity(x::Real) = x
     # See the identical guard in ForwardCoverageOrderingPolicy.get_order:
     # isfinite doesn't rule out a deficit too large for ceil(Int, ...) to
     # represent without overflowing.
-    return (isfinite(deficit) && deficit < 1e15) ? _order_quantity(deficit) : 0
+    return (isfinite(deficit) && deficit < 1e15) ? max(0, ceil(Int, deficit)) : 0
 end
 
 """

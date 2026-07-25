@@ -198,7 +198,7 @@ mutable struct State
                    [zeros(Int64, horizon) for _ in 1:nlocations, _ in 1:nproducts],
                    0)
                    #,[])
-                   
+
         reset!(state)
 
         for order_line in collect(Base.Iterators.flatten(values(pending_outbound_order_lines)))
@@ -649,7 +649,6 @@ function snapshot_state!(state::State, time, record_history::Bool)
         empty!(state.placed_orders)
     end
     #push!(state.historical_pending_outbound_order_lines, Dict(k => copy(v) for (k, v) in state.order_line_tracker.pending_inbound_order_lines))
-    #println("On hand at $time, $(state.on_hand_inventory)")
 end
 
 @inline function _in_transit_sum_by_index(state::State, li::Int64, pi::Int64, time::Int64)::Int64
@@ -805,5 +804,3 @@ function get_past_outbound_orders!(past_orders::Array{Union{Missing, Int64}, 1},
     return _fill_past_outbound_orders_by_index!(past_orders, state, li, pi, time)
 end
 
-function get_net_network_inventory(state, location, product)
-end

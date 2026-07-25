@@ -24,7 +24,7 @@ against a pre-existing baseline.
 """
 metrics_cost_function(s) = -s.metrics.sales + s.metrics.lost_sales + s.metrics.holding_costs + s.metrics.trip_fixed_costs + s.metrics.trip_unit_costs + 0.001 * s.metrics.orders
 
-function minimize!(lane_policies, policies, envs::Array{Env, 1}, initial_states::Array{State, 1}, x::AbstractVector{<:Real}; cost_function)
+function minimize!(lane_policies, policies, envs::Array{Env, 1}, initial_states::Array{State, 1}, x::AbstractVector{Float64}; cost_function)
     i = 1
     for policy in policies
         set_parameters!(policy, x[i:i+length(get_parameters(policy))-1])
@@ -39,9 +39,6 @@ function minimize!(lane_policies, policies, envs::Array{Env, 1}, initial_states:
         reset!(initial_states[i])
         final_state = simulate(envs[i], lane_policies, initial_states[i])
 
-        #println(final_state)
-
-        #println("$x $(get_total_lost_sales(final_state)) $(get_total_orders(final_state))")
         value += cost_function(final_state)
     end
     return value
@@ -177,7 +174,6 @@ function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}
     # search converges to.
     sorted_keys = sort(collect(keys(lane_policies)); by = k -> (string(k[1]), k[2].name))
     policies = unique([lane_policies[k] for k in sorted_keys])
-    #println(policies)
 
     x0 = vcat([get_parameters(policy) for policy in policies]...)
     x0 = convert(Array{Float64, 1}, x0)
@@ -209,7 +205,7 @@ function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}
             custom_params[:MaxFuncEvals] = max(1, custom_params[:MaxFuncEvals] - surrogate_seed_samples)
         end
 
-        best = SupplyChainSimulation.bboptimize(f, x0, custom_params; seed_candidates=seed_candidates)
+        best = SupplyChainSimulation.bboptimize(f, x0, custom_params; seed_candidates=seed_candidates, verbose=get(custom_options, :verbose, false))
     elseif method === :cma_es
         best = cma_es_optimize(f, x0, cma_es_options)
     elseif method === :nelder_mead
@@ -830,7 +826,7 @@ function quadratic_surrogate_optimum(f, lower::Array{Float64, 1}, upper::Array{F
 end
 
 """
-    bboptimize(f, x0, params; seed_candidates=nothing)
+    bboptimize(f, x0, params; seed_candidates=nothing, verbose=false)
 
 `seed_candidates` (default `nothing`, matching every existing caller's
 behavior byte-for-byte) optionally replaces the first `length(seed_candidates)`
@@ -840,8 +836,12 @@ population a genuinely gradient-informed starting guess alongside its
 otherwise-random members. Seeded candidates are still just population
 members like any other: nothing about the search treats them specially past
 initialization, so a bad seed costs nothing beyond one wasted pool slot.
+
+`verbose` (default `false`) controls whether progress is printed to stdout
+- matching `cma_es_options[:verbosity]`'s default-off convention for the
+other optimizer methods, so calling `optimize!()` doesn't print by default.
 """
-function bboptimize(f, x0, params; seed_candidates::Union{Nothing, Vector{Vector{Float64}}}=nothing)
+function bboptimize(f, x0, params; seed_candidates::Union{Nothing, Vector{Vector{Float64}}}=nothing, verbose::Bool=false)
     start = Dates.now()
     latest = start
 
@@ -858,16 +858,13 @@ function bboptimize(f, x0, params; seed_candidates::Union{Nothing, Vector{Vector
             candidate_pool[idx] = clamp.(seed, params[:SearchRange][1], params[:SearchRange][2])
         end
     end
-    #println(candidate_pool)
     pool_f = [f(candidate) for candidate in candidate_pool]
-    #println(pool_f)
 
     t = max(0.1, min(0.9, 6 / length(x0)))
-    #println(t)
 
     for i in 1:params[:MaxFuncEvals]
         if i > last_progress + params[:MaxStepsWithoutProgress]
-            println("$i, $(Dates.now() - start), $best_f, $best_x")
+            verbose && println("$i, $(Dates.now() - start), $best_f, $best_x")
             break
         end
 
@@ -899,7 +896,6 @@ function bboptimize(f, x0, params; seed_candidates::Union{Nothing, Vector{Vector
             end
         end
         candidate_f = f(candidate)
-        #println("$i, $(Dates.now() - start), $candidate_f, $candidate")
         if (candidate_f ≈ pool_f[i1]) && (sum(candidate_f) < sum(pool_f[i1]))
             pool_f[i1] = candidate_f
             candidate_pool[i1] = candidate
@@ -911,27 +907,20 @@ function bboptimize(f, x0, params; seed_candidates::Union{Nothing, Vector{Vector
         if (candidate_f ≈ best_f) && (sum(candidate_f) < sum(best_f))
             best_f = candidate_f
             best_x = copy(candidate)
-            println("*- $i, $(Dates.now() - start), $best_f, $best_x")
+            verbose && println("*- $i, $(Dates.now() - start), $best_f, $best_x")
         end
         if candidate_f < best_f
             best_f = candidate_f
             best_x = copy(candidate)
             last_progress = i
-            println("** $i, $(Dates.now() - start), $best_f, $best_x")
+            verbose && println("** $i, $(Dates.now() - start), $best_f, $best_x")
         end
 
-        if i % 200 == 0
-            println("$i, $(Dates.now() - start), $(Dates.now() - latest), $best_f")#, $best_x")
+        if verbose && i % 200 == 0
+            println("$i, $(Dates.now() - start), $(Dates.now() - latest), $best_f")
             latest = Dates.now()
         end
     end
     return best_x
 end
 
-#function minimizer(results::BlackBoxOptim.OptimizationResults)
-#    return best_candidate(results)
-#end
-
-function minimizer(x)
-    return x
-end

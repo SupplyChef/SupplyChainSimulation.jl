@@ -97,6 +97,22 @@ em = results.equiv_metrics
 em_total_cost = Float64(em.costs.total_cost)
 equiv_matches_tuned_naive = isapprox(em_total_cost, tn_total_cost; atol=1.0) && isapprox(Float64(em.aggregate.fill_rate), Float64(tn.aggregate.fill_rate); atol=1e-6)
 
+# --- Follow-up: re-tune both policy families against the real beer-game cost
+#     (holding + backlog, not metrics_cost_function's holding + lost-sales-
+#     only view) to test whether the missing backlog term is what let the
+#     wholesaler's zero-buffer target, and BackwardCoverageOrderingPolicy's
+#     blow-up, look cheap.
+ctn = results.classic_tuned_naive_metrics
+ctn_targets = results.classic_tuned_naive_targets
+ctn_cv = as_dict(ctn.inventory_cv)
+ctn_classic_total = Float64(ctn.classic.total)
+naive_classic_total = Float64(results.naive_classic_score.total)
+
+co = results.classic_opt_metrics
+co_cover = results.classic_opt_cover
+co_classic_total = Float64(co.classic.total)
+co_fill_rate = Float64(co.aggregate.fill_rate)
+
 # --- Follow-up 3: Sterman's anchor-and-adjust sweep (published, measured
 #     human-ordering heuristic) and the human-panic variant (same heuristic
 #     plus a positive safety-stock cushion). ---
@@ -268,6 +284,31 @@ That's not a rounding artifact of a near-zero average — the backlog numbers co
 Under the cost-minimal tuned policy, the wholesaler ends the average 200-period run still carrying about $(fmt(Float64(tn.backlog.ending.wholesaler))) units of permanent unfilled backorder — nearly $(round(Float64(tn.backlog.ending.wholesaler) / Float64(results.naive_backlog.ending.wholesaler); digits=1))x the untuned baseline — and peaks at $(fmt(Float64(tn.backlog.peak.wholesaler))) mid-run. That's the real content behind "the wholesaler is keeping this chain cheap": it's absorbing the volatility the model doesn't charge for, not damping it.
 
 **Could a real wholesaler run this way?** Not for free. A distributor deliberately held at a near-zero safety-stock target would in practice be paying for this policy through channels the model doesn't price: constant expediting to plug the gaps, working-capital swings as on-hand oscillates between small overage and real shortfall, and the commercial/contractual cost of frequently under-shipping the retailer it supplies. None of that shows up in `metrics_cost_function` — only the terminal customer-facing miss does. The $(family_beats_naive_pct)% cost saving this section reports is real *under this cost function*; it is not free in an operation where a mid-chain stockout has consequences the model can't see.
+
+## Fixing the actual gap: pricing backlog
+
+Everything above traces back to one concrete, checkable fact: `metrics_cost_function` — the objective every `optimize!` call so far has minimized — reads only `state.metrics`, and `SimMetrics` (`Metrics.jl`) tracks `sales`, `lost_sales`, `holding_costs`, `overflow_costs`, `trip_unit_costs`, `trip_fixed_costs`, `orders`, and `demand`. **No backlog field at all.** Internal backlog at the wholesaler and factory has been free in every optimization on this page — not approximately free, literally zero cost in the objective actually being minimized. `classic_score`, used for every backlog table above, was only ever computed after the fact for reporting; it was never what `optimize!` searched against.
+
+We fixed this at the package level rather than working around it: `SimMetrics` now has a `backlog` field, accumulated every period exactly like `holding_costs` already was — read live from `pending_outbound_order_lines` (an order line is removed from there the instant it's filled or dropped, so whatever's left when a period closes out is exactly what's genuinely still owed, no history scan required) and excluding customer-destined orders (which are dropped as lost sales, never backlogged, per the same convention used throughout this page). That means the real beer-game cost — holding plus backlog, not just holding plus lost sales — can now be `optimize!`'s actual objective at full speed, `record_history=false`, the same fast path as every other search on this page.
+
+Re-tuning both policy families against that real cost:
+
+| | `NetUptoOrderingPolicy` targets | Fill rate | Classic score |
+|---|---|---|---|
+| Untuned naive | 30 / 30 / 50 | $(pct(naive.fill_rate)) | $(fmt(naive_classic_total)) |
+| Tuned under `metrics_cost_function` (backlog free) | $(tn_targets.l2_wholesaler_to_retailer) / $(tn_targets.l3_factory_to_wholesaler) / $(tn_targets.l4_supplier_to_factory) | $(pct(Float64(tn.aggregate.fill_rate))) | $(fmt(Float64(tn.classic.total))) |
+| **Tuned under the real beer-game cost** | **$(ctn_targets.l2_wholesaler_to_retailer) / $(ctn_targets.l3_factory_to_wholesaler) / $(ctn_targets.l4_supplier_to_factory)** | **$(pct(Float64(ctn.aggregate.fill_rate)))** | **$(fmt(ctn_classic_total))** |
+
+That's the confirmation: once backlog is actually priced, the wholesaler's tuned target jumps from **$(tn_targets.l3_factory_to_wholesaler) to $(ctn_targets.l3_factory_to_wholesaler)** — no longer starved. Inventory volatility falls back in line with every other node (wholesaler CV $(round(tn_cv["wholesaler"]; digits=2)) → $(round(ctn_cv["wholesaler"]; digits=2)), against retailer's $(round(ctn_cv["retailer"]; digits=2)) and factory's $(round(ctn_cv["factory"]; digits=2)) under the same real-cost tuning), and its ending backlog drops from $(fmt(Float64(tn.backlog.ending.wholesaler))) units to $(fmt(Float64(ctn.backlog.ending.wholesaler))) — and the resulting policy isn't even worse on the classic scoring: $(fmt(ctn_classic_total)) vs. the untuned baseline's $(fmt(naive_classic_total)), a genuine (if modest) improvement, achieved with a *sane* wholesaler buffer instead of a starved one. The earlier "cheap" result wasn't cheap — it was uncosted.
+
+**Does the same fix rescue `BackwardCoverageOrderingPolicy`?** Re-tuning it against the real cost too:
+
+| | Fill rate | Classic score | Bullwhip (retailer / wholesaler / factory) |
+|---|---|---|---|
+| Tuned under `metrics_cost_function` | $(pct(opt_in.fill_rate)) | $(fmt(optimized_classic_total)) | $(ratio(opt_bw["retailer_orders (l2)"])) / $(ratio(opt_bw["wholesaler_orders (l3)"])) / $(ratio(opt_bw["factory_orders (l4)"])) |
+| **Tuned under the real beer-game cost** | **$(pct(co_fill_rate))** | **$(fmt(co_classic_total))** | **$(ratio(Float64(as_dict(co.bullwhip)["retailer_orders (l2)"]))) / $(ratio(Float64(as_dict(co.bullwhip)["wholesaler_orders (l3)"]))) / $(ratio(Float64(as_dict(co.bullwhip)["factory_orders (l4)"])))** |
+
+Bullwhip does calm down substantially — no more 30-37x swings. But fill rate collapses to $(pct(co_fill_rate)), and the classic score ($(fmt(co_classic_total))) is still more than $(round(co_classic_total/ctn_classic_total; digits=1))x worse than the simple family tuned under the identical, now-correct cost. With lost-sales cost (1.0/unit, one-time) cheap relative to holding and backlog charges accumulating over a 200-period horizon, the search found it's cost-minimal for this family to run extremely lean and simply eat the lost sales — a different failure mode than the earlier blow-up, but still a worse answer than `NetUptoOrderingPolicy`'s. Pricing backlog correctly fixed the *objective's* blind spot; it didn't fix this policy family's fit to the network. That reinforces, from a completely different angle, the same conclusion the "fair fight" section reached: which policy family you search matters more than which cost function or how much budget you give the search.
 
 ## Is the "optimized" policy actually cheaper? Checking, not assuming.
 

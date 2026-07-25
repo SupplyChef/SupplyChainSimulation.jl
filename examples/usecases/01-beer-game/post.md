@@ -62,15 +62,15 @@ Fill rate got *worse* — -1.2 percentage points worse — not better. And the b
 
 The optimized policy's order quantities swing with roughly **37.0x to 33.3x times the variance of actual customer demand** — an order of magnitude worse than the naive policy's already-textbook bullwhip, and, unlike the naive case, it's severe at *every* echelon rather than escalating upstream. For scenario 1 specifically (directly comparable to the repo's own `beer_game()` test, which asserts exactly `lost_sales == 103.0 && sales == 1828.0 && demand == 1931.0`): this run produced lost sales = 103.0, sales = 1828.0, demand = 1931.0 — matching the known-good value, so this isn't a bug in this analysis; it's what that policy actually does.
 
-The tuned parameters `optimize!` found (`BackwardCoverageOrderingPolicy.cover`, applied per `Policy.jl` as: target net inventory = (last period's order) × (cover[1]+cover[2]) + cover[2]):
+The tuned parameters `optimize!` found (`BackwardCoverageOrderingPolicy.cover`, applied per `Policy.jl` as: target net inventory = (last period's local demand) × (cover[1]+cover[2]) + cover[2] — "local demand" being what this node's own downstream customer ordered from it, via `get_past_outbound_orders`, not this node's own order history and not true end-customer demand):
 
 | Lane | Tuned `cover` | Implied rule |
 |---|---|---|
-| wholesaler → retailer | [4.07, 5.45] | targets ≈ 9.5 × last period's order — a hard trend-chaser |
-| factory → wholesaler | [0.01, 0.14] | targets ≈ 0.15 × last period's order — much gentler |
-| supplier → factory | [0.0, 1.11] | first coefficient ≈ 0 — barely reacts to order history at all, runs closer to a flat, thin-buffer order-up-to rule |
+| wholesaler → retailer | [4.07, 5.45] | targets ≈ 9.5 × last period's local demand — a hard trend-chaser |
+| factory → wholesaler | [0.01, 0.14] | targets ≈ 0.15 × last period's local demand — much gentler |
+| supplier → factory | [0.0, 1.11] | first coefficient ≈ 0 — barely reacts to recent demand at all, runs closer to a flat, thin-buffer order-up-to rule |
 
-So this isn't one uniform mechanism copy-pasted three times — the optimizer found three structurally different rules (an aggressive trend-chaser, a gentle one, and one that mostly ignores the backward-looking signal) that happen to converge on similarly severe order-variance amplification. That convergence is itself worth flagging as something we don't have a single clean explanation for yet, and a good target for a follow-up post that looks at period-by-period order traces instead of aggregate variance ratios.
+So this isn't one uniform mechanism copy-pasted three times — the optimizer found three structurally different rules (an aggressive trend-chaser, a gentle one, and one that mostly ignores the recent-demand signal) that happen to converge on similarly severe order-variance amplification. That convergence is itself worth flagging as something we don't have a single clean explanation for yet, and a good target for a follow-up post that looks at period-by-period order traces instead of aggregate variance ratios.
 
 ## So who's actually damping the swings — if anyone?
 
@@ -206,15 +206,15 @@ This is the result that actually looks like the beer game: as the cushion target
 
 ## Should SupplyChainSimulation.jl keep `BackwardCoverageOrderingPolicy`?
 
-Given everything above, it's worth asking directly instead of leaving it implied. `get_order` for this policy targets a multiple of **its own last order** — not demand, not any downstream signal:
+Given everything above, it's worth asking directly instead of leaving it implied. `get_order` for this policy targets a multiple of **the recent demand this node has itself experienced** — what its own downstream customer ordered from it, via `get_past_outbound_orders` (despite the "outbound" name, that reads orders placed *against* this node, not orders this node placed upstream, and not true end-customer demand — a mid-chain node never sees that directly):
 
 ```
-target = last_order × (cover[1] + cover[2]) + cover[2]
+target = last_local_demand × (cover[1] + cover[2]) + cover[2]
 ```
 
-Any tuning where that multiplier exceeds 1 is a positive feedback loop by construction: a small uptick in what this node ordered last period raises this period's target by more than the uptick, which produces a bigger order next period, which raises the target again. The tuned parameters found above (target ≈ 9.5× the retailer's last order) land well inside that unstable regime, and quadrupling the search budget only found a different point inside the same unstable regime (still ≈8.4×), not a way out of it. That's why we fixed a misleading docstring on this policy in the same branch as this post (it previously claimed to cover "based on past demand," but `get_order` never reads `state.demand` at all).
+Any tuning where that multiplier exceeds 1 is naive, undamped trend extrapolation: a one-period uptick in local demand is projected forward as though it were a lasting shift, inflating this period's target by more than the uptick itself. That's the "demand signal processing" bullwhip mechanism from Lee, Padmanabhan, and Whang (1997) — one of the four canonical, published causes of the bullwhip effect, playing out directly in this policy's structure. The tuned parameters found above (target ≈ 9.5× the retailer's most recent local demand) land well inside that regime, and quadrupling the search budget only found a different point inside the same unstable regime (still ≈8.4×), not a way out of it. Nothing in `optimize!`'s default search range caps that multiplier below 1.
 
-Our recommendation: **keep the policy**, but stop treating a run of it as "the optimized answer." It's a legitimate, if fragile, control-law primitive — the class of policies that extrapolate from their own recent decisions is a real one, and it may behave fine on a network with different dynamics. What this page demonstrates isn't that the policy is broken; it's that **policy-family choice matters more than search budget**, which the "fair fight" section above shows directly: tuning the right family (a simple order-up-to rule) beat both tuning this one *and* giving this one 4x the compute.
+Our recommendation: **keep the policy** — it's a realistic, commonly-used-in-practice heuristic (order based on trailing sell-through × a coverage factor is genuinely how some real distributors replenish), and it demonstrates a named, published bullwhip cause directly and empirically, which is valuable on its own. What this page demonstrates isn't that the policy is broken; it's that **an unsmoothed, uncapped demand-trend-extrapolation policy is exactly what the bullwhip literature predicts will amplify variance**, and that **policy-family choice matters more than search budget** — the "fair fight" section above shows tuning the right family (a simple order-up-to rule) beat both tuning this one *and* giving this one 4x the compute. If a damped version is wanted, the fix isn't to feed it more demand signal (it already sees its own local demand) — it's to cap the gain (`cover[1]+cover[2] ≤ 1`) or replace the naive weighted-sum with an actual exponential-smoothing forecast, which is the standard real-world remedy for exactly this failure mode.
 
 ## Can this be replicated in a real supply chain? Why, and why not.
 

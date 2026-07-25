@@ -143,6 +143,31 @@ Under the cost-minimal tuned policy, the wholesaler ends the average 200-period 
 
 **Could a real wholesaler run this way?** Not for free. A distributor deliberately held at a near-zero safety-stock target would in practice be paying for this policy through channels the model doesn't price: constant expediting to plug the gaps, working-capital swings as on-hand oscillates between small overage and real shortfall, and the commercial/contractual cost of frequently under-shipping the retailer it supplies. None of that shows up in `metrics_cost_function` — only the terminal customer-facing miss does. The 17.7% cost saving this section reports is real *under this cost function*; it is not free in an operation where a mid-chain stockout has consequences the model can't see.
 
+## Fixing the actual gap: pricing backlog
+
+Everything above traces back to one concrete, checkable fact: `metrics_cost_function` — the objective every `optimize!` call so far has minimized — reads only `state.metrics`, and `SimMetrics` (`Metrics.jl`) tracks `sales`, `lost_sales`, `holding_costs`, `overflow_costs`, `trip_unit_costs`, `trip_fixed_costs`, `orders`, and `demand`. **No backlog field at all.** Internal backlog at the wholesaler and factory has been free in every optimization on this page — not approximately free, literally zero cost in the objective actually being minimized. `classic_score`, used for every backlog table above, was only ever computed after the fact for reporting; it was never what `optimize!` searched against.
+
+We fixed this at the package level rather than working around it: `SimMetrics` now has a `backlog` field, accumulated every period exactly like `holding_costs` already was — read live from `pending_outbound_order_lines` (an order line is removed from there the instant it's filled or dropped, so whatever's left when a period closes out is exactly what's genuinely still owed, no history scan required) and excluding customer-destined orders (which are dropped as lost sales, never backlogged, per the same convention used throughout this page). That means the real beer-game cost — holding plus backlog, not just holding plus lost sales — can now be `optimize!`'s actual objective at full speed, `record_history=false`, the same fast path as every other search on this page.
+
+Re-tuning both policy families against that real cost:
+
+| | `NetUptoOrderingPolicy` targets | Fill rate | Classic score |
+|---|---|---|---|
+| Untuned naive | 30 / 30 / 50 | 95.6% | 25203.2 |
+| Tuned under `metrics_cost_function` (backlog free) | 66 / 0 / 35 | 96.1% | 62556.6 |
+| **Tuned under the real beer-game cost** | **28 / 28 / 49** | **93.6%** | **24657.5** |
+
+That's the confirmation: once backlog is actually priced, the wholesaler's tuned target jumps from **0 to 28** — no longer starved. Inventory volatility falls back in line with every other node (wholesaler CV 6.43 → 0.54, against retailer's 0.52 and factory's 0.56 under the same real-cost tuning), and its ending backlog drops from 39.1 units to 10.0 — and the resulting policy isn't even worse on the classic scoring: 24657.5 vs. the untuned baseline's 25203.2, a genuine (if modest) improvement, achieved with a *sane* wholesaler buffer instead of a starved one. The earlier "cheap" result wasn't cheap — it was uncosted.
+
+**Does the same fix rescue `BackwardCoverageOrderingPolicy`?** Re-tuning it against the real cost too:
+
+| | Fill rate | Classic score | Bullwhip (retailer / wholesaler / factory) |
+|---|---|---|---|
+| Tuned under `metrics_cost_function` | 94.4% | 156835.0 | 37.0x / 32.3x / 33.3x |
+| **Tuned under the real beer-game cost** | **34.7%** | **62230.6** | **2.3x / 2.1x / 7.1x** |
+
+Bullwhip does calm down substantially — no more 30-37x swings. But fill rate collapses to 34.7%, and the classic score (62230.6) is still more than 2.5x worse than the simple family tuned under the identical, now-correct cost. With lost-sales cost (1.0/unit, one-time) cheap relative to holding and backlog charges accumulating over a 200-period horizon, the search found it's cost-minimal for this family to run extremely lean and simply eat the lost sales — a different failure mode than the earlier blow-up, but still a worse answer than `NetUptoOrderingPolicy`'s. Pricing backlog correctly fixed the *objective's* blind spot; it didn't fix this policy family's fit to the network. That reinforces, from a completely different angle, the same conclusion the "fair fight" section reached: which policy family you search matters more than which cost function or how much budget you give the search.
+
 ## Is the "optimized" policy actually cheaper? Checking, not assuming.
 
 Everything above raises an obvious question this analysis shouldn't skip: if the optimized policy has worse fill rate *and* far worse bullwhip, is it at least genuinely cheaper under the cost function `optimize!` was minimizing? That's worth checking directly rather than assuming — `optimize!` only ever searched `BackwardCoverageOrderingPolicy` parameters here, so there was never a guarantee it could reach something as good as the naive `NetUptoOrderingPolicy` baseline, which lives in a different, entirely unsearched policy family.

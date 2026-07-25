@@ -71,8 +71,15 @@ end
     `customer_backlog` (default `false`, matching every trial simulation's
     behavior before this field existed) is passed straight through to `Env` -
     see its docstring there for what it changes.
+
+    `params` is typed `Dict{Symbol}` (any value type), not `Dict{Symbol,
+    Float64}`: the internal defaults it gets merged with already mix value
+    types (`:SearchRange => (-0.0, 5000.0)` is a `Tuple`, `:NumDimensions` an
+    `Int`), so a caller overriding `:SearchRange` - e.g. to narrow the search
+    around a known-reasonable scale - was never actually representable as a
+    `Dict{Symbol, Float64}` in the first place.
 """
-function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s), record_history::Bool=true, customer_backlog::Bool=false)
+function optimize!(lane_policies, supplychains...; params::Dict{Symbol}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s), record_history::Bool=true, customer_backlog::Bool=false)
     initial_states = State.(supplychains)
     envs = [Env(supplychain, initial_states, lane_policies; record_history=record_history, customer_backlog=customer_backlog) for supplychain in supplychains]
 

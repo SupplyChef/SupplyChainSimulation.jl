@@ -389,6 +389,37 @@ function full_metrics(states, product, horizon; customer_backlog=false)
     )
 end
 
+# --- Generic (not beer-game-specific) fix for the search failure demonstrated
+#     above. bboptimize's initial 6-candidate population samples uniformly at
+#     random across the *entire* SearchRange (see Optimization.jl's
+#     bboptimize in this branch), independent of x0 - so a SearchRange sized
+#     to be safe for "any problem" (the default (-0.0, 5000.0)) makes it
+#     astronomically unlikely for any of the 6 initial candidates to land
+#     near a solution that occupies a thin slice of that space, which is
+#     exactly what happened to BackwardCoverageOrderingPolicy above.
+#     Hardcoding a smaller absolute range (e.g. (0, 100)) would "fix" this one
+#     network but isn't a real answer - a differently-scaled network would
+#     need a different range, and nothing here should have to know that in
+#     advance. Coarse-to-fine restart sidesteps this without any
+#     problem-specific knowledge: search once broad (discover roughly where
+#     good solutions live for THIS problem), then search again in a much
+#     narrower range centered on whatever that first pass actually found -
+#     no package change, no hardcoded numbers, adapts to any problem.
+function optimize_coarse_to_fine!(lane_policies, supplychains...; cost_function, record_history=false, customer_backlog=false,
+                                   coarse_params=Dict{Symbol,Float64}(), refine_shrink=20.0, refine_params=Dict{Symbol,Float64}())
+    optimize!(lane_policies, supplychains...; cost_function=cost_function, record_history=record_history, customer_backlog=customer_backlog, params=coarse_params)
+
+    policies = unique(values(lane_policies))
+    found = vcat([Float64.(get_parameters(p)) for p in policies]...)
+    lo, hi = extrema(found)
+    span = max(hi - lo, 1.0)
+    refined_range = (max(0.0, lo - span / refine_shrink), hi + span / refine_shrink)
+
+    optimize!(lane_policies, supplychains...; cost_function=cost_function, record_history=record_history, customer_backlog=customer_backlog,
+              params=merge(Dict(:SearchRange => refined_range), refine_params))
+    return refined_range
+end
+
 # --- Naive baseline: order-up-to a fixed "pipeline coverage, no safety stock"
 #     target at each echelon (mean demand * (lead_time + 1)), never tuned. ---
 naive_target(lead_time) = round(Int, MEAN_DEMAND * (lead_time + 1))
@@ -645,6 +676,28 @@ customer_backlog_tuned_naive_targets = Dict(
     "l4_supplier_to_factory" => customer_backlog_tuned_naive_policy4.upto,
 )
 
+# --- Follow-up: does the generic coarse-to-fine restart actually find the
+#     known optimum for BackwardCoverageOrderingPolicy under the real
+#     beer-game cost - the exact case that collapsed to 34.7% fill rate
+#     above - without being told anything beer-game-specific? classic_equiv
+#     already proved the optimum (classic_tuned_naive's fill_rate/
+#     classic_score) is reachable from this policy's own search space; this
+#     tests whether a generic search-improvement pattern, not foreknowledge
+#     of the answer, can find it on its own.
+coarse_fine_policy2 = BackwardCoverageOrderingPolicy([0.0, 0.0])
+coarse_fine_policy3 = BackwardCoverageOrderingPolicy([0.0, 0.0])
+coarse_fine_policy4 = BackwardCoverageOrderingPolicy([0.0, 0.0])
+coarse_fine_policies = Dict((l2, product) => coarse_fine_policy2, (l3, product) => coarse_fine_policy3, (l4, product) => coarse_fine_policy4)
+scenarios_for_coarse_fine = build_scenarios(SCENARIO_COUNT, CALIBRATION_SEED)
+coarse_fine_refined_range = optimize_coarse_to_fine!(coarse_fine_policies, scenarios_for_coarse_fine...; cost_function=classic_cost_function, record_history=false)
+coarse_fine_states = [simulate(s, coarse_fine_policies) for s in scenarios_for_coarse_fine]
+coarse_fine_metrics = full_metrics(coarse_fine_states, product, HORIZON)
+coarse_fine_cover = Dict(
+    "l2_wholesaler_to_retailer" => coarse_fine_policy2.cover,
+    "l3_factory_to_wholesaler" => coarse_fine_policy3.cover,
+    "l4_supplier_to_factory" => coarse_fine_policy4.cover,
+)
+
 # Known-good values from test/policy-beergame-tests.jl's beer_game() test,
 # for the exact same seed/config/policy family - printed as a sanity check,
 # not asserted, since minor package-version drift could shift float results.
@@ -698,6 +751,9 @@ results = Dict(
     "classic_equiv_metrics" => classic_equiv_metrics,
     "customer_backlog_tuned_naive_metrics" => customer_backlog_tuned_naive_metrics,
     "customer_backlog_tuned_naive_targets" => customer_backlog_tuned_naive_targets,
+    "coarse_fine_metrics" => coarse_fine_metrics,
+    "coarse_fine_cover" => coarse_fine_cover,
+    "coarse_fine_refined_range" => coarse_fine_refined_range,
 )
 
 open(joinpath(@__DIR__, "results.json"), "w") do io
@@ -752,3 +808,7 @@ println("  fill_rate=$(round(classic_equiv_metrics.aggregate.fill_rate; digits=4
 println("\nTuned NetUptoOrderingPolicy with customer_backlog=true (retail misses compound like internal backlog, not a one-time lost sale):")
 println("  targets: ", customer_backlog_tuned_naive_targets)
 println("  fill_rate=$(round(customer_backlog_tuned_naive_metrics.aggregate.fill_rate; digits=4))  classic_score=$(round(customer_backlog_tuned_naive_metrics.classic.total; digits=1))")
+println("\nGeneric coarse-to-fine restart on BackwardCoverageOrderingPolicy under the real beer-game cost (no beer-game-specific numbers given to the search):")
+println("  refined_range: ", coarse_fine_refined_range)
+println("  cover: ", coarse_fine_cover)
+println("  fill_rate=$(round(coarse_fine_metrics.aggregate.fill_rate; digits=4))  classic_score=$(round(coarse_fine_metrics.classic.total; digits=1))")

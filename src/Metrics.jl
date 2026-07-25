@@ -24,18 +24,21 @@ mutable struct SimMetrics
     demand::Float64
 
     # Sum, across every period closed out so far, of every location's
-    # currently-outstanding non-customer order-line quantity (see
-    # snapshot_state!, which charges this the same way it charges
-    # holding_costs). Raw units, not pre-priced - unlike holding_costs (which
-    # bakes in each location's own unit_holding_cost) there's no per-location
-    # backlog-cost field on Storage/Supplier, so a cost_function applies
-    # whatever backlog weight fits its own convention, the same way
-    # metrics_cost_function applies its own 0.001 weight to `orders` below.
-    # Customer-destined order lines are excluded: a customer order that can't
-    # be filled the same period it's created is dropped as a lost sale next
-    # period (see record_drop!), never a genuine backlog, so counting it here
-    # even for the one snapshot before that drop fires would double up with
-    # lost_sales for no reason.
+    # currently-outstanding order-line quantity (see snapshot_state!, which
+    # charges this the same way it charges holding_costs). Raw units, not
+    # pre-priced - unlike holding_costs (which bakes in each location's own
+    # unit_holding_cost) there's no per-location backlog-cost field on
+    # Storage/Supplier, so a cost_function applies whatever backlog weight
+    # fits its own convention, the same way metrics_cost_function applies its
+    # own 0.001 weight to `orders` below.
+    # Customer-destined order lines are excluded unless Env.customer_backlog
+    # is true: with the default false, a customer order that can't be filled
+    # the same period it's created is dropped as a lost sale next period (see
+    # record_drop!/place_orders(..., ::Customer, ...)), never a genuine
+    # backlog, so counting it here even for the one snapshot before that drop
+    # fires would double up with lost_sales for no reason. When
+    # customer_backlog is true, customer orders queue like any other node's
+    # and are counted the same way (see snapshot_state!).
     backlog::Float64
 
     # Trips that have already had their one-time fixed cost charged this run.

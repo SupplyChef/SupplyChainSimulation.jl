@@ -462,21 +462,30 @@ function get_horizon(state::State)
 end
 
 """
-    snapshot_state!(state::State, time, record_history::Bool)
+    snapshot_state!(state::State, time, record_history::Bool, customer_backlog::Bool)
 
 Closes out period `time`: charges holding cost for everything currently on
-hand (always, regardless of `record_history` - this is the incremental
-counterpart of `get_total_holding_costs`'s history scan, see `SimMetrics`),
-and, only when `record_history` is `true`, archives a per-period on-hand
-snapshot plus this period's filled/placed orders into `state`'s `historical_*`
-arrays for later reporting/visualization.
+hand and backlog cost (raw units, see `SimMetrics.backlog`) for everything
+currently outstanding (both always, regardless of `record_history` - this is
+the incremental counterpart of `get_total_holding_costs`'s history scan, see
+`SimMetrics`), and, only when `record_history` is `true`, archives a
+per-period on-hand snapshot plus this period's filled/placed orders into
+`state`'s `historical_*` arrays for later reporting/visualization.
 
 When `record_history` is `false` the archiving - including the Dict copy of
 on-hand inventory and the per-period Set handoffs - is skipped entirely, and
 `state.filled_orders`/`state.placed_orders` are just cleared in place for the
 next period instead of being swapped for fresh, permanently-retained Sets.
+
+`customer_backlog` must be passed the same value as the `Env` this state is
+being simulated under (see `Env.customer_backlog`): when `false` (the
+default), a Customer order still pending here is one period away from being
+dropped as a lost sale (see `place_orders(..., ::Customer, ...)`), not a
+genuine backlog, and is excluded from `SimMetrics.backlog` accordingly; when
+`true`, Customer orders queue like any other node's and are counted the same
+way.
 """
-function snapshot_state!(state::State, time, record_history::Bool)
+function snapshot_state!(state::State, time, record_history::Bool, customer_backlog::Bool)
     on_hand_snapshot = record_history ? Dict{Tuple{Storage, Product}, Int64}() : nothing
     if record_history
         sizehint!(on_hand_snapshot, length(state.on_hand_totals))
@@ -510,9 +519,13 @@ function snapshot_state!(state::State, time, record_history::Bool)
     # still sitting there when a period closes out is exactly what's
     # genuinely still owed, no history needed. Always charged, regardless of
     # record_history, same as holding_costs above - see SimMetrics.backlog.
+    # Customer-destined order lines only count when customer_backlog is true
+    # (see this function's docstring and Env.customer_backlog) - otherwise a
+    # still-pending Customer order here is one period away from becoming a
+    # lost sale, not a genuine backlog.
     for pi in 1:size(state.pending_outbound_order_lines, 2), li in 1:size(state.pending_outbound_order_lines, 1)
         for ol in state.pending_outbound_order_lines[li, pi]
-            if !isa(ol.destination, Customer)
+            if customer_backlog || !isa(ol.destination, Customer)
                 state.metrics.backlog += ol.quantity
             end
         end

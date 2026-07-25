@@ -229,11 +229,19 @@ end
 #     0.1 holding rate rather than importing Sterman's absolute numbers,
 #     since lead times/initial inventory/demand distribution already differ
 #     from his canonical setup.
-function classic_score(states, product, horizon; holding_rate=0.1, backlog_rate=0.2)
+# customer_backlog=true makes the retailer term structurally real instead of
+# a proxy: the network must actually have been simulated under
+# Env(...; customer_backlog=true) (see Env.jl in this branch) for a customer
+# order to persist in backlog_series at all - passing true here against
+# states simulated the old way (customer_backlog=false) would just compute
+# backlog_series over orders that were dropped as lost sales one period
+# later, silently wrong. Defaults to false, so every existing call site
+# above - and every previously-published number on this page - is unchanged.
+function classic_score(states, product, horizon; holding_rate=0.1, backlog_rate=0.2, customer_backlog=false)
     per_stage = Dict(name => Float64[] for name in ("retailer", "wholesaler", "factory", "supplier"))
     for s in states
         retailer_holding = holding_rate * sum(onhand_series(s, retailer, product, horizon))
-        retailer_shortfall = get_total_lost_sales(s) # proxy - see docstring above
+        retailer_shortfall = customer_backlog ? backlog_rate * sum(backlog_series(s, retailer, product, horizon)) + get_total_lost_sales(s) : get_total_lost_sales(s) # proxy when customer_backlog=false - see docstring above
         push!(per_stage["retailer"], retailer_holding + retailer_shortfall)
 
         for (name, node) in (("wholesaler", wholesaler), ("factory", factory), ("supplier", supplier))
@@ -370,14 +378,14 @@ end
 # --- Full metric bundle for a policy set already run to completion, reused
 #     for the tuned-NetUptoOrderingPolicy and bigger-budget-optimizer runs
 #     below so every configuration in this script is measured identically. ---
-function full_metrics(states, product, horizon)
+function full_metrics(states, product, horizon; customer_backlog=false)
     return (
         aggregate = aggregate(states),
         bullwhip = bullwhip_ratios(states, LANES_NAMED, customer, product, horizon),
         inventory_cv = inventory_cv(states, STORAGES_NAMED, product, horizon),
         costs = cost_breakdown(states),
         backlog = backlog_summary(states, BACKLOG_NODES_NAMED, product, horizon),
-        classic = classic_score(states, product, horizon),
+        classic = classic_score(states, product, horizon; customer_backlog=customer_backlog),
     )
 end
 
@@ -612,6 +620,31 @@ scenarios_for_classic_equiv = build_scenarios(SCENARIO_COUNT, CALIBRATION_SEED)
 classic_equiv_states = [simulate(s, classic_equiv_policies) for s in scenarios_for_classic_equiv]
 classic_equiv_metrics = full_metrics(classic_equiv_states, product, HORIZON)
 
+# --- Follow-up: does the lost-sales-cheaper-than-backlog asymmetry actually
+#     matter? Everything above still drops an unfilled customer order as a
+#     one-time lost sale; internal backlog compounds every period it
+#     persists. That's a real incentive asymmetry - not just a scoring
+#     inconsistency - so it's tested directly here: re-tune
+#     NetUptoOrderingPolicy against the identical classic_cost_function, but
+#     with customer_backlog=true (Env.jl in this branch), so a customer
+#     order that misses now queues and compounds cost exactly like every
+#     other node's, instead of being written off after one lost_sales
+#     charge. classic_score is scored with customer_backlog=true too, so the
+#     retailer's term is real backlog cost, not the lost-sales proxy.
+customer_backlog_tuned_naive_policy2 = NetUptoOrderingPolicy(0)
+customer_backlog_tuned_naive_policy3 = NetUptoOrderingPolicy(0)
+customer_backlog_tuned_naive_policy4 = NetUptoOrderingPolicy(0)
+customer_backlog_tuned_naive_policies = Dict((l2, product) => customer_backlog_tuned_naive_policy2, (l3, product) => customer_backlog_tuned_naive_policy3, (l4, product) => customer_backlog_tuned_naive_policy4)
+scenarios_for_customer_backlog_tuned_naive = build_scenarios(SCENARIO_COUNT, CALIBRATION_SEED)
+optimize!(customer_backlog_tuned_naive_policies, scenarios_for_customer_backlog_tuned_naive...; cost_function=classic_cost_function, record_history=false, customer_backlog=true)
+customer_backlog_tuned_naive_states = [simulate(s, customer_backlog_tuned_naive_policies; customer_backlog=true) for s in scenarios_for_customer_backlog_tuned_naive]
+customer_backlog_tuned_naive_metrics = full_metrics(customer_backlog_tuned_naive_states, product, HORIZON; customer_backlog=true)
+customer_backlog_tuned_naive_targets = Dict(
+    "l2_wholesaler_to_retailer" => customer_backlog_tuned_naive_policy2.upto,
+    "l3_factory_to_wholesaler" => customer_backlog_tuned_naive_policy3.upto,
+    "l4_supplier_to_factory" => customer_backlog_tuned_naive_policy4.upto,
+)
+
 # Known-good values from test/policy-beergame-tests.jl's beer_game() test,
 # for the exact same seed/config/policy family - printed as a sanity check,
 # not asserted, since minor package-version drift could shift float results.
@@ -663,6 +696,8 @@ results = Dict(
     "classic_opt_metrics" => classic_opt_metrics,
     "classic_opt_cover" => classic_opt_cover,
     "classic_equiv_metrics" => classic_equiv_metrics,
+    "customer_backlog_tuned_naive_metrics" => customer_backlog_tuned_naive_metrics,
+    "customer_backlog_tuned_naive_targets" => customer_backlog_tuned_naive_targets,
 )
 
 open(joinpath(@__DIR__, "results.json"), "w") do io
@@ -714,3 +749,6 @@ println("  cover: ", classic_opt_cover)
 println("  fill_rate=$(round(classic_opt_metrics.aggregate.fill_rate; digits=4))  classic_score=$(round(classic_opt_metrics.classic.total; digits=1))  bullwhip=$(classic_opt_metrics.bullwhip)")
 println("\nBackwardCoverageOrderingPolicy at cover[1]=0, targets == classic_tuned_naive (no optimize! call - is THIS optimum reachable too?):")
 println("  fill_rate=$(round(classic_equiv_metrics.aggregate.fill_rate; digits=4))  classic_score=$(round(classic_equiv_metrics.classic.total; digits=1))")
+println("\nTuned NetUptoOrderingPolicy with customer_backlog=true (retail misses compound like internal backlog, not a one-time lost sale):")
+println("  targets: ", customer_backlog_tuned_naive_targets)
+println("  fill_rate=$(round(customer_backlog_tuned_naive_metrics.aggregate.fill_rate; digits=4))  classic_score=$(round(customer_backlog_tuned_naive_metrics.classic.total; digits=1))")

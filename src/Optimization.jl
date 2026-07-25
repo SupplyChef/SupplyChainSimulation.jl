@@ -67,10 +67,14 @@ end
     `get_total_*` functions, and that index is maintained regardless of
     `record_history` (see `required_lookback`/`Env.needs_outbound_order_index`),
     so `record_history=false` is safe with that policy too.
+
+    `customer_backlog` (default `false`, matching every trial simulation's
+    behavior before this field existed) is passed straight through to `Env` -
+    see its docstring there for what it changes.
 """
-function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s), record_history::Bool=true)
+function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s), record_history::Bool=true, customer_backlog::Bool=false)
     initial_states = State.(supplychains)
-    envs = [Env(supplychain, initial_states, lane_policies; record_history=record_history) for supplychain in supplychains]
+    envs = [Env(supplychain, initial_states, lane_policies; record_history=record_history, customer_backlog=customer_backlog) for supplychain in supplychains]
 
     # Iterate lane_policies in a deterministic order (by lane/product name)
     # rather than raw Dict key order: keys(lane_policies) iterates in hash

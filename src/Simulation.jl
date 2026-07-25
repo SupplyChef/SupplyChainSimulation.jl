@@ -369,7 +369,13 @@ function place_orders(state::State, env::Env, location::ConcreteNode, product::P
                 # reads trip.lane_index directly instead of hashing
                 # trip.route through state.lane_index, since trip is
                 # already in hand at this exact call site.
-                Int(get_order(policy::BackwardCoverageOrderingPolicy, state, env, location, trip, product, li, si, pi, time))
+                #
+                # _as_order_quantity, not a blanket Int(...) (unlike every
+                # other branch here): this policy's get_order can return a
+                # continuous (non-Integer) value during AD-based
+                # differentiation of optimize!'s cost function - see
+                # Policy.jl's _order_quantity/_as_order_quantity comments.
+                _as_order_quantity(get_order(policy::BackwardCoverageOrderingPolicy, state, env, location, trip, product, li, si, pi, time))
             elseif policy isa SingleOrderOrderingPolicy
                 Int(get_order(policy::SingleOrderOrderingPolicy, state, env, location, trip.route, product, li, si, pi, time))
             else

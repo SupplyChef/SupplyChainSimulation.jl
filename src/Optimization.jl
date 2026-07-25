@@ -137,6 +137,15 @@ end
       real evaluation happens per iteration regardless of this value). Default
       `100`.
 
+    `custom_options` (only used when `method === :custom`) accepts:
+    - `:surrogate_seed_samples`: if greater than `0`, spends that many real
+      evaluations up front fitting `quadratic_surrogate_optimum` (a quadratic
+      response surface over `params[:SearchRange]`, see its docstring) and
+      seeds one member of `bboptimize`'s initial population with that
+      surrogate's predicted optimum instead of a purely random point.
+      Default `0` (disabled) - every existing caller sees byte-for-byte
+      identical behavior, since this option didn't exist before.
+
     `nelder_mead_options` (only used when `method === :nelder_mead`) accepts:
     - `:lower`, `:upper`: box constraints, same shape/defaults as `cma_es_options`.
       Plain Nelder-Mead is unconstrained, so out-of-box candidates are clamped back
@@ -154,7 +163,7 @@ end
     - `:restart_scale`: restart perturbation size, as a fraction of `:upper - :lower`
       in each dimension. Default `0.2`.
 """
-function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s), record_history::Bool=true, method::Symbol=:custom, cma_es_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), nelder_mead_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), bayesopt_options::Dict{Symbol, Any}=Dict{Symbol, Any}())
+function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s), record_history::Bool=true, method::Symbol=:custom, cma_es_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), nelder_mead_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), bayesopt_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), custom_options::Dict{Symbol, Any}=Dict{Symbol, Any}())
     initial_states = State.(supplychains)
     envs = [Env(supplychain, initial_states, lane_policies; record_history=record_history) for supplychain in supplychains]
 
@@ -176,12 +185,31 @@ function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}
     f = x -> minimize!(lane_policies, policies, collect(envs), collect(initial_states), x; cost_function=cost_function)
 
     if method === :custom
-        best = SupplyChainSimulation.bboptimize(f,
-                         x0,
-                        merge(Dict(:MaxFuncEvals => 15000,
+        custom_params = merge(Dict(:MaxFuncEvals => 15000,
                              :MaxStepsWithoutProgress => 1500,
                              :SearchRange => (-0.0, 5000.0),
-                             :NumDimensions => length(x0)), params))
+                             :NumDimensions => length(x0)), params)
+
+        # Disabled (0) unless a caller explicitly opts in via custom_options -
+        # every existing caller (this option didn't exist before) sees
+        # seed_candidates stay `nothing`, i.e. byte-for-byte identical
+        # behavior to before this option existed. See
+        # quadratic_surrogate_optimum's docstring for what this buys: one
+        # gradient-informed population member instead of purely random ones,
+        # validated like any other candidate (never trusted blindly).
+        surrogate_seed_samples = get(custom_options, :surrogate_seed_samples, 0)
+        seed_candidates = nothing
+        if surrogate_seed_samples > 0
+            lower, upper = custom_params[:SearchRange]
+            seed = quadratic_surrogate_optimum(f, fill(convert(Float64, lower), length(x0)), fill(convert(Float64, upper), length(x0)); samples=surrogate_seed_samples)
+            seed_candidates = [seed]
+            # Comes out of the same :MaxFuncEvals budget, not on top of it -
+            # a fair comparison against plain :custom at the same total
+            # evaluation count, not an unadvertised extra allowance.
+            custom_params[:MaxFuncEvals] = max(1, custom_params[:MaxFuncEvals] - surrogate_seed_samples)
+        end
+
+        best = SupplyChainSimulation.bboptimize(f, x0, custom_params; seed_candidates=seed_candidates)
     elseif method === :cma_es
         best = cma_es_optimize(f, x0, cma_es_options)
     elseif method === :nelder_mead
@@ -715,17 +743,121 @@ function bayesopt_optimize(f, x0::Array{Float64, 1}, options::Dict{Symbol, Any})
     return clamp.(point_to_vec(best_x), lower_bounds, upper_bounds)
 end
 
-function bboptimize(f, x0, params)
+"""
+    quadratic_surrogate_optimum(f, lower, upper; samples)
+
+Fits a quadratic response surface `y ≈ c0 + b'x + x'Ax` to `samples` real
+evaluations of `f` (a space-filling Sobol design over the box `[lower,
+upper]`), via ordinary least squares, then returns *that surrogate's own*
+closed-form predicted optimum (solving `∇y = b + 2Ax = 0`, i.e. `x* = -A \\
+b`), clamped into `[lower, upper]`.
+
+Built as a small, standalone alternative to `:bayesopt`'s Kriging surrogate
+(see `bayesopt_optimize`'s docstring for the two compounding bugs that
+approach hit on this package's non-smooth cost functions: stale
+hyperparameters, and an early-termination check sensitive to a few
+catastrophic-cost outliers) - a quadratic response surface has no
+hyperparameters to estimate at all, and its gradient/optimum are exact
+closed-form linear algebra rather than an iterative fit, so neither failure
+mode applies. The tradeoff is a much cruder model: a single global quadratic
+can't capture multiple local optima or genuinely non-quadratic structure the
+way a Kriging surrogate (in principle) can - this is meant to seed one
+promising candidate for another search to actually validate against the real
+`f`, not to be trusted as a standalone optimizer.
+
+Requires `samples` to be at least the number of quadratic-model coefficients
+(`1 + 2n + n(n-1)/2` for `n = length(lower)` parameters: one intercept, `n`
+linear terms, `n` squared terms, `n(n-1)/2` cross terms) - fewer than that
+makes `X \\ ys` an underdetermined least-squares solve with no real
+predictive meaning. Falls back to the best point actually observed among the
+sampled evaluations (rather than trusting an ill-posed solve) if `A` turns
+out non-invertible.
+"""
+function quadratic_surrogate_optimum(f, lower::Array{Float64, 1}, upper::Array{Float64, 1}; samples::Int)
+    n = length(lower)
+    nfeatures = 1 + 2 * n + (n * (n - 1)) ÷ 2
+
+    xs = Surrogates.sample(samples, lower, upper, Surrogates.SobolSample())
+    xs_vec = [n == 1 ? [convert(Float64, x)] : convert(Array{Float64, 1}, collect(x)) for x in xs]
+    ys = [convert(Float64, f(x)) for x in xs_vec]
+
+    X = zeros(samples, nfeatures)
+    for (row, x) in enumerate(xs_vec)
+        col = 1
+        X[row, col] = 1.0
+        col += 1
+        for i in 1:n
+            X[row, col] = x[i]
+            col += 1
+        end
+        for i in 1:n
+            X[row, col] = x[i]^2
+            col += 1
+        end
+        for i in 1:n, j in (i + 1):n
+            X[row, col] = x[i] * x[j]
+            col += 1
+        end
+    end
+
+    coeffs = X \ ys
+    b = coeffs[2:(1 + n)]
+
+    A = zeros(n, n)
+    for i in 1:n
+        A[i, i] = coeffs[1 + n + i]
+    end
+    idx = 1 + 2 * n
+    for i in 1:n, j in (i + 1):n
+        idx += 1
+        A[i, j] = coeffs[idx] / 2
+        A[j, i] = coeffs[idx] / 2
+    end
+
+    candidate = try
+        x_star = -(2 .* A) \ b
+        if all(isfinite, x_star)
+            clamp.(x_star, lower, upper)
+        else
+            xs_vec[argmin(ys)]
+        end
+    catch e
+        e isa Union{LinearAlgebra.SingularException, LinearAlgebra.LAPACKException} || rethrow()
+        xs_vec[argmin(ys)]
+    end
+
+    return candidate
+end
+
+"""
+    bboptimize(f, x0, params; seed_candidates=nothing)
+
+`seed_candidates` (default `nothing`, matching every existing caller's
+behavior byte-for-byte) optionally replaces the first `length(seed_candidates)`
+members of the initial random `candidate_pool` with given points instead -
+e.g. `quadratic_surrogate_optimum`'s predicted optimum, giving the
+population a genuinely gradient-informed starting guess alongside its
+otherwise-random members. Seeded candidates are still just population
+members like any other: nothing about the search treats them specially past
+initialization, so a bad seed costs nothing beyond one wasted pool slot.
+"""
+function bboptimize(f, x0, params; seed_candidates::Union{Nothing, Vector{Vector{Float64}}}=nothing)
     start = Dates.now()
     latest = start
 
     best_f = f(x0)
     best_x = copy(x0)
-    
+
     last_progress = 0
 
     pool_size = 6
     candidate_pool = [rand(length(x0)) .* (params[:SearchRange][2] - params[:SearchRange][1]) .+ params[:SearchRange][1] for i in 1:pool_size]
+    if seed_candidates !== nothing
+        for (idx, seed) in enumerate(seed_candidates)
+            idx > pool_size && break
+            candidate_pool[idx] = clamp.(seed, params[:SearchRange][1], params[:SearchRange][2])
+        end
+    end
     #println(candidate_pool)
     pool_f = [f(candidate) for candidate in candidate_pool]
     #println(pool_f)

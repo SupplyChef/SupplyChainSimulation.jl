@@ -302,3 +302,59 @@ end
         true
     end
 end
+
+@testset "optimize! method=:custom with custom_options surrogate seeding" begin
+    # Smoke-tests optimize!'s custom_options=>:surrogate_seed_samples path
+    # (quadratic_surrogate_optimum wiring in Optimization.jl) - same
+    # shape/reasoning as the other method tests above. Also exercises the
+    # disabled-by-default path implicitly: every other test in this file
+    # calls :custom (via runtests.jl's Newsvendor test, or other testsets)
+    # without custom_options at all and still passes, confirming
+    # surrogate_seed_samples defaulting to 0 changes nothing for them.
+    @test begin
+        horizon = 1
+
+        product = Product("product")
+
+        supplier = Supplier("supplier")
+        storage = Storage("storage")
+        add_product!(storage, product; unit_holding_cost=1.0)
+        customer = Customer("customer")
+
+        l1 = Lane(storage, customer)
+        l2 = Lane(supplier, storage)
+
+        n() = begin
+            network = SupplyChain(horizon)
+
+            add_supplier!(network, supplier)
+            add_storage!(network, storage)
+            add_customer!(network, customer)
+            add_product!(network, product)
+            add_lane!(network, l1)
+            add_lane!(network, l2)
+
+            add_demand!(network, customer, product, rand(Poisson(10), horizon) * 1.0; sales_price=1.0, lost_sales_cost=1.0)
+
+            return network
+        end
+
+        policy = BackwardCoverageOrderingPolicy([0.0, 0.0])
+        policies = Dict((l2, product) => policy)
+
+        initial_states = [n() for i in 1:5]
+        # 2 parameters -> quadratic_surrogate_optimum needs at least
+        # 1 + 2*2 + 2*1/2 = 6 samples; 10 leaves a small safety margin while
+        # keeping this a fast smoke test. :SearchRange isn't overridden here
+        # (params is Dict{Symbol,Float64} - a Tuple value wouldn't fit) so
+        # this exercises the default (-0.0, 5000.0) box.
+        optimize!(policies, initial_states...;
+                  method=:custom,
+                  params=Dict(:MaxFuncEvals => 50.0, :MaxStepsWithoutProgress => 50.0),
+                  custom_options=Dict{Symbol, Any}(:surrogate_seed_samples => 10),
+                  cost_function=metrics_cost_function, record_history=false)
+
+        final_states = [simulate(initial_state, policies) for initial_state in initial_states]
+        true
+    end
+end

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       maxfevals:
-        description: 'Evaluation budget given to each method (optimize!''s :custom, :cma_es, :nelder_mead, and :bayesopt)'
+        description: 'Evaluation budget given to each method (optimize!''s :custom, :cma_es, :nelder_mead, :bayesopt, and :custom_surrogate)'
         default: '3000'
       trials:
         description: 'Independent trials (distinct seeds) per method, for mean/std/paired-test reporting'
@@ -23,7 +23,7 @@ env:
 
 jobs:
   compare:
-    name: optimize! :custom vs :cma_es vs :nelder_mead vs :bayesopt @ ${{ inputs.trials }} trials x ${{ inputs.maxfevals }} evals
+    name: optimize! :custom vs :cma_es vs :nelder_mead vs :bayesopt vs :custom_surrogate @ ${{ inputs.trials }} trials x ${{ inputs.maxfevals }} evals
     runs-on: ubuntu-latest
     # Each trial runs all three methods once, on both the newsvendor and
     # beer_game problems. 5 trials x 3000 evals x 16 training scenarios (the

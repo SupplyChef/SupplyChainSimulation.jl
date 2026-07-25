@@ -1,9 +1,10 @@
 #=
-Compares optimize!'s four search methods - :custom (the original hand-rolled
+Compares optimize!'s five search methods - :custom (the original hand-rolled
 optimizer), :cma_es (CMAEvolutionStrategy.jl), :nelder_mead (multi-start
-Optim.jl NelderMead), and :bayesopt (BayesianOptimization.jl) - on two
-structurally different simulation-optimization tasks, under a matched
-evaluation budget, across several independent trials.
+Optim.jl NelderMead), :bayesopt (Surrogates.jl Kriging + EI), and
+:custom_surrogate (:custom seeded from a quadratic response-surface model's
+predicted optimum) - on two structurally different simulation-optimization
+tasks, under a matched evaluation budget, across several independent trials.
 
 :nelder_mead was added after an earlier run of this script showed :cma_es
 converging - and then plateauing - well before exhausting its evaluation
@@ -22,6 +23,19 @@ far fewer of them in the first place. Worth trying specifically because
 every evaluation here is a full discrete-event simulation (expensive) over a
 small number of parameters (2-6 so far) - exactly the regime where trading
 surrogate-fitting cost for real evaluations pays off.
+
+:custom_surrogate was added after :bayesopt's Kriging surrogate turned out to
+need substantial fixes for this package's non-smooth cost functions (stale
+hyperparameters, an early-termination check sensitive to a few
+catastrophic-cost outliers - see bayesopt_optimize's docstring) and, even
+fixed, still couldn't match the other methods on the 6-parameter beer_game
+problem. A quadratic response surface (quadratic_surrogate_optimum,
+Optimization.jl) has no hyperparameters to estimate and its predicted optimum
+is exact closed-form linear algebra rather than an iterative fit - a much
+cruder model (a single global quadratic can't capture multiple local optima),
+but worth trying as a cheap way to give :custom's population one
+gradient-informed starting point instead of only random ones, spending part
+of the same evaluation budget rather than an extra allowance on top of it.
 
 Two problems are compared, not just one:
 - "newsvendor": test/policy-calibration-generalization-tests.jl's single-stage
@@ -51,8 +65,8 @@ This intentionally does not call optimize! itself: comparing convergence
 that optimize!'s public API doesn't expose, so this reimplements optimize!'s
 setup (Env construction, sorted policy keys, x0 assembly - see Optimization.jl)
 with an instrumented objective, then calls the same internal
-SupplyChainSimulation.bboptimize/cma_es_optimize/nelder_mead_optimize entry
-points optimize! uses.
+SupplyChainSimulation.bboptimize/cma_es_optimize/nelder_mead_optimize/
+bayesopt_optimize/quadratic_surrogate_optimum entry points optimize! uses.
 
 Run with:
     julia --project=benchmark benchmark/compare_optimizers.jl
@@ -69,7 +83,7 @@ using SupplyChainModeling
 using SupplyChainSimulation
 
 const CHECKPOINT_FRACTIONS = [0.1, 0.25, 0.5, 0.75, 1.0]
-const METHODS = [:custom, :cma_es, :nelder_mead, :bayesopt]
+const METHODS = [:custom, :cma_es, :nelder_mead, :bayesopt, :custom_surrogate]
 
 function compare_optimizers_params()
     maxfevals = parse(Int, get(ENV, "COMPARE_MAXFEVALS", "3000"))
@@ -160,6 +174,22 @@ function run_search(method::Symbol, lane_policies, training_scenarios, cost_func
         # quietly giving it an easier budget than the others.
         best = SupplyChainSimulation.bayesopt_optimize(tracked_f, x0,
             Dict{Symbol, Any}(:maxfevals => maxfevals, :upper => upper))
+    elseif method === :custom_surrogate
+        # :custom, but with one population member seeded from
+        # quadratic_surrogate_optimum's closed-form predicted optimum
+        # instead of a purely random point - see optimize!'s custom_options
+        # docstring. The surrogate-fitting evaluations come out of the same
+        # maxfevals budget (not on top of it), so this is a fair,
+        # matched-budget comparison against plain :custom, not an unfair
+        # head start.
+        n = length(x0)
+        nfeatures = 1 + 2 * n + (n * (n - 1)) ÷ 2
+        surrogate_samples = min(maxfevals ÷ 10, max(3 * nfeatures, 30))
+        seed = SupplyChainSimulation.quadratic_surrogate_optimum(tracked_f, fill(0.0, n), fill(upper, n); samples=surrogate_samples)
+        best = SupplyChainSimulation.bboptimize(tracked_f, x0,
+            Dict(:MaxFuncEvals => maxfevals - surrogate_samples, :MaxStepsWithoutProgress => maxfevals,
+                 :SearchRange => (-0.0, upper), :NumDimensions => length(x0));
+            seed_candidates = [seed])
     else
         error("run_search: unknown method $method")
     end

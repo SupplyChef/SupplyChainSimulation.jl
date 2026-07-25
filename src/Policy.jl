@@ -228,20 +228,25 @@ function get_order(policy::ForwardCoverageOrderingPolicy, state::State, env::Env
 end
 
 """
-Orders inventory to cover a target net inventory level extrapolated from
-this location's own past *orders* (via `get_past_outbound_orders`), not from
-observed demand - despite the name, `get_order` below never reads
-`state.demand` or any downstream signal. That makes this policy structurally
-autoregressive on its own decisions: with `cover[1]` weighting the most
-recent order, the effective target is `last_order * (sum(cover[1:end-1]) +
-cover[end]) + cover[end]` (for the common 2-element case, `last_order *
-(cover[1]+cover[2]) + cover[2]`). Any tuning where that multiplier exceeds 1
-is a positive feedback loop - an uptick in what this node ordered last
-period raises this period's target by more than the uptick, prompting an
-even larger order next period - so `optimize!` searching this policy family
-can converge on parameters that amplify variance rather than damp it. This
-is a real risk of the policy's structure, not just a possible bad draw from
-the optimizer.
+Orders inventory to cover a target net inventory level extrapolated from the
+recent demand this location has itself experienced - via
+`get_past_outbound_orders(state, location, ...)`, which (despite the
+"outbound" name) returns quantities *ordered from* `location` by its own
+downstream customer(s), i.e. `location`'s local demand signal. This is not
+`location`'s own order history (that would be `get_past_outbound_orders`
+called with the *upstream* node as `location`), and not true end-customer
+demand - a mid-chain node in this model never sees that directly, same as in
+real distribution networks. With `cover[1]` weighting the most recent
+period's local demand, the effective target is `last_demand *
+(sum(cover[1:end-1]) + cover[end]) + cover[end]` (for the common 2-element
+case, `last_demand * (cover[1]+cover[2]) + cover[2]`). Any tuning where that
+multiplier exceeds 1 is naive, undamped trend extrapolation: a one-period
+uptick in local demand is projected forward as if it were a lasting shift,
+inflating this period's target by more than the uptick itself - the "demand
+signal processing" bullwhip mechanism documented by Lee, Padmanabhan, and
+Whang (1997), not a feedback loop on the policy's own past decisions.
+`optimize!` searching this policy family can still converge on such
+unstable, amplifying multipliers, since nothing here caps the gain.
 """
 mutable struct BackwardCoverageOrderingPolicy <: InventoryOrderingPolicy
     cover::Array{Float64, 1}

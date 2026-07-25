@@ -246,29 +246,31 @@ function classic_score(states, product, horizon; holding_rate=0.1, backlog_rate=
     return (per_stage = stage_totals, total = sum(values(stage_totals)))
 end
 
-# --- Same formula as classic_score above, but as a per-state closure usable
-#     directly as optimize!'s cost_function - i.e. the actual beer-game cost
-#     (holding + backlog at every internal stage, holding + lost-sales proxy
-#     at retail) as the thing optimize! minimizes, not just something
-#     computed after the fact for reporting. metrics_cost_function (used by
-#     every optimize! call above) reads only state.metrics, which has no
-#     backlog field at all - SimMetrics tracks sales/lost_sales/holding_costs/
-#     trip costs/orders and nothing else (see Metrics.jl) - so internal
-#     backlog has been free in every optimization on this page so far. This
-#     function needs the historical arrays classic_score's helpers scan
-#     (onhand_series/backlog_series/get_total_lost_sales), so - unlike every
-#     optimize! call above - it requires record_history=true, and is
-#     correspondingly slower per trial.
-function classic_cost_function(state)
-    holding_rate = 0.1
-    backlog_rate = 0.2
-    total = holding_rate * sum(onhand_series(state, retailer, product, HORIZON)) + get_total_lost_sales(state)
-    for node in (wholesaler, factory, supplier)
-        total += holding_rate * sum(onhand_series(state, node, product, HORIZON))
-        total += backlog_rate * sum(backlog_series(state, node, product, HORIZON))
-    end
-    return total
-end
+# --- Same cost this network's classic_score computes after the fact (holding
+#     + backlog at every internal stage, holding + lost-sales proxy at
+#     retail), but as a per-state closure usable directly as optimize!'s
+#     cost_function - i.e. the actual beer-game cost as the thing optimize!
+#     minimizes, not just something reported afterward. metrics_cost_function
+#     (used by every optimize! call above) reads only state.metrics, which
+#     used to have no backlog field at all - SimMetrics tracked sales/
+#     lost_sales/holding_costs/trip costs/orders and nothing else - so
+#     internal backlog was free in every optimization on this page until now.
+#     Fixed at the package level (see SimMetrics.backlog / snapshot_state! in
+#     State.jl/Metrics.jl in this branch): backlog is read live from
+#     pending_outbound_order_lines - an order line is removed the instant
+#     it's filled or dropped, so whatever's left when a period closes out is
+#     exactly what's still owed - and accumulated into state.metrics.backlog
+#     every period regardless of record_history, the same way holding_costs
+#     always was. That means this cost function, unlike the version that
+#     scanned onhand_series/backlog_series, needs no historical arrays at
+#     all: record_history=false is safe here too, same fast path as
+#     metrics_cost_function above.
+#     All storages in this network share unit_holding_cost=0.1, so
+#     state.metrics.holding_costs (a single network-wide total) already
+#     equals holding_rate * combined on-hand across every node - no need to
+#     break it out per node for a scalar objective the way classic_score does
+#     for its per-stage report.
+classic_cost_function(state) = state.metrics.holding_costs + state.metrics.lost_sales + 0.2 * state.metrics.backlog
 
 # --- Sterman's (1989) "anchor and adjust" heuristic - a published, measured
 #     model of how real humans play the beer game, not a policy this package
@@ -401,6 +403,26 @@ naive_inventory_cv = inventory_cv(naive_states, STORAGES_NAMED, product, HORIZON
 naive_costs = cost_breakdown(naive_states)
 naive_backlog = backlog_summary(naive_states, BACKLOG_NODES_NAMED, product, HORIZON)
 naive_classic = classic_score(naive_states, product, HORIZON)
+
+# Correctness check on the new package-level state.metrics.backlog (see
+# SimMetrics/snapshot_state! in this branch): sum it independently via the
+# already-established, already-cross-checked backlog_series helper (used for
+# every backlog table on this page) over the same states, and compare. These
+# two are computed by completely different code paths - one incremental and
+# live inside simulate(), one a post-hoc scan of historical_orders/
+# historical_filled_orders - so agreement here is real evidence the new
+# package field is counting the same thing, not just internally consistent
+# with itself.
+let
+    from_metrics = sum(s.metrics.backlog for s in naive_states)
+    from_series = sum(sum(backlog_series(s, node, product, HORIZON)) for s in naive_states for (_, node) in BACKLOG_NODES_NAMED)
+    agree = isapprox(from_metrics, from_series; rtol=1e-9)
+    println("Sanity check: state.metrics.backlog should equal sum(backlog_series(...)) over the same states.")
+    println("  from_metrics=$(from_metrics)  from_series=$(from_series)  agree=$(agree)")
+    if !agree
+        error("state.metrics.backlog disagrees with the independently-computed backlog_series total - the new SimMetrics.backlog accumulation (State.jl/Metrics.jl) is not counting the same thing backlog_series does.")
+    end
+end
 
 # --- Sterman anchor-and-adjust sweep: alpha_supply_line=1.0 reproduces the
 #     naive baseline exactly (see the policy's docstring above for the
@@ -542,15 +564,16 @@ big_opt_cover = Dict(
 #     cost (classic_cost_function, backlog included) instead of
 #     metrics_cost_function, to test whether the missing backlog term above
 #     is what let BackwardCoverageOrderingPolicy's blow-up - and
-#     NetUptoOrderingPolicy's zero-buffer wholesaler - look cheap. Needs
-#     record_history=true, so these two calls are slower per trial than every
-#     optimize! call above; both still use the default 15000-eval budget.
+#     NetUptoOrderingPolicy's zero-buffer wholesaler - look cheap. Now that
+#     backlog is tracked in state.metrics (see classic_cost_function's
+#     docstring above), this is exactly as fast as every other optimize! call
+#     on this page - record_history=false throughout, same 15000-eval budget.
 classic_tuned_naive_policy2 = NetUptoOrderingPolicy(0)
 classic_tuned_naive_policy3 = NetUptoOrderingPolicy(0)
 classic_tuned_naive_policy4 = NetUptoOrderingPolicy(0)
 classic_tuned_naive_policies = Dict((l2, product) => classic_tuned_naive_policy2, (l3, product) => classic_tuned_naive_policy3, (l4, product) => classic_tuned_naive_policy4)
 scenarios_for_classic_tuned_naive = build_scenarios(SCENARIO_COUNT, CALIBRATION_SEED)
-optimize!(classic_tuned_naive_policies, scenarios_for_classic_tuned_naive...; cost_function=classic_cost_function, record_history=true)
+optimize!(classic_tuned_naive_policies, scenarios_for_classic_tuned_naive...; cost_function=classic_cost_function, record_history=false)
 classic_tuned_naive_states = [simulate(s, classic_tuned_naive_policies) for s in scenarios_for_classic_tuned_naive]
 classic_tuned_naive_metrics = full_metrics(classic_tuned_naive_states, product, HORIZON)
 classic_tuned_naive_targets = Dict(
@@ -564,7 +587,7 @@ classic_opt_policy3 = BackwardCoverageOrderingPolicy([0.0, 0.0])
 classic_opt_policy4 = BackwardCoverageOrderingPolicy([0.0, 0.0])
 classic_opt_policies = Dict((l2, product) => classic_opt_policy2, (l3, product) => classic_opt_policy3, (l4, product) => classic_opt_policy4)
 scenarios_for_classic_opt = build_scenarios(SCENARIO_COUNT, CALIBRATION_SEED)
-optimize!(classic_opt_policies, scenarios_for_classic_opt...; cost_function=classic_cost_function, record_history=true)
+optimize!(classic_opt_policies, scenarios_for_classic_opt...; cost_function=classic_cost_function, record_history=false)
 classic_opt_states = [simulate(s, classic_opt_policies) for s in scenarios_for_classic_opt]
 classic_opt_metrics = full_metrics(classic_opt_states, product, HORIZON)
 classic_opt_cover = Dict(

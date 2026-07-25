@@ -503,6 +503,21 @@ function snapshot_state!(state::State, time, record_history::Bool)
         end
     end
 
+    # Backlog: every location's currently-outstanding order-line quantity,
+    # read directly from pending_outbound_order_lines rather than scanned
+    # from history - an order line is removed from there the instant it's
+    # filled or dropped (see send_inventory!/record_drop!), so whatever's
+    # still sitting there when a period closes out is exactly what's
+    # genuinely still owed, no history needed. Always charged, regardless of
+    # record_history, same as holding_costs above - see SimMetrics.backlog.
+    for pi in 1:size(state.pending_outbound_order_lines, 2), li in 1:size(state.pending_outbound_order_lines, 1)
+        for ol in state.pending_outbound_order_lines[li, pi]
+            if !isa(ol.destination, Customer)
+                state.metrics.backlog += ol.quantity
+            end
+        end
+    end
+
     if record_history
         push!(state.historical_on_hand, on_hand_snapshot)
 

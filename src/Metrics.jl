@@ -23,6 +23,21 @@ mutable struct SimMetrics
     orders::Float64
     demand::Float64
 
+    # Sum, across every period closed out so far, of every location's
+    # currently-outstanding non-customer order-line quantity (see
+    # snapshot_state!, which charges this the same way it charges
+    # holding_costs). Raw units, not pre-priced - unlike holding_costs (which
+    # bakes in each location's own unit_holding_cost) there's no per-location
+    # backlog-cost field on Storage/Supplier, so a cost_function applies
+    # whatever backlog weight fits its own convention, the same way
+    # metrics_cost_function applies its own 0.001 weight to `orders` below.
+    # Customer-destined order lines are excluded: a customer order that can't
+    # be filled the same period it's created is dropped as a lost sale next
+    # period (see record_drop!), never a genuine backlog, so counting it here
+    # even for the one snapshot before that drop fires would double up with
+    # lost_sales for no reason.
+    backlog::Float64
+
     # Trips that have already had their one-time fixed cost charged this run.
     # The same Trip (route + departure) can be assigned to many order lines,
     # even across periods, but get_total_trip_fixed_costs only charges it
@@ -30,7 +45,7 @@ mutable struct SimMetrics
     # - this mirrors that dedup without depending on historical_transportation.
     seen_trips::Set{Trip}
 
-    SimMetrics() = new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Set{Trip}())
+    SimMetrics() = new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Set{Trip}())
 end
 
 function reset!(metrics::SimMetrics)
@@ -42,6 +57,7 @@ function reset!(metrics::SimMetrics)
     metrics.trip_fixed_costs = 0.0
     metrics.orders = 0.0
     metrics.demand = 0.0
+    metrics.backlog = 0.0
     empty!(metrics.seen_trips)
     return metrics
 end

@@ -410,7 +410,7 @@ function optimize_coarse_to_fine!(lane_policies, supplychains...; cost_function,
     optimize!(lane_policies, supplychains...; cost_function=cost_function, record_history=record_history, customer_backlog=customer_backlog, params=coarse_params)
 
     policies = unique(values(lane_policies))
-    found = vcat([Float64.(get_parameters(p)) for p in policies]...)
+    found = vcat([Float64.(SupplyChainSimulation.get_parameters(p)) for p in policies]...)
     lo, hi = extrema(found)
     span = max(hi - lo, 1.0)
     refined_range = (max(0.0, lo - span / refine_shrink), hi + span / refine_shrink)

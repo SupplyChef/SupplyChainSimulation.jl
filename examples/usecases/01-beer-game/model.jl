@@ -337,7 +337,7 @@ function SupplyChainSimulation.get_parameters(policy::AnchorAndAdjustOrderingPol
     return [policy.alpha_stock, policy.alpha_supply_line, policy.desired_stock]
 end
 
-function set_parameters!(policy::AnchorAndAdjustOrderingPolicy, values::Array{Float64, 1})
+function SupplyChainSimulation.set_parameters!(policy::AnchorAndAdjustOrderingPolicy, values::Array{Float64, 1})
     policy.alpha_stock = values[1]
     policy.alpha_supply_line = values[2]
     policy.desired_stock = values[3]
@@ -457,7 +457,16 @@ function estimate_parameter_scales(lane_policies, supplychains...; cost_function
         i = 1
         for policy in policies
             k = length(SupplyChainSimulation.get_parameters(policy))
-            set_parameters!(policy, trial[i:i+k-1])
+            # Module-qualified defensively: set_parameters! is exported, but
+            # AnchorAndAdjustOrderingPolicy's own definition above was
+            # accidentally left unqualified for a long time, which silently
+            # shadowed this name in Main with a method table containing only
+            # that one method - `using` alone doesn't let a plain `function
+            # f(...)` extend an already-exported f, even when f is exported.
+            # optimize!'s internal calls were never affected (they resolve
+            # inside the package's own module scope), but this direct call
+            # from Main was, until the shadowing definition was fixed too.
+            SupplyChainSimulation.set_parameters!(policy, trial[i:i+k-1])
             i += k
         end
         return sum(cost_function(simulate(sc, lane_policies; customer_backlog=customer_backlog)) for sc in supplychains)

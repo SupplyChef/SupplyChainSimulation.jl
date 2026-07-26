@@ -125,17 +125,31 @@ function optimize!(lane_policies, supplychains...; params::Dict{Symbol}=Dict{Sym
     end
 end
 
+"""
+    _search_bounds(params, j)::Tuple{Float64,Float64}
+
+`params[:SearchRange]` is either a single `(lo, hi)` tuple, applied to every
+dimension alike (the original, still-default behavior), or a `Vector` of
+`(lo, hi)` tuples, one per dimension - e.g. so a dimensionless gain
+parameter and an inventory-level parameter can get genuinely different
+exploration ranges instead of being forced to share one box sized for
+whichever needs to be bigger. This is the single indirection every
+`params[:SearchRange][1|2]` use below goes through, so both forms work
+without duplicating the branch at each call site.
+"""
+_search_bounds(params, j) = params[:SearchRange] isa AbstractVector ? params[:SearchRange][j] : params[:SearchRange]
+
 function bboptimize(f, x0, params)
     start = Dates.now()
     latest = start
 
     best_f = f(x0)
     best_x = copy(x0)
-    
+
     last_progress = 0
-    
+
     pool_size = 6
-    candidate_pool = [rand(length(x0)) .* (params[:SearchRange][2] - params[:SearchRange][1]) .+ params[:SearchRange][1] for i in 1:pool_size]
+    candidate_pool = [[(b = _search_bounds(params, j); b[1] + rand() * (b[2] - b[1])) for j in 1:length(x0)] for i in 1:pool_size]
     #println(candidate_pool)
     pool_f = [f(candidate) for candidate in candidate_pool]
     #println(pool_f)
@@ -155,9 +169,10 @@ function bboptimize(f, x0, params)
 
         candidate = copy(candidate_pool[i1])
         @inbounds for j in eachindex(candidate)
+            bounds = _search_bounds(params, j)
             r = rand()
             if r < 0.01
-                candidate[j] = params[:SearchRange][1]
+                candidate[j] = bounds[1]
             elseif r < 0.02
                 candidate[j] = candidate_pool[i1][j] + 2 * (randn())
             elseif r < 0.03
@@ -169,11 +184,11 @@ function bboptimize(f, x0, params)
             elseif r < t + 0.12
                 candidate[j] = candidate_pool[i1][j] + (rand() + 0.3) * (best_x[j] - candidate_pool[i3][j]) + (randn()) / 2
             end
-            if candidate[j] < params[:SearchRange][1]
-                candidate[j] = params[:SearchRange][1] + rand()^3 * (params[:SearchRange][2] - params[:SearchRange][1])
+            if candidate[j] < bounds[1]
+                candidate[j] = bounds[1] + rand()^3 * (bounds[2] - bounds[1])
             end
-            if candidate[j] > params[:SearchRange][2]
-                candidate[j] = params[:SearchRange][2] - rand()^3 * (params[:SearchRange][2] - params[:SearchRange][1])
+            if candidate[j] > bounds[2]
+                candidate[j] = bounds[2] - rand()^3 * (bounds[2] - bounds[1])
             end
         end
         candidate_f = f(candidate)

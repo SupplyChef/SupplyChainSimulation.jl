@@ -424,6 +424,65 @@ function optimize_coarse_to_fine!(lane_policies, supplychains...; cost_function,
     return refined_range
 end
 
+# --- Empirical, meaning-agnostic parameter-scale probing. A flat parameter
+#     vector carries no tag saying "this coordinate is an inventory level"
+#     vs. "this coordinate is a dimensionless gain" - and those genuinely
+#     need different exploration ranges: BackwardCoverageOrderingPolicy's
+#     cover[2] is inventory-like (sensible values are tens of units) while
+#     cover[1] is a unitless weight (sensible values are near 0-1). A single
+#     shared SearchRange, however narrow, can't represent that difference.
+#     This infers it empirically instead of by guessing what any coordinate
+#     means: perturb each dimension independently from x0 across a
+#     geometric sequence of step sizes, holding every other coordinate at
+#     x0, and see which step size actually lowers the cost - the same
+#     information a human would use ("moving this parameter by 1 changes
+#     everything; moving that one by 1 does basically nothing"), just
+#     computed instead of guessed. Cheap relative to the real search:
+#     length(x0) * length(step_candidates) scenario batches, not thousands
+#     of full trial simulations.
+#
+#     Must replicate optimize!'s own policy ordering (sorted by lane string
+#     then product name - see optimize! in Optimization.jl) exactly, not
+#     just any consistent order: the returned scales are used positionally
+#     to build a per-dimension SearchRange for a later optimize! call (see
+#     _search_bounds in Optimization.jl in this branch), so a different
+#     ordering here would silently assign each scale to the wrong parameter.
+function estimate_parameter_scales(lane_policies, supplychains...; cost_function, customer_backlog=false,
+                                    step_candidates=[1.0, 3.0, 10.0, 30.0, 100.0, 300.0, 1000.0])
+    sorted_keys = sort(collect(keys(lane_policies)); by=k -> (string(k[1]), k[2].name))
+    policies = unique([lane_policies[k] for k in sorted_keys])
+    x0 = vcat([Float64.(SupplyChainSimulation.get_parameters(p)) for p in policies]...)
+
+    function set_and_cost(trial)
+        i = 1
+        for policy in policies
+            k = length(SupplyChainSimulation.get_parameters(policy))
+            set_parameters!(policy, trial[i:i+k-1])
+            i += k
+        end
+        return sum(cost_function(simulate(sc, lane_policies; customer_backlog=customer_backlog)) for sc in supplychains)
+    end
+
+    baseline_cost = set_and_cost(x0)
+    scales = zeros(Float64, length(x0))
+    for j in eachindex(x0)
+        best_step = 0.0
+        best_cost = baseline_cost
+        for s in step_candidates
+            trial = copy(x0)
+            trial[j] = x0[j] + s
+            c = set_and_cost(trial)
+            if c < best_cost
+                best_cost = c
+                best_step = s
+            end
+        end
+        scales[j] = best_step
+    end
+    set_and_cost(x0)  # restore x0 into the policies before returning
+    return scales
+end
+
 # --- Naive baseline: order-up-to a fixed "pipeline coverage, no safety stock"
 #     target at each echelon (mean demand * (lead_time + 1)), never tuned. ---
 naive_target(lead_time) = round(Int, MEAN_DEMAND * (lead_time + 1))
@@ -702,6 +761,36 @@ coarse_fine_cover = Dict(
     "l4_supplier_to_factory" => coarse_fine_policy4.cover,
 )
 
+# --- Follow-up: does per-dimension, empirically-probed exploration ranges
+#     succeed where coarse-to-fine failed? Unlike coarse-to-fine (which lets
+#     the population search itself discover - and, as shown above, get stuck
+#     in - a region before narrowing), this never lets the population see
+#     the unconstrained space at all: the per-dimension ranges come from
+#     probing local sensitivity around x0 directly, before any population
+#     dynamics can go astray.
+probe_policy2 = BackwardCoverageOrderingPolicy([0.0, 0.0])
+probe_policy3 = BackwardCoverageOrderingPolicy([0.0, 0.0])
+probe_policy4 = BackwardCoverageOrderingPolicy([0.0, 0.0])
+probe_policies = Dict((l2, product) => probe_policy2, (l3, product) => probe_policy3, (l4, product) => probe_policy4)
+scenarios_for_probe = build_scenarios(SCENARIO_COUNT, CALIBRATION_SEED)
+probe_scales = estimate_parameter_scales(probe_policies, scenarios_for_probe...; cost_function=classic_cost_function)
+probed_ranges = [(0.0, max(2 * s, 1.0)) for s in probe_scales]
+
+probed_opt_policy2 = BackwardCoverageOrderingPolicy([0.0, 0.0])
+probed_opt_policy3 = BackwardCoverageOrderingPolicy([0.0, 0.0])
+probed_opt_policy4 = BackwardCoverageOrderingPolicy([0.0, 0.0])
+probed_opt_policies = Dict((l2, product) => probed_opt_policy2, (l3, product) => probed_opt_policy3, (l4, product) => probed_opt_policy4)
+scenarios_for_probed_opt = build_scenarios(SCENARIO_COUNT, CALIBRATION_SEED)
+optimize!(probed_opt_policies, scenarios_for_probed_opt...; cost_function=classic_cost_function, record_history=false,
+          params=Dict(:SearchRange => probed_ranges))
+probed_opt_states = [simulate(s, probed_opt_policies) for s in scenarios_for_probed_opt]
+probed_opt_metrics = full_metrics(probed_opt_states, product, HORIZON)
+probed_opt_cover = Dict(
+    "l2_wholesaler_to_retailer" => probed_opt_policy2.cover,
+    "l3_factory_to_wholesaler" => probed_opt_policy3.cover,
+    "l4_supplier_to_factory" => probed_opt_policy4.cover,
+)
+
 # Known-good values from test/policy-beergame-tests.jl's beer_game() test,
 # for the exact same seed/config/policy family - printed as a sanity check,
 # not asserted, since minor package-version drift could shift float results.
@@ -758,6 +847,10 @@ results = Dict(
     "coarse_fine_metrics" => coarse_fine_metrics,
     "coarse_fine_cover" => coarse_fine_cover,
     "coarse_fine_refined_range" => coarse_fine_refined_range,
+    "probe_scales" => probe_scales,
+    "probed_ranges" => probed_ranges,
+    "probed_opt_metrics" => probed_opt_metrics,
+    "probed_opt_cover" => probed_opt_cover,
 )
 
 open(joinpath(@__DIR__, "results.json"), "w") do io
@@ -816,3 +909,8 @@ println("\nGeneric coarse-to-fine restart on BackwardCoverageOrderingPolicy unde
 println("  refined_range: ", coarse_fine_refined_range)
 println("  cover: ", coarse_fine_cover)
 println("  fill_rate=$(round(coarse_fine_metrics.aggregate.fill_rate; digits=4))  classic_score=$(round(coarse_fine_metrics.classic.total; digits=1))")
+println("\nEmpirically-probed per-dimension search ranges (no beer-game-specific numbers given - inferred from local cost sensitivity):")
+println("  probe_scales: ", probe_scales)
+println("  probed_ranges: ", probed_ranges)
+println("  cover: ", probed_opt_cover)
+println("  fill_rate=$(round(probed_opt_metrics.aggregate.fill_rate; digits=4))  classic_score=$(round(probed_opt_metrics.classic.total; digits=1))")

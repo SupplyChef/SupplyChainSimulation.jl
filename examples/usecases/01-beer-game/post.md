@@ -168,6 +168,49 @@ That's the confirmation: once backlog is actually priced, the wholesaler's tuned
 
 Bullwhip does calm down substantially — no more 30-37x swings. But fill rate collapses to 34.7%, and the classic score (62230.6) is still more than 2.5x worse than the simple family tuned under the identical, now-correct cost. With lost-sales cost (1.0/unit, one-time) cheap relative to holding and backlog charges accumulating over a 200-period horizon, the search found it's cost-minimal for this family to run extremely lean and simply eat the lost sales — a different failure mode than the earlier blow-up, but still a worse answer than `NetUptoOrderingPolicy`'s. Pricing backlog correctly fixed the *objective's* blind spot; it didn't fix this policy family's fit to the network. That reinforces, from a completely different angle, the same conclusion the "fair fight" section reached: which policy family you search matters more than which cost function or how much budget you give the search.
 
+**Is that collapse another search failure, or is this policy genuinely a worse structural fit once backlog is priced correctly?** Same test as the `equiv_metrics` check earlier on this page, just against the real cost this time: plug the already-known `classic_tuned_naive` targets directly into `BackwardCoverageOrderingPolicy([0.0, target])` for each lane — no `optimize!` call at all — and compare to what the search actually found:
+
+| | Fill rate | Classic score |
+|---|---|---|
+| `optimize!`'s search (real cost) | 34.7% | 62230.6 |
+| **Known-optimum point, plugged in directly** | **93.6%** | **24657.5** |
+
+That matches the tuned-naive result to within rounding — so yes, same story as before: the optimum was reachable inside `BackwardCoverageOrderingPolicy`'s own search space the whole time, under this cost function too. The search failed to find it, on two different objectives now, not because the policy can't represent a good answer.
+
+## Can search itself be fixed, generically?
+
+Two confirmed search failures on the same landscape feature (a kink at `cover[1]=0`, where the weighted-average branch in `get_order` switches off entirely) raises the obvious next question: can `optimize!` be improved to actually find the optimum it's missing, without hand-coding beer-game-specific knowledge into the fix? Three attempts, in order of sophistication, all starting from the same collapsed point above:
+
+**1. Coarse-to-fine restart.** Run the search once broadly, narrow the range around wherever it landed, rerun — a standard restart pattern:
+
+| | Fill rate | Classic score |
+|---|---|---|
+| Original search | 34.7% | 62230.6 |
+| Coarse-to-fine (refined range [0.0, 2.19]) | 36.0% | 61309.6 |
+
+Essentially no improvement. The reason shows up directly in the cover values across independent runs: coarse-to-fine's "coarse" stage reliably converges to the same dominant bad attractor basin every time, so narrowing the second stage around it just entrenches the wrong answer rather than escaping it — the search isn't failing to look hard enough in the region it already found, it's looking in the wrong region entirely.
+
+**2. Empirical parameter-scale probing.** Instead of letting the population discover its own exploration scale inside one shared box, probe each parameter dimension independently before searching at all: perturb it up and down from the starting point, holding every other dimension fixed, and see which step size actually moves the cost. This can't rely on a coordinate's *position* meaning anything — a dimensionless gain and an inventory-level target don't share a natural scale — so the probe is purely empirical, the same information a human would use ("moving this one by 1 changes everything; moving that one by 1 does basically nothing"), just measured instead of guessed:
+
+| | Fill rate | Classic score |
+|---|---|---|
+| Original search | 34.7% | 62230.6 |
+| Probed per-dimension ranges (half-widths [1.0, 20.0, 6.0, 20.0, 1.0, 1.0]) | 48.9% | 54799.3 |
+
+A real jump — fill rate roughly 1.4x the original search's, from probe scales [0.0, 10.0, 3.0, 10.0, -1.0, -3.0] that are themselves the finding: three of the six coordinates probe to a scale of 0 (the search shouldn't move them off their starting point at all), while the inventory-level coordinates probe to genuinely large scales — exactly the "some coordinates are dimensionless gains, some are inventory levels" asymmetry a single shared `SearchRange` can't represent.
+
+**3. Iterative probe-then-search.** Repeat the cycle, re-centering each round's range on wherever the *previous* round actually landed, instead of stopping after one pass:
+
+| | Fill rate | Classic score |
+|---|---|---|
+| Single-round probing | 48.9% | 54799.3 |
+| 3-round iterative probing | 52.2% | 53751.4 |
+| **Known optimum (`classic_tuned_naive`)** | **93.6%** | **24657.5** |
+
+Further, real, but clearly diminishing gains — from 34.7% (original search) to 48.9% (single-round probing) to 52.2% (three rounds), still well short of the known-reachable 93.6%. Better box-shaping around the search clearly helps, entirely without telling the optimizer anything specific to the beer game — but it plateaus well short of the reachable optimum. The most likely reason: `bboptimize`'s own population-seeding and mutation dynamics (see `Optimization.jl`) have limits that better range-shaping alone can't fully overcome once the population has already settled near a boundary kink. That's a real, open, honestly-reported gap, not a solved problem — the next lever to pull is the search algorithm's core dynamics, not its input ranges, and that's future work rather than something this post claims to have finished.
+
+(One genuine, previously-invisible bug surfaced while building this: `AnchorAndAdjustOrderingPolicy`'s own `set_parameters!` — never called by `optimize!` itself, only by this probing code calling it directly from a script-level closure — had been defined without qualifying it as `SupplyChainSimulation.set_parameters!`. Julia doesn't let a plain, unqualified function definition extend an existing module's function just because that module is `using`'d, even for an exported name — so this silently created an unrelated `Main.set_parameters!` instead of adding a method to the real one, invisible everywhere else in this script because `optimize!`'s own internal calls resolve inside the package's own module scope regardless of what `Main.set_parameters!` points to. Fixed by qualifying the definition — a good reminder that this failure mode isn't limited to non-exported functions, as flagged earlier on this page for `get_order`/`get_parameters`.)
+
 ## Is the "optimized" policy actually cheaper? Checking, not assuming.
 
 Everything above raises an obvious question this analysis shouldn't skip: if the optimized policy has worse fill rate *and* far worse bullwhip, is it at least genuinely cheaper under the cost function `optimize!` was minimizing? That's worth checking directly rather than assuming — `optimize!` only ever searched `BackwardCoverageOrderingPolicy` parameters here, so there was never a guarantee it could reach something as good as the naive `NetUptoOrderingPolicy` baseline, which lives in a different, entirely unsearched policy family.
@@ -199,6 +242,19 @@ This package's `Customer` node type can't fully replicate that: customer orders 
 Under this scoring convention, optimized is **522.3% more expensive** than naive — the same direction as the cost comparison above, so the two conventions agree on which policy wins here, even though they measure the miss differently.
 
 This distinction matters beyond bookkeeping: a permanently-lost-sale model and an eventually-fulfilled-backorder model reward *completely different* policies. A model where stockouts are forgiven (backlogged, filled later) can rationally tolerate more short-term volatility than one where every miss is gone for good — so a policy tuned against this package's lost-sales convention isn't just numerically different from one tuned against the classic game's convention, it's answering a different question. Worth stating plainly rather than glossing over: **this whole post measures against this package's convention, not the original board game's**, and that choice is a real driver of everything above, not a footnote.
+
+## Actually closing that gap: letting customer orders backlog too
+
+The section above stopped at "this is as close as this model can get" — customer orders always dropped as a one-time lost sale rather than backlogging like every other node type, because `due_date == creation_time` was hardcoded for `Customer` destinations in `Simulation.jl`'s `place_orders`. That's no longer a hard limit on this branch: `Env` now takes a `customer_backlog` flag (default `false`, so every number on this page above is unaffected) that gives a customer order the same open-ended due date as an internal replenishment order instead, so it queues and compounds cost like any other backorder instead of vanishing into a lost-sales charge after one period.
+
+Re-tuning `NetUptoOrderingPolicy` against the real cost, this time with `customer_backlog=true` end to end — both the simulation itself and the scoring, so a retailer stockout is genuine compounding backlog cost, not a lost-sales proxy:
+
+| | Targets (wholesaler / factory / supplier lane) | Fill rate |
+|---|---|---|
+| Tuned under the real cost (lost-sales proxy at retail) | 28 / 28 / 49 | 93.6% |
+| **Tuned with customer orders backlogging too** | **26 / 28 / 50** | **99.9%** |
+
+Fill rate jumps to 99.9% — because a customer order that misses is no longer written off, the optimizer has the same direct, ongoing incentive to keep the retailer well-stocked that already kept the wholesaler and factory well-stocked once their own backlog was priced correctly earlier on this page. (Classic-score totals aren't directly comparable between the two rows above — the retailer's term switches from a lost-sales proxy to real compounding backlog cost, a different scoring convention entirely, not just a different policy — so this table reports targets and fill rate only, not a cost comparison.) This is the closest this package can currently get to the original board game's actual convention: nothing permanently lost anywhere in the chain, everything eventually filled, backlog cost the only penalty.
 
 ## What do real humans actually do? The Sterman anchor-and-adjust sweep
 

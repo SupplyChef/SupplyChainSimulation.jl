@@ -437,9 +437,12 @@ end
 #     x0, and see which step size actually lowers the cost - the same
 #     information a human would use ("moving this parameter by 1 changes
 #     everything; moving that one by 1 does basically nothing"), just
-#     computed instead of guessed. Cheap relative to the real search:
-#     length(x0) * length(step_candidates) scenario batches, not thousands
-#     of full trial simulations.
+#     computed instead of guessed. Tries both +s and -s for each candidate
+#     step (not just increasing from x0) so a later round centered on a
+#     nonzero x0 - see optimize_probed_iteratively! below - can discover that
+#     decreasing is better too, not just find ever-larger upward steps.
+#     Cheap relative to the real search: 2 * length(x0) * length(step_candidates)
+#     scenario batches, not thousands of full trial simulations.
 #
 #     Must replicate optimize!'s own policy ordering (sorted by lane string
 #     then product name - see optimize! in Optimization.jl) exactly, not
@@ -477,19 +480,52 @@ function estimate_parameter_scales(lane_policies, supplychains...; cost_function
     for j in eachindex(x0)
         best_step = 0.0
         best_cost = baseline_cost
-        for s in step_candidates
+        for s in step_candidates, sign in (1.0, -1.0)
             trial = copy(x0)
-            trial[j] = x0[j] + s
+            trial[j] = x0[j] + sign * s
             c = set_and_cost(trial)
             if c < best_cost
                 best_cost = c
-                best_step = s
+                best_step = sign * s
             end
         end
         scales[j] = best_step
     end
     set_and_cost(x0)  # restore x0 into the policies before returning
     return scales
+end
+
+# --- Round 2: the single-round probed search above still fell short of the
+#     known optimum on one dimension specifically (l3's cover[2] landed at
+#     18.48, right at the edge of its probed (0, 20) range - the search
+#     wanted to go higher but was clamped, because probing a single step
+#     from a degenerate x0=[0,...,0] underestimates how far a coordinate
+#     needs to move once every *other* coordinate has also moved away from
+#     zero). This re-probes and re-centers each round on wherever the
+#     previous round's optimize! actually landed - not always the original
+#     degenerate x0 - so a dimension that was clamped can be probed again
+#     from its new position and get a wider range if the cost is still
+#     improving in that direction.
+function optimize_probed_iteratively!(lane_policies, supplychains...; cost_function, customer_backlog=false, rounds=3, range_multiplier=3.0,
+                                       step_candidates=[1.0, 3.0, 10.0, 30.0, 100.0, 300.0, 1000.0])
+    for round in 1:rounds
+        scales = estimate_parameter_scales(lane_policies, supplychains...; cost_function=cost_function, customer_backlog=customer_backlog, step_candidates=step_candidates)
+
+        sorted_keys = sort(collect(keys(lane_policies)); by=k -> (string(k[1]), k[2].name))
+        policies = unique([lane_policies[k] for k in sorted_keys])
+        x0 = vcat([Float64.(SupplyChainSimulation.get_parameters(p)) for p in policies]...)
+
+        ranges = [
+            let target = x0[j] + range_multiplier * scales[j]
+                (max(0.0, min(x0[j], target)), max(x0[j], target, x0[j] + 1.0))
+            end
+            for j in eachindex(x0)
+        ]
+
+        optimize!(lane_policies, supplychains...; cost_function=cost_function, record_history=false, customer_backlog=customer_backlog,
+                  params=Dict(:SearchRange => ranges))
+        println("Round $round ranges: $ranges")
+    end
 end
 
 # --- Naive baseline: order-up-to a fixed "pipeline coverage, no safety stock"
@@ -800,6 +836,23 @@ probed_opt_cover = Dict(
     "l4_supplier_to_factory" => probed_opt_policy4.cover,
 )
 
+# --- Follow-up: iterate the probe-then-search cycle, re-centering each round
+#     on wherever the previous round actually landed, instead of stopping
+#     after one round. Directly targets the boundary-clamping seen above.
+iter_probed_policy2 = BackwardCoverageOrderingPolicy([0.0, 0.0])
+iter_probed_policy3 = BackwardCoverageOrderingPolicy([0.0, 0.0])
+iter_probed_policy4 = BackwardCoverageOrderingPolicy([0.0, 0.0])
+iter_probed_policies = Dict((l2, product) => iter_probed_policy2, (l3, product) => iter_probed_policy3, (l4, product) => iter_probed_policy4)
+scenarios_for_iter_probed = build_scenarios(SCENARIO_COUNT, CALIBRATION_SEED)
+optimize_probed_iteratively!(iter_probed_policies, scenarios_for_iter_probed...; cost_function=classic_cost_function, rounds=3)
+iter_probed_states = [simulate(s, iter_probed_policies) for s in scenarios_for_iter_probed]
+iter_probed_metrics = full_metrics(iter_probed_states, product, HORIZON)
+iter_probed_cover = Dict(
+    "l2_wholesaler_to_retailer" => iter_probed_policy2.cover,
+    "l3_factory_to_wholesaler" => iter_probed_policy3.cover,
+    "l4_supplier_to_factory" => iter_probed_policy4.cover,
+)
+
 # Known-good values from test/policy-beergame-tests.jl's beer_game() test,
 # for the exact same seed/config/policy family - printed as a sanity check,
 # not asserted, since minor package-version drift could shift float results.
@@ -860,6 +913,8 @@ results = Dict(
     "probed_ranges" => probed_ranges,
     "probed_opt_metrics" => probed_opt_metrics,
     "probed_opt_cover" => probed_opt_cover,
+    "iter_probed_metrics" => iter_probed_metrics,
+    "iter_probed_cover" => iter_probed_cover,
 )
 
 open(joinpath(@__DIR__, "results.json"), "w") do io
@@ -923,3 +978,6 @@ println("  probe_scales: ", probe_scales)
 println("  probed_ranges: ", probed_ranges)
 println("  cover: ", probed_opt_cover)
 println("  fill_rate=$(round(probed_opt_metrics.aggregate.fill_rate; digits=4))  classic_score=$(round(probed_opt_metrics.classic.total; digits=1))")
+println("\nIterative probe-then-search (3 rounds, re-centered each round):")
+println("  cover: ", iter_probed_cover)
+println("  fill_rate=$(round(iter_probed_metrics.aggregate.fill_rate; digits=4))  classic_score=$(round(iter_probed_metrics.classic.total; digits=1))")

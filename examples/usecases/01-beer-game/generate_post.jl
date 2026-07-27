@@ -365,7 +365,7 @@ Essentially no improvement. The reason shows up directly in the cover values acr
 | Original search | $(pct(co_fill_rate)) | $(fmt(co_classic_total)) |
 | Probed per-dimension ranges (half-widths $(probed_ranges_r)) | $(pct(Float64(po.aggregate.fill_rate))) | $(fmt(Float64(po.classic.total))) |
 
-A real jump — fill rate roughly $(probing_gain_ratio)x the original search's, from probe scales $(probe_scales_r) that are themselves the finding: three of the six coordinates probe to a scale of 0 (the search shouldn't move them off their starting point at all), while the inventory-level coordinates probe to genuinely large scales — exactly the "some coordinates are dimensionless gains, some are inventory levels" asymmetry a single shared `SearchRange` can't represent.
+A real jump — fill rate roughly $(probing_gain_ratio)x the original search's, from probe scales $(probe_scales_r) that are themselves the finding: several coordinates probe to at or near zero (the search shouldn't move them far from their starting point), while others probe to genuinely large steps — exactly the "some coordinates are dimensionless gains, some are inventory levels" asymmetry a single shared `SearchRange` can't represent, and directly reflected in the per-dimension ranges it produces (half-widths $(probed_ranges_r)).
 
 **3. Iterative probe-then-search.** Repeat the cycle, re-centering each round's range on wherever the *previous* round actually landed, instead of stopping after one pass:
 

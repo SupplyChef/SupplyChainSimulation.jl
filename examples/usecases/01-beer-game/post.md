@@ -197,7 +197,7 @@ Essentially no improvement. The reason shows up directly in the cover values acr
 | Original search | 34.7% | 62230.6 |
 | Probed per-dimension ranges (half-widths [1.0, 20.0, 6.0, 20.0, 1.0, 1.0]) | 48.9% | 54799.3 |
 
-A real jump — fill rate roughly 1.4x the original search's, from probe scales [0.0, 10.0, 3.0, 10.0, -1.0, -3.0] that are themselves the finding: three of the six coordinates probe to a scale of 0 (the search shouldn't move them off their starting point at all), while the inventory-level coordinates probe to genuinely large scales — exactly the "some coordinates are dimensionless gains, some are inventory levels" asymmetry a single shared `SearchRange` can't represent.
+A real jump — fill rate roughly 1.4x the original search's, from probe scales [0.0, 10.0, 3.0, 10.0, -1.0, -3.0] that are themselves the finding: several coordinates probe to at or near zero (the search shouldn't move them far from their starting point), while others probe to genuinely large steps — exactly the "some coordinates are dimensionless gains, some are inventory levels" asymmetry a single shared `SearchRange` can't represent, and directly reflected in the per-dimension ranges it produces (half-widths [1.0, 20.0, 6.0, 20.0, 1.0, 1.0]).
 
 **3. Iterative probe-then-search.** Repeat the cycle, re-centering each round's range on wherever the *previous* round actually landed, instead of stopping after one pass:
 

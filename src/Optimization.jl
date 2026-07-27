@@ -64,6 +64,19 @@ end
     `record_history` (see `required_lookback`/`Env.needs_outbound_order_index`),
     so `record_history=false` is safe with that policy too.
 
+    `customer_backlog` (default `false`, matching every trial simulation's
+    behavior before this field existed) is passed straight through to `Env` -
+    see its docstring there for what it changes.
+
+    `params` is typed `Dict{Symbol}` (any value type), not `Dict{Symbol,
+    Float64}`: the internal defaults it gets merged with already mix value
+    types (`:SearchRange => (-0.0, 5000.0)` is a `Tuple`, `:NumDimensions` an
+    `Int`), so a caller overriding `:SearchRange` - e.g. to narrow the search
+    around a known-reasonable scale - was never actually representable as a
+    `Dict{Symbol, Float64}` in the first place. `:SearchRange` itself may
+    also be a `Vector` of per-dimension `(lo, hi)` tuples instead of one
+    shared tuple - see `_search_bounds`'s docstring below.
+
     `method` selects the search algorithm used to minimize `cost_function` over the
     policies' parameters:
     - `:custom` (the default): the original hand-rolled differential-evolution-style
@@ -160,9 +173,9 @@ end
     - `:restart_scale`: restart perturbation size, as a fraction of `:upper - :lower`
       in each dimension. Default `0.2`.
 """
-function optimize!(lane_policies, supplychains...; params::Dict{Symbol, Float64}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s), record_history::Bool=true, method::Symbol=:custom, cma_es_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), nelder_mead_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), bayesopt_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), custom_options::Dict{Symbol, Any}=Dict{Symbol, Any}())
+function optimize!(lane_policies, supplychains...; params::Dict{Symbol}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s), record_history::Bool=true, customer_backlog::Bool=false, method::Symbol=:custom, cma_es_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), nelder_mead_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), bayesopt_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), custom_options::Dict{Symbol, Any}=Dict{Symbol, Any}())
     initial_states = State.(supplychains)
-    envs = [Env(supplychain, initial_states, lane_policies; record_history=record_history) for supplychain in supplychains]
+    envs = [Env(supplychain, initial_states, lane_policies; record_history=record_history, customer_backlog=customer_backlog) for supplychain in supplychains]
 
     # Iterate lane_policies in a deterministic order (by lane/product name)
     # rather than raw Dict key order: keys(lane_policies) iterates in hash
@@ -826,6 +839,20 @@ function quadratic_surrogate_optimum(f, lower::Array{Float64, 1}, upper::Array{F
 end
 
 """
+    _search_bounds(params, j)::Tuple{Float64,Float64}
+
+`params[:SearchRange]` is either a single `(lo, hi)` tuple, applied to every
+dimension alike (the original, still-default behavior), or a `Vector` of
+`(lo, hi)` tuples, one per dimension - e.g. so a dimensionless gain
+parameter and an inventory-level parameter can get genuinely different
+exploration ranges instead of being forced to share one box sized for
+whichever needs to be bigger. This is the single indirection every
+`params[:SearchRange][1|2]` use below goes through, so both forms work
+without duplicating the branch at each call site.
+"""
+_search_bounds(params, j) = params[:SearchRange] isa AbstractVector ? params[:SearchRange][j] : params[:SearchRange]
+
+"""
     bboptimize(f, x0, params; seed_candidates=nothing, verbose=false)
 
 `seed_candidates` (default `nothing`, matching every existing caller's
@@ -851,11 +878,11 @@ function bboptimize(f, x0, params; seed_candidates::Union{Nothing, Vector{Vector
     last_progress = 0
 
     pool_size = 6
-    candidate_pool = [rand(length(x0)) .* (params[:SearchRange][2] - params[:SearchRange][1]) .+ params[:SearchRange][1] for i in 1:pool_size]
+    candidate_pool = [[(b = _search_bounds(params, j); b[1] + rand() * (b[2] - b[1])) for j in 1:length(x0)] for i in 1:pool_size]
     if seed_candidates !== nothing
         for (idx, seed) in enumerate(seed_candidates)
             idx > pool_size && break
-            candidate_pool[idx] = clamp.(seed, params[:SearchRange][1], params[:SearchRange][2])
+            candidate_pool[idx] = [clamp(seed[j], _search_bounds(params, j)...) for j in eachindex(seed)]
         end
     end
     pool_f = [f(candidate) for candidate in candidate_pool]
@@ -874,9 +901,10 @@ function bboptimize(f, x0, params; seed_candidates::Union{Nothing, Vector{Vector
 
         candidate = copy(candidate_pool[i1])
         @inbounds for j in eachindex(candidate)
+            bounds = _search_bounds(params, j)
             r = rand()
             if r < 0.01
-                candidate[j] = params[:SearchRange][1]
+                candidate[j] = bounds[1]
             elseif r < 0.02
                 candidate[j] = candidate_pool[i1][j] + 2 * (randn())
             elseif r < 0.03
@@ -888,11 +916,11 @@ function bboptimize(f, x0, params; seed_candidates::Union{Nothing, Vector{Vector
             elseif r < t + 0.12
                 candidate[j] = candidate_pool[i1][j] + (rand() + 0.3) * (best_x[j] - candidate_pool[i3][j]) + (randn()) / 2
             end
-            if candidate[j] < params[:SearchRange][1]
-                candidate[j] = params[:SearchRange][1] + rand()^3 * (params[:SearchRange][2] - params[:SearchRange][1])
+            if candidate[j] < bounds[1]
+                candidate[j] = bounds[1] + rand()^3 * (bounds[2] - bounds[1])
             end
-            if candidate[j] > params[:SearchRange][2]
-                candidate[j] = params[:SearchRange][2] - rand()^3 * (params[:SearchRange][2] - params[:SearchRange][1])
+            if candidate[j] > bounds[2]
+                candidate[j] = bounds[2] - rand()^3 * (bounds[2] - bounds[1])
             end
         end
         candidate_f = f(candidate)

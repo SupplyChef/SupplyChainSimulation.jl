@@ -1,0 +1,81 @@
+name: Generate usecase posts
+
+# Manual only - this regenerates examples/usecases/*/results.json and
+# post.md by actually running the models, and commits the output back to
+# whichever branch it was dispatched on. Deliberately not wired to push/PR
+# so it never runs unattended on someone else's commit.
+on:
+  workflow_dispatch:
+  # The MCP GitHub integration used to drive this session can't call the
+  # workflow_dispatch API (403 Resource not accessible by integration), so
+  # push is the only way to trigger a run from here. Scoped to just this
+  # branch and to the *source* files, deliberately excluding results.json/
+  # post.md (the generated output the commit-back step below writes) so
+  # that commit never re-triggers this workflow - no path filter tautology,
+  # no infinite loop.
+  push:
+    branches:
+      - claude/supply-chain-use-cases-s758fd
+    paths:
+      - 'examples/usecases/**/model.jl'
+      - 'examples/usecases/**/generate_post.jl'
+      - 'examples/usecases/setup.jl'
+      - '.github/workflows/usecases.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      dirs: ${{ steps.find.outputs.dirs }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: find
+        run: |
+          dirs=$(find examples/usecases -mindepth 1 -maxdepth 1 -type d | sort | jq -R -s -c 'split("\n")[:-1]')
+          echo "dirs=$dirs" >> "$GITHUB_OUTPUT"
+
+  run:
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 1 # serialize: each job commits+pushes to the same branch
+      matrix:
+        dir: ${{ fromJson(needs.discover.outputs.dirs) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: '1'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.julia/artifacts
+          key: ${{ runner.os }}-usecases-${{ hashFiles('examples/usecases/setup.jl') }}
+      - name: Instantiate shared usecases environment
+        run: julia examples/usecases/setup.jl
+      - name: Run model
+        run: julia --project=examples/usecases ${{ matrix.dir }}/model.jl
+      - name: Generate post
+        run: julia --project=examples/usecases ${{ matrix.dir }}/generate_post.jl
+      - name: Sanitize artifact name
+        id: artifact
+        run: echo "name=usecase-$(echo '${{ matrix.dir }}' | tr '/' '-')" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: |
+            ${{ matrix.dir }}/results.json
+            ${{ matrix.dir }}/post.md
+      - name: Commit generated output
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ${{ matrix.dir }}/results.json ${{ matrix.dir }}/post.md
+          git diff --cached --quiet && echo "No changes to commit" || git commit -m "Regenerate ${{ matrix.dir }} from CI run ${{ github.run_id }}"
+          git pull --rebase origin ${{ github.ref_name }}
+          git push origin HEAD:${{ github.ref_name }}

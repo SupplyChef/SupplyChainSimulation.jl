@@ -23,12 +23,30 @@ mutable struct SimMetrics
     orders::Float64
     demand::Float64
 
+    # Sum, across every period closed out so far, of every location's
+    # currently-outstanding order-line quantity (see snapshot_state!, which
+    # charges this the same way it charges holding_costs). Raw units, not
+    # pre-priced - unlike holding_costs (which bakes in each location's own
+    # unit_holding_cost) there's no per-location backlog-cost field on
+    # Storage/Supplier, so a cost_function applies whatever backlog weight
+    # fits its own convention, the same way metrics_cost_function applies its
+    # own 0.001 weight to `orders` below.
+    # Customer-destined order lines are excluded unless Env.customer_backlog
+    # is true: with the default false, a customer order that can't be filled
+    # the same period it's created is dropped as a lost sale next period (see
+    # record_drop!/place_orders(..., ::Customer, ...)), never a genuine
+    # backlog, so counting it here even for the one snapshot before that drop
+    # fires would double up with lost_sales for no reason. When
+    # customer_backlog is true, customer orders queue like any other node's
+    # and are counted the same way (see snapshot_state!).
+    backlog::Float64
+
     # Boolean matrix indexed by [lane_index, departure_time] to track seen trips.
     # Completely avoids Set{Trip} allocation and hashing overhead on the hot path.
     seen_trips::Matrix{Bool}
 
-    SimMetrics() = new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Matrix{Bool}(undef, 0, 0))
-    SimMetrics(num_lanes::Int, horizon::Int) = new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, zeros(Bool, num_lanes, horizon))
+    SimMetrics() = new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Matrix{Bool}(undef, 0, 0))
+    SimMetrics(num_lanes::Int, horizon::Int) = new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, zeros(Bool, num_lanes, horizon))
 end
 
 function reset!(metrics::SimMetrics)
@@ -40,6 +58,7 @@ function reset!(metrics::SimMetrics)
     metrics.trip_fixed_costs = 0.0
     metrics.orders = 0.0
     metrics.demand = 0.0
+    metrics.backlog = 0.0
     fill!(metrics.seen_trips, false)
     return metrics
 end

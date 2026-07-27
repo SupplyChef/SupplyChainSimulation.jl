@@ -71,7 +71,20 @@ struct Env
     # are naturally scenario-local.
     past_orders_buffers::Matrix{Vector{Union{Missing, Int64}}}
 
-    function Env(supplychain::SupplyChain, initial_states, policies; record_history::Bool=true)
+    # Whether a Customer order that can't be filled the same period it's
+    # created is dropped as a permanent lost sale (false, the default and
+    # prior-to-this-field-existing behavior: due_date == creation_time, see
+    # place_orders(..., ::Customer, ...) in Simulation.jl) or left to queue
+    # and wait for stock like every other node's replenishment orders
+    # already do (true: due_date = typemax(Int64)). Mirrors how the original
+    # MIT beer game scores a retail stockout - a backorder carried forward
+    # at a per-period cost until it's eventually filled, never a permanent
+    # miss. Defaults to false so every existing caller/test - which asserts
+    # exact lost-sale counts under the same-day-expiry convention - is
+    # unaffected.
+    customer_backlog::Bool
+
+    function Env(supplychain::SupplyChain, initial_states, policies; record_history::Bool=true, customer_backlog::Bool=false)
         trips = get_trips(supplychain, policies)
         locations = get_locations(supplychain)
 
@@ -189,7 +202,8 @@ struct Env
                    Dict{Tuple{ConcreteNode, Product, Int64}, Float64}(),
                    record_history,
                    any(p -> required_lookback(p) > 0, values(policies)),
-                   past_orders_buffers)
+                   past_orders_buffers,
+                   customer_backlog)
     end
 end
 

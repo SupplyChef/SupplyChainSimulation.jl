@@ -313,7 +313,13 @@ function place_orders(state::State, env::Env, location::Customer, product::Produ
     if quantity > 0
         trip = find_next_departure(env, location, time)
         if trip !== NULL_TRIP
-            order = OrderLine(time, trip.route.origin, location, product, quantity, time, missing) # customers orders are due immediately
+            # customer orders are due immediately unless env.customer_backlog
+            # opts into letting them queue like every other node's
+            # replenishment orders (due_date = typemax(Int64)) instead of
+            # being dropped as a lost sale the same period - see
+            # Env.customer_backlog's docstring.
+            due_date = env.customer_backlog ? typemax(Int64) : time
+            order = OrderLine(time, trip.route.origin, location, product, quantity, due_date, missing)
             #@debug "Ordered at $time, $location, $product, $quantity"
             push!(orders, order)
             push!(state.placed_orders, order)
@@ -402,9 +408,9 @@ function receive_order!(state::State, env::Env, order::OrderLine)
 end
 
 # Simulate
-function simulate(supplychain::SupplyChain, policies::Dict{Tuple{Lane, Product}, <:InventoryOrderingPolicy})
+function simulate(supplychain::SupplyChain, policies::Dict{Tuple{Lane, Product}, <:InventoryOrderingPolicy}; customer_backlog::Bool=false)
     initial_state = State(supplychain)
-    return simulate(Env(supplychain, [initial_state], policies), policies, initial_state)
+    return simulate(Env(supplychain, [initial_state], policies; customer_backlog=customer_backlog), policies, initial_state)
 end
 
 """
@@ -423,7 +429,7 @@ function simulate(env::Env, policies, initial_state)
     orders = OrderLine[]
 
     state = initial_state
-    snapshot_state!(state, 0, env.record_history)
+    snapshot_state!(state, 0, env.record_history, env.customer_backlog)
 
     # env.sorted_locations never changes across periods, so reverse it once
     # instead of allocating a fresh reversed copy every period.
@@ -535,7 +541,7 @@ function simulate(env::Env, policies, initial_state)
             end
         end
 
-        snapshot_state!(state, time, env.record_history)
+        snapshot_state!(state, time, env.record_history, env.customer_backlog)
     end
 
     flush_pending_as_lost!(state)

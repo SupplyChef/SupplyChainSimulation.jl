@@ -29,7 +29,7 @@ using SupplyChainSimulation
         l = Lane(customer, storage; unit_cost=0)
 
         network = SupplyChain(1)
-        
+
         add_storage!(network, storage)
         add_customer!(network, customer)
         add_product!(network, product)
@@ -43,12 +43,12 @@ using SupplyChainSimulation
         customer = Customer("c")
         storage = Storage("s")
         storage2 = Storage("s2")
-        
+
         l = Lane(storage, customer; unit_cost=0)
         l2 = Lane(storage2, storage; unit_cost=0)
 
         network = SupplyChain(1)
-        
+
         add_storage!(network, storage)
         add_storage!(network, storage2)
         add_customer!(network, customer)
@@ -64,12 +64,12 @@ using SupplyChainSimulation
         customer = Customer("c")
         storage = Storage("s")
         storage2 = Storage("s2")
-        
+
         l = Lane(storage, customer; unit_cost=0)
         l2 = Lane(storage2, storage; unit_cost=0)
 
         network = SupplyChain(1)
-        
+
         add_storage!(network, storage)
         add_storage!(network, storage2)
         add_customer!(network, customer)
@@ -91,7 +91,7 @@ end
         l2 = Lane(storage2, storage; unit_cost=0, initial_arrivals=Dict(product => [10, 0]))
 
         network = SupplyChain(1)
-        
+
         add_storage!(network, storage)
         add_storage!(network, storage2)
         add_customer!(network, customer)
@@ -101,7 +101,7 @@ end
 
         add_demand!(network, customer, product, [0.0, 0.0]; sales_price=1.0, lost_sales_cost=1.0)
 
-        #get_inbound_orders(initial_state, storage, product, 1) == 0 && 
+        #get_inbound_orders(initial_state, storage, product, 1) == 0 &&
         #get_outbound_orders(initial_state, storage, product, 1) == 0
         #get_net_inventory(initial_state, storage, product, 1) == 10
 
@@ -121,7 +121,7 @@ end
         o2 = OrderLine(0, l2.origin, l2.destinations[1], product, 15, 1, missing)
 
         network = SupplyChain(1)
-        
+
         add_storage!(network, storage)
         add_storage!(network, storage2)
         add_customer!(network, customer)
@@ -134,15 +134,10 @@ end
         #initial_state = State(; pending_outbound_order_lines = Dict(storage => [o], storage2 => [o2]),
         #                        demand = [Demand(customer, product, [0.0, 0.0]; sales_price=1.0, lost_sales_cost=1.0)])
 
-        #println("inbound $(get_inbound_orders(initial_state, storage, product, 1))") 
-        #println("outbound $(get_outbound_orders(initial_state, storage, product, 1))")
-        #println("net $(get_net_inventory(initial_state, storage, product, 1))")
-        
-        #@info get_inbound_orders(initial_state, storage, product, 1)
-        #@info get_outbound_orders(initial_state, storage, product, 1)
-        
-        #get_inbound_orders(initial_state, storage, product, 1) == 15 && 
-        #get_outbound_orders(initial_state, storage, product, 1) == 5 
+
+
+        #get_inbound_orders(initial_state, storage, product, 1) == 15 &&
+        #get_outbound_orders(initial_state, storage, product, 1) == 5
         #get_net_inventory(initial_state, storage, product, 1) == 20
 
         true
@@ -157,7 +152,7 @@ end
         l2 = Lane(storage2, storage; unit_cost=0, initial_arrivals=Dict(product => [10, 0]))
 
         network = SupplyChain(2)
-        
+
         add_storage!(network, storage)
         add_storage!(network, storage2)
         add_customer!(network, customer)
@@ -172,8 +167,8 @@ end
         policies = Dict((l, product) => OnHandUptoOrderingPolicy(0))
         final_state = simulate(network, policies)
 
-        get_on_hand_inventory(final_state, storage, product) == 10 && 
-        length(collect(Base.Iterators.flatten(final_state.historical_orders))) == 0 && 
+        get_on_hand_inventory(final_state, storage, product) == 10 &&
+        length(collect(Base.Iterators.flatten(final_state.historical_orders))) == 0 &&
         length(collect(Base.Iterators.flatten(final_state.historical_filled_orders))) == 0
     end
 
@@ -189,7 +184,7 @@ end
         l2 = Lane(storage2, storage; unit_cost=0, initial_arrivals=Dict(product => [10, 0]))
 
         network = SupplyChain(2)
-        
+
         add_storage!(network, storage)
         add_storage!(network, storage2)
         add_customer!(network, customer)
@@ -209,14 +204,14 @@ end
         @info get_on_hand_inventory(final_state, storage, product)
         @info length(collect(Base.Iterators.flatten(final_state.historical_orders)))
         @info length(collect(Base.Iterators.flatten(final_state.historical_filled_orders)))
-        get_on_hand_inventory(final_state, storage, product) == 0 && 
-        length(collect(Base.Iterators.flatten(final_state.historical_orders))) == 2 && 
+        get_on_hand_inventory(final_state, storage, product) == 0 &&
+        length(collect(Base.Iterators.flatten(final_state.historical_orders))) == 2 &&
         length(collect(Base.Iterators.flatten(final_state.historical_filled_orders))) == 2
     end
 
     @test begin
         demand_rate = 1000
-        ordering_cost = 2 
+        ordering_cost = 2
         holding_cost_rate = 5
         eoq_quantity(demand_rate, ordering_cost, holding_cost_rate) ≈ 28.284271247461902
     end
@@ -232,13 +227,13 @@ end
         storage = Storage("storage")
         add_product!(storage, product; unit_holding_cost=1.0)
         customer = Customer("customer")
-        
+
         l1 = Lane(storage, customer)
         l2 = Lane(supplier, storage)
 
         n() = begin
             network = SupplyChain(1)
-            
+
             add_supplier!(network, supplier)
             add_storage!(network, storage)
             add_customer!(network, customer)
@@ -283,13 +278,13 @@ end
         storage = Storage("storage")
         add_product!(storage, product; unit_holding_cost=0.1)
         customer = Customer("customer")
-        
+
         l1 = Lane(storage, customer)
         l2 = Lane(supplier, storage; fixed_cost=10, time=2)
 
         n() = begin
             network = SupplyChain(horizon)
-            
+
             add_supplier!(network, supplier)
             add_storage!(network, storage)
             add_customer!(network, customer)
@@ -312,6 +307,30 @@ end
     end
 end
 
+@testset "Reporting" begin
+    @test begin
+        product = Product("product")
+        customer = Customer("customer")
+        storage = Storage("storage")
+        add_product!(storage, product; initial_inventory=100)
+
+        lane = Lane(storage, customer)
+
+        network = SupplyChain(5)
+        add_storage!(network, storage)
+        add_customer!(network, customer)
+        add_product!(network, product)
+        add_lane!(network, lane)
+        add_demand!(network, customer, product, repeat([10.0], 5); sales_price=1.0)
+
+        # No lane here needs an ordering policy: storage's initial_inventory
+        # covers demand outright, and nothing reorders from anyone.
+        final_state = simulate(network, Dict{Tuple{Lane, Product}, InventoryOrderingPolicy}())
+
+        get_used_lanes(final_state) == [lane]
+    end
+end
+
 include("docs.jl")
 include("constraint-enforcement-tests.jl")
 include("metrics-equivalence-tests.jl")
@@ -323,3 +342,5 @@ include("policy-expiration-tests.jl")
 include("visualization-tests.jl")
 include("safety-stock-correctness-tests.jl")
 include("policy-calibration-generalization-tests.jl")
+include("optimizer-methods-tests.jl")
+include("sensitivity-analysis-tests.jl")

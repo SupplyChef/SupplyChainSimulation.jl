@@ -15,7 +15,7 @@ using Random
     add_product!(storage, product; unit_holding_cost=0.1)
     storage2 = Storage("s2")
     add_product!(storage2, product; initial_inventory=20 * horizon)
-    
+
     l = Lane(storage, customer; unit_cost=0)
     l2 = Lane(storage2, storage; unit_cost=0, time=2)
 
@@ -79,7 +79,7 @@ end
     add_product!(storage, product; unit_holding_cost=0.1)
     storage2 = Storage("s2")
     add_product!(storage2, product; initial_inventory=200000 * horizon)
-    
+
     lanes = [Lane(storage, customers[i]; unit_cost=0) for i in 1:store_count]
     l0 = Lane(storage2, storage; unit_cost=0, time=2)
 
@@ -88,7 +88,7 @@ end
 
     n() = begin
         network = SupplyChain(horizon)
-            
+
         add_storage!(network, storage)
         add_storage!(network, storage2)
         for customer in customers

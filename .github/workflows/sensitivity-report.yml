@@ -1,0 +1,27 @@
+name: Sensitivity report
+
+on:
+  workflow_dispatch:
+    inputs:
+      samples:
+        description: 'Sobol samples per problem (cost is samples * (parameters + 2) simulations)'
+        default: '200'
+
+env:
+  JULIA_PKG_SERVER_REGISTRY_PREFERENCE: conservative
+
+jobs:
+  sensitivity:
+    name: sensitivity_analysis @ ${{ inputs.samples }} samples (newsvendor + beer_game)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v2
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: '1'
+          arch: x64
+      - run: julia --project=benchmark -e 'using Pkg; Pkg.Registry.add("General"); Pkg.resolve(); Pkg.instantiate()'
+      - run: julia --project=benchmark benchmark/sensitivity_report.jl
+        env:
+          SENSITIVITY_SAMPLES: ${{ inputs.samples }}

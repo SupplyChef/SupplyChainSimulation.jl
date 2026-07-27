@@ -41,14 +41,12 @@ mutable struct SimMetrics
     # and are counted the same way (see snapshot_state!).
     backlog::Float64
 
-    # Trips that have already had their one-time fixed cost charged this run.
-    # The same Trip (route + departure) can be assigned to many order lines,
-    # even across periods, but get_total_trip_fixed_costs only charges it
-    # once per run (by scanning the deduplicating Set historical_transportation)
-    # - this mirrors that dedup without depending on historical_transportation.
-    seen_trips::Set{Trip}
+    # Boolean matrix indexed by [lane_index, departure_time] to track seen trips.
+    # Completely avoids Set{Trip} allocation and hashing overhead on the hot path.
+    seen_trips::Matrix{Bool}
 
-    SimMetrics() = new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Set{Trip}())
+    SimMetrics() = new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Matrix{Bool}(undef, 0, 0))
+    SimMetrics(num_lanes::Int, horizon::Int) = new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, zeros(Bool, num_lanes, horizon))
 end
 
 function reset!(metrics::SimMetrics)
@@ -61,6 +59,6 @@ function reset!(metrics::SimMetrics)
     metrics.orders = 0.0
     metrics.demand = 0.0
     metrics.backlog = 0.0
-    empty!(metrics.seen_trips)
+    fill!(metrics.seen_trips, false)
     return metrics
 end

@@ -5,28 +5,46 @@ on:
 
 env:
   JULIA_PKG_SERVER_REGISTRY_PREFERENCE: conservative
+  # benchmark/Manifest.toml is a plain snapshot, not something CI regenerates
+  # and commits back - a direct-dependency change in the root Project.toml
+  # (e.g. adding a package) makes it stale, and plain Pkg.instantiate() hard
+  # errors on a stale manifest rather than fixing it up. Pkg.resolve() first
+  # brings it back in sync before instantiate() downloads everything.
 
 jobs:
   profile:
     name: CPU profile - beer_game()
     runs-on: ubuntu-latest
+    # Safety net: this job normally finishes in well under 10 minutes: a
+    # timeout here turns a bad profiling-script change that runs away into
+    # a clear failure instead of an hour-plus hang waiting to be force-
+    # cancelled (see memory-profile's timeout comment for exactly that
+    # happening with the allocation profiler once already).
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v2
       - uses: julia-actions/setup-julia@v1
         with:
           version: '1'
           arch: x64
-      - run: julia --project=benchmark -e 'using Pkg; Pkg.instantiate()'
+      - run: julia --project=benchmark -e 'using Pkg; Pkg.Registry.add("General"); Pkg.resolve(); Pkg.instantiate()'
       - run: julia --project=benchmark benchmark/profile_beergame.jl
       - run: julia --project=benchmark benchmark/profile_beergame_direct.jl
   memory-profile:
     name: Allocation profile - beer_game()
     runs-on: ubuntu-latest
+    # Safety net: an earlier version of memory_profile_beergame.jl tried
+    # sample_rate=1.0 and the job ran for almost an hour before the runner
+    # force-cancelled it (Profile.Allocs at that rate is ~100x slower than
+    # unprofiled execution). The current low-sample-rate version should
+    # finish in about the same time as the CPU profile job; if a future
+    # change regresses that, fail clearly instead of hanging.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v2
       - uses: julia-actions/setup-julia@v1
         with:
           version: '1'
           arch: x64
-      - run: julia --project=benchmark -e 'using Pkg; Pkg.instantiate()'
+      - run: julia --project=benchmark -e 'using Pkg; Pkg.Registry.add("General"); Pkg.resolve(); Pkg.instantiate()'
       - run: julia --project=benchmark benchmark/memory_profile_beergame.jl

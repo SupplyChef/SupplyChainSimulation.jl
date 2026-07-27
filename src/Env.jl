@@ -59,6 +59,18 @@ struct Env
     # capability it never uses.
     needs_outbound_order_index::Bool
 
+    # One reusable get_past_outbound_orders! buffer per (lane, product) pair
+    # whose policy actually looks backward (required_lookback(policy) > 0 -
+    # currently only BackwardCoverageOrderingPolicy), sized to match that
+    # policy's lookback exactly. Owned here rather than by the policy object
+    # itself: optimize! shares one policy object across every scenario's Env
+    # for a given (lane, product) (see get_lane_policies), so a policy-owned
+    # buffer would be the same mutable array shared - and, if scenarios were
+    # ever evaluated concurrently, raced - across all of them. This Env is
+    # exclusive to one scenario's simulate() call, so buffers stored here
+    # are naturally scenario-local.
+    past_orders_buffers::Matrix{Vector{Union{Missing, Int64}}}
+
     # Whether a Customer order that can't be filled the same period it's
     # created is dropped as a permanent lost sale (false, the default and
     # prior-to-this-field-existing behavior: due_date == creation_time, see
@@ -83,10 +95,35 @@ struct Env
         end
         sorted_locations = reverse_mapping[topological_sort_by_dfs(graph)]
 
-        downstream_customers = Dict{ConcreteNode, Array{Customer, 1}}()
-        for location in locations
-            parents = dfs_parents(graph, mapping[location])
-            downstream_customers[location] = Customer[reverse_mapping[i] for i in 1:length(mapping) if parents[i] > 0 && reverse_mapping[i] isa Customer]
+        # Every location's downstream Customers = the union of its direct
+        # successors' own downstream Customers, plus any direct successor
+        # that's itself a Customer. Computed once per location in a single
+        # reverse-topological pass - a location's successors are always
+        # later in sorted_locations (every edge's origin precedes its
+        # destination there), so by the time `location` is processed here,
+        # each of its successors' entries below is already final - instead
+        # of a full graph traversal per location (dfs_parents(graph,
+        # mapping[location]), O(locations) calls each O(locations + lanes),
+        # i.e. O(locations x (locations + lanes)) overall - the dominant
+        # cost of Env construction on a large network, since it's quadratic
+        # in locations where everything else here is linear). successors
+        # reuses supplychain.lanes directly rather than graph/mapping,
+        # since it only needs adjacency, not vertex indices.
+        successors = Dict{ConcreteNode, Vector{ConcreteNode}}(location => ConcreteNode[] for location in locations)
+        for lane in supplychain.lanes
+            append!(successors[lane.origin], get_destinations(lane))
+        end
+
+        downstream_customers = Dict{ConcreteNode, Array{Customer, 1}}(location => Customer[] for location in locations)
+        for location in Iterators.reverse(sorted_locations)
+            reachable_customers = Set{Customer}()
+            for successor in successors[location]
+                if successor isa Customer
+                    push!(reachable_customers, successor)
+                end
+                union!(reachable_customers, downstream_customers[successor])
+            end
+            downstream_customers[location] = collect(reachable_customers)
         end
 
         # Group trips by (destination, period) in a single pass instead of,
@@ -96,39 +133,83 @@ struct Env
         # is revisited once per location. Each trip only needs to be pushed
         # into the (typically 1-2) destinations it actually has, at the
         # period slot it actually departs.
-        departures = Dict{ConcreteNode, Vector{Vector{Trip}}}(location => [Trip[] for _ in 1:supplychain.horizon] for location in locations)
+        #
+        # Locations that are an actual trip destination get their own
+        # horizon-length Vector{Trip}, built lazily here rather than eagerly
+        # for every location in the network - that eager version was Env
+        # construction's single largest allocation site on a large network,
+        # since most locations (e.g. root suppliers with no inbound lanes)
+        # never receive a single trip.
+        departures = Dict{ConcreteNode, Vector{Vector{Trip}}}()
         for trip in trips
             for destination in trip.route.destinations
-                if haskey(departures, destination)
-                    push!(departures[destination][trip.departure], trip)
-                end
+                periods = get!(() -> [Trip[] for _ in 1:supplychain.horizon], departures, destination)
+                push!(periods[trip.departure], trip)
+            end
+        end
+
+        # place_orders (Simulation.jl) calls get_inbound_trips/
+        # find_next_departure (Model.jl) - both direct env.departures[location]
+        # indexing - unconditionally for *every* location in the network each
+        # period, not just ones with an inbound lane, so every location still
+        # needs a key here. Every location left out by the loop above (never
+        # a trip's destination) gets the exact same shared empty periods
+        # vector rather than one allocated per location - safe since nothing
+        # past this point ever mutates it, and it's only ever read.
+        empty_periods = [Trip[] for _ in 1:supplychain.horizon]
+        for location in locations
+            get!(departures, location, empty_periods)
+        end
+
+        products_indexed = get_product_index(supplychain)
+        nproducts = length(products_indexed.items)
+
+        # get_lane_index (SupplyChainModeling.jl) caches the Vector+Dict
+        # pair on supplychain itself, computed once and reused by every
+        # Env/State built from it - see the identical use in State.jl.
+        lanes_indexed = get_lane_index(supplychain)
+        nlanes = length(lanes_indexed.items)
+        lane_index = lanes_indexed.index
+
+        # Left undef rather than pre-filled with an empty Vector per cell:
+        # that fill was an O(lanes x products) allocation storm regardless
+        # of how many (lane, product) pairs actually use a policy with
+        # required_lookback(policy) > 0 (currently only
+        # BackwardCoverageOrderingPolicy) - typically a small fraction of
+        # the full lanes x products space. The only reader
+        # (_backward_coverage_order, Policy.jl) is only ever reached via
+        # place_orders dispatching on trip.policies[product] actually
+        # being such a policy - the same (lane, product, policy) triple
+        # the loop below uses to decide which cells to write - so every
+        # cell that's ever read is guaranteed to have been written first.
+        past_orders_buffers = Matrix{Vector{Union{Missing, Int64}}}(undef, nlanes, nproducts)
+
+        for ((lane, product), policy) in policies
+            lookback = required_lookback(policy)
+            if lookback > 0
+                l_idx = lane_index[lane]
+                p_idx = products_indexed.index[product]
+                past_orders_buffers[l_idx, p_idx] = Array{Union{Missing, Int64}, 1}(undef, lookback)
             end
         end
 
         return new(supplychain,
                    collect(initial_states),
                    sorted_locations,
-                   collect(supplychain.products),
+                   products_indexed.items,
                    departures,
                    downstream_customers,
                    Dict{Tuple{ConcreteNode, Product, Int64}, Float64}(),
                    record_history,
                    any(p -> required_lookback(p) > 0, values(policies)),
+                   past_orders_buffers,
                    customer_backlog)
     end
 end
 
-function get_inbound_trips(supplychain, location)
-    return collect(sort(filter(trip -> is_destination(location, trip.route), get_trips(supplychain.lanes, supplychain.horizon)), by=t -> t.unit_cost))
-end
-
-function get_mean_demands(env::Env)
-
-end
-
 function get_mean_demand(env::Env, customer::Customer, product::Product, time::Int)
     return get!(env.mean_demand_cache, (customer, product, time)) do
-        sum(initial_state.demand[(customer, product)].demand[time] for initial_state in env.initial_states) / length(env.initial_states)
+        sum(initial_state.demand[initial_state.location_index[customer], initial_state.product_index[product]].demand[time] for initial_state in env.initial_states) / length(env.initial_states)
     end
 end
 

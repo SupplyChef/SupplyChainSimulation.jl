@@ -88,9 +88,13 @@ The resulting plot is shown below.
 The package comes with several policies predefined, including:
 
 - QuantityOrderingPolicy: Orders a given quantity specific to each time period. The quantity ordered is the same across scenarios and irrespective of the current inventory position.
+- ProductQuantityOrderingPolicy: Orders a given quantity at a given time period.
 - OnHandUptoOrderingPolicy: Orders up to a given number based on the number of units on hand; no matter what is on order.
 - NetUptoOrderingPolicy: Orders up to a given number based on the net number of units (on hand + in transit + on order - on backlog).
 - NetSSOrderingPolicy: Orders up to a given number based on the net number of units (on hand + in transit + on order - on backlog) if the net inventory is below a threshold.
+- ForwardCoverageOrderingPolicy: Orders inventory to cover the coming periods based on the mean forecasted demand.
+- BackwardCoverageOrderingPolicy: Orders inventory to cover the coming periods based on past demand.
+- SingleOrderOrderingPolicy: Places a single order at a given time.
 
 ## Creating a new policy
 

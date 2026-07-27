@@ -4,22 +4,28 @@ authors = ["SupplyChef <47842426+SupplyChef@users.noreply.github.com>"]
 version = "0.4.4"
 
 [deps]
+CMAEvolutionStrategy = "8d3b24bd-414e-49e0-94fb-163cc3a3e411"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
-FunctionWrappers = "069b7b12-0de2-55c6-9aab-29f3d0a68a2e"
 Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Optim = "429524aa-4258-5aef-a3af-852621145aeb"
 PlotlyJS = "f0f68f2c-4968-5e81-91da-67840de0976a"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SupplyChainModeling = "8a0b78ce-42db-494b-a45c-80b287de1a3d"
+Surrogates = "6fc51010-71bc-11e9-0e15-a3fcc6593c49"
 UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 
 [compat]
+CMAEvolutionStrategy = "0.2"
 Dates = "1.8, 1.9, 1.10, 1.11, 1.12"
 Distributions = "0.25"
-FunctionWrappers = "1"
 Graphs = "1.9.0"
+LinearAlgebra = "1.8, 1.9, 1.10, 1.11, 1.12"
+Optim = "1, 2"
 PlotlyJS = "0.18.10"
 SupplyChainModeling = "0.2, 0.3"
+Surrogates = "7"
 UUIDs = "1.8, 1.9, 1.10, 1.11, 1.12"
 julia = "1.8, 1.9, 1.10, 1.11, 1.12"
 

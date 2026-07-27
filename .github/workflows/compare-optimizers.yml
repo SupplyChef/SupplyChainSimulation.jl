@@ -1,0 +1,48 @@
+name: Compare optimizers
+
+on:
+  workflow_dispatch:
+    inputs:
+      maxfevals:
+        description: 'Evaluation budget given to each method (optimize!''s :custom, :cma_es, :nelder_mead, :bayesopt, and :custom_surrogate)'
+        default: '3000'
+      trials:
+        description: 'Independent trials (distinct seeds) per method, for mean/std/paired-test reporting'
+        default: '5'
+      upper:
+        description: 'Upper search bound given to all four methods (lower is fixed at 0.0). Default 5000 matches every *_optimize function''s own built-in default; try something like 200 to test whether that shared default is too large relative to where real policy parameters live for :bayesopt/:cma_es specifically (see compare_optimizers.jl''s compare_optimizers_params docstring).'
+        default: '5000.0'
+
+env:
+  JULIA_PKG_SERVER_REGISTRY_PREFERENCE: conservative
+  # benchmark/Manifest.toml is a plain snapshot, not something CI regenerates
+  # and commits back - a direct-dependency change in the root Project.toml
+  # (e.g. adding a package) makes it stale, and plain Pkg.instantiate() hard
+  # errors on a stale manifest rather than fixing it up. Pkg.resolve() first
+  # brings it back in sync before instantiate() downloads everything.
+
+jobs:
+  compare:
+    name: optimize! :custom vs :cma_es vs :nelder_mead vs :bayesopt vs :custom_surrogate @ ${{ inputs.trials }} trials x ${{ inputs.maxfevals }} evals
+    runs-on: ubuntu-latest
+    # Each trial runs all three methods once, on both the newsvendor and
+    # beer_game problems. 5 trials x 3000 evals x 16 training scenarios (the
+    # default newsvendor ensemble) is the same order of work as the existing
+    # calibration-generalization test (which already runs 3000 evals against
+    # 16 scenarios in normal test-suite time), just repeated ~15x across
+    # methods/problems; beer_game adds a second, heavier (20 scenarios x 200
+    # periods vs 16 x 100) problem on top - generous timeout to cover that
+    # plus any larger maxfevals/trials override requested via workflow_dispatch.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v2
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: '1'
+          arch: x64
+      - run: julia --project=benchmark -e 'using Pkg; Pkg.Registry.add("General"); Pkg.resolve(); Pkg.instantiate()'
+      - run: julia --project=benchmark benchmark/compare_optimizers.jl
+        env:
+          COMPARE_MAXFEVALS: ${{ inputs.maxfevals }}
+          COMPARE_TRIALS: ${{ inputs.trials }}
+          COMPARE_UPPER: ${{ inputs.upper }}

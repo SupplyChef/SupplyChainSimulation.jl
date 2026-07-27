@@ -34,8 +34,18 @@ Finds the earliest trip bound for `destination` that departs at or after
 `time`, or `nothing` if none remain within the horizon. Walks forward through
 `env.departures[destination]` (indexed directly by period) instead of
 filtering the full, unbounded list of trips ever bound for `destination`.
+
+`@inline`d: this returns `Union{Trip, Nothing}`, and `Trip` isn't isbits (it
+holds `route::Lane` and `policies::Union{Missing, Dict}`, both reference
+fields - see `Trip`'s definition). A Union with a non-isbits member can't
+use Julia's compact isbits-union representation, so across a real,
+non-inlined call boundary Julia has to box the `Trip` on every successful
+match. Inlining keeps the Union-typed value local to the (already
+concretely-typed) caller instead, letting the compiler union-split it
+without boxing - allocation profiling found this as the largest single
+allocation site in a full `beer_game()` run.
 """
-function find_next_departure(env, destination::ConcreteNode, time::Int64)
+@inline function find_next_departure(env, destination::ConcreteNode, time::Int64)::Trip
     periods = env.departures[destination]
     for t in time:length(periods)
         trips_at_t = periods[t]
@@ -43,7 +53,7 @@ function find_next_departure(env, destination::ConcreteNode, time::Int64)
             return trips_at_t[1]
         end
     end
-    return nothing
+    return NULL_TRIP
 end
 
 """
@@ -53,8 +63,11 @@ Finds the earliest trip bound for `destination` that departs at or after
 `time` and still arrives by `due_date`, or `nothing` if none do. Only scans
 the `[time, due_date]` window of `env.departures[destination]`, instead of
 the full, unbounded list of trips ever bound for `destination`.
+
+`@inline`d for the same reason as the 3-argument method above - see its
+docstring.
 """
-function find_next_departure(env, destination::ConcreteNode, time::Int64, due_date::Int64)
+@inline function find_next_departure(env, destination::ConcreteNode, time::Int64, due_date::Int64)::Trip
     periods = env.departures[destination]
     last_period = min(due_date, length(periods))
     for t in time:last_period
@@ -64,16 +77,18 @@ function find_next_departure(env, destination::ConcreteNode, time::Int64, due_da
             end
         end
     end
-    return nothing
+    return NULL_TRIP
 end
 
 """
     get_locations(supplychain)
 
-    Gets all the locations in the supplychain.
+    Gets all the locations (storages, customers, and suppliers - not
+    plants) in the supplychain, as the same cached Vector every call (see
+    `get_location_index` in SupplyChainModeling.jl).
 """
 function get_locations(supplychain::SupplyChain)
-    return union(supplychain.storages, supplychain.customers, supplychain.suppliers)
+    return get_location_index(supplychain).items
 end
 
 function create_graph(supplychain::SupplyChain)

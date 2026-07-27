@@ -1,0 +1,90 @@
+name: Large network benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      storage_count:
+        description: 'Number of storages (~nodes) in the synthetic network'
+        default: '10000'
+      product_count:
+        description: 'Number of products'
+        default: '5'
+      horizon:
+        description: 'Simulation horizon (periods)'
+        default: '52'
+      env_only:
+        description: 'Skip the full simulate() benchmark, only measure Env construction'
+        type: boolean
+        default: true
+
+env:
+  JULIA_PKG_SERVER_REGISTRY_PREFERENCE: conservative
+  # benchmark/Manifest.toml is a plain snapshot, not something CI regenerates
+  # and commits back - a direct-dependency change in the root Project.toml
+  # (e.g. adding a package) makes it stale, and plain Pkg.instantiate() hard
+  # errors on a stale manifest rather than fixing it up. Pkg.resolve() first
+  # brings it back in sync before instantiate() downloads everything.
+
+jobs:
+  benchmark:
+    name: benchmarks.jl @ ${{ inputs.storage_count }} storages
+    runs-on: ubuntu-latest
+    # Safety net, same reasoning as Profile's jobs: an unexpectedly large
+    # storage_count (or a regression that turns Env construction/simulate()
+    # superlinear in it) should fail clearly instead of running for hours.
+    # BenchmarkTools' own samples=/seconds= budgets in benchmarks.jl bound
+    # each individual @benchmark call; this bounds the job as a whole.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v2
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: '1'
+          arch: x64
+      - run: julia --project=benchmark -e 'using Pkg; Pkg.Registry.add("General"); Pkg.resolve(); Pkg.instantiate()'
+      - run: julia --project=benchmark benchmark/benchmarks.jl ${{ inputs.env_only && '--env-only' || '' }}
+        env:
+          BENCHMARK_STORAGE_COUNT: ${{ inputs.storage_count }}
+          BENCHMARK_PRODUCT_COUNT: ${{ inputs.product_count }}
+          BENCHMARK_HORIZON: ${{ inputs.horizon }}
+
+  cpu-profile:
+    name: CPU profile @ ${{ inputs.storage_count }} storages
+    runs-on: ubuntu-latest
+    # Each phase (Env construction, simulate()) is profiled once, not
+    # repeated for statistical timing the way benchmark's BenchmarkTools
+    # samples are - should be faster than the benchmark job above, but
+    # kept generous for the same "fail clearly instead of hanging" reason.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v2
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: '1'
+          arch: x64
+      - run: julia --project=benchmark -e 'using Pkg; Pkg.Registry.add("General"); Pkg.resolve(); Pkg.instantiate()'
+      - run: julia --project=benchmark benchmark/profile_large_network.jl ${{ inputs.env_only && '--env-only' || '' }}
+        env:
+          BENCHMARK_STORAGE_COUNT: ${{ inputs.storage_count }}
+          BENCHMARK_PRODUCT_COUNT: ${{ inputs.product_count }}
+          BENCHMARK_HORIZON: ${{ inputs.horizon }}
+
+  memory-profile:
+    name: Allocation profile @ ${{ inputs.storage_count }} storages
+    runs-on: ubuntu-latest
+    # Same reasoning as Profile's memory-profile job: Profile.Allocs at a
+    # high sample rate is far slower than unprofiled execution - this
+    # script uses the same low rate that job already validated as safe.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v2
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: '1'
+          arch: x64
+      - run: julia --project=benchmark -e 'using Pkg; Pkg.Registry.add("General"); Pkg.resolve(); Pkg.instantiate()'
+      - run: julia --project=benchmark benchmark/memory_profile_large_network.jl ${{ inputs.env_only && '--env-only' || '' }}
+        env:
+          BENCHMARK_STORAGE_COUNT: ${{ inputs.storage_count }}
+          BENCHMARK_PRODUCT_COUNT: ${{ inputs.product_count }}
+          BENCHMARK_HORIZON: ${{ inputs.horizon }}

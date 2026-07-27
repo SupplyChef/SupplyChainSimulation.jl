@@ -2,7 +2,7 @@ using Random
 
 function beer_game(;scenario_count=30, optimize=true)
     Random.seed!(3)
-    
+
     product = SupplyChainModeling.Product("product")
 
     customer = Customer("customer")
@@ -15,7 +15,7 @@ function beer_game(;scenario_count=30, optimize=true)
     supplier = Supplier("supplier")
 
     horizon = 200
-    
+
     l = Lane(retailer, customer; unit_cost=0)
     l2 = Lane(wholesaler, retailer; unit_cost=0, time=2)
     l3 = Lane(factory, wholesaler; unit_cost=0, time= 2)
@@ -27,7 +27,7 @@ function beer_game(;scenario_count=30, optimize=true)
 
     n() = begin
         network = SupplyChain(horizon)
-        
+
         add_supplier!(network, supplier)
         add_storage!(network, retailer)
         add_storage!(network, wholesaler)
@@ -50,7 +50,7 @@ function beer_game(;scenario_count=30, optimize=true)
     policies = Dict((l2, product) => policy2,
                     (l3, product) => policy3,
                     (l4, product) => policy4)
-    
+
     if optimize
         # metrics_cost_function + record_history=false is optimize!'s fast
         # path (see Optimization.jl): state.metrics is kept incrementally
@@ -77,7 +77,7 @@ end
         Random.seed!(3)
 
         product = Product("product")
-    
+
         customer = Customer("customer")
         retailer = Storage("retailer")
         add_product!(retailer, product; unit_holding_cost=0.1, initial_inventory=20)
@@ -86,9 +86,9 @@ end
         factory = Storage("factory")
         add_product!(factory, product; unit_holding_cost=0.1, initial_inventory=20)
         supplier = Supplier("supplier")
-    
+
         horizon = 20
-        
+
         l = Lane(retailer, customer; unit_cost=0)
         l2 = Lane(wholesaler, retailer; unit_cost=0, time=2)
         l3 = Lane(factory, wholesaler; unit_cost=0, time= 2)
@@ -99,7 +99,7 @@ end
         policy4 = NetUptoOrderingPolicy(0)
 
         network = SupplyChain(horizon)
-        
+
         add_supplier!(network, supplier)
         add_storage!(network, retailer)
         add_storage!(network, wholesaler)
@@ -138,7 +138,7 @@ end
         Random.seed!(3)
 
         product = Product("product")
-    
+
         customer = Customer("customer")
         retailer = Storage("retailer")
         add_product!(retailer, product; unit_holding_cost=0.1, initial_inventory=20)
@@ -147,9 +147,9 @@ end
         factory = Storage("factory")
         add_product!(factory, product; unit_holding_cost=0.1, initial_inventory=20)
         supplier = Supplier("supplier")
-    
+
         horizon = 20
-        
+
         l = Lane(retailer, customer; unit_cost=0)
         l2 = Lane(wholesaler, retailer; unit_cost=0, time=2)
         l3 = Lane(factory, wholesaler; unit_cost=0, time= 2)
@@ -161,7 +161,7 @@ end
 
         n() = begin
             network = SupplyChain(horizon)
-        
+
             add_supplier!(network, supplier)
             add_storage!(network, retailer)
             add_storage!(network, wholesaler)
@@ -208,7 +208,7 @@ end
         println("lost sales: $(get_total_lost_sales(final_states[1]))")
         println("sales: $(get_total_sales(final_states[1]))")
         println("demand: $(get_total_demand(final_states[1]))")
-        
+
         get_total_lost_sales(final_states[1]) == 103.0 && get_total_sales(final_states[1]) == 1828.0 && get_total_demand(final_states[1]) == 1931.0
     end
 end

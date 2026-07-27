@@ -17,7 +17,7 @@ using Random
     policy2 = NetSSOrderingPolicy(0, 0)
 
     network = SupplyChain(horizon)
-        
+
     add_storage!(network, storage)
     add_storage!(network, storage2)
     add_customer!(network, customer)
@@ -39,7 +39,7 @@ using Random
     println("sales: $(get_total_sales(final_state))")
     println("demand: $(get_total_demand(final_state))")
     println("holding costs: $(get_total_holding_costs(final_state))")
-    
+
     get_total_lost_sales(final_state) == 0 &&  get_total_sales(final_state) == 10 * horizon && get_total_demand(final_state) == 10 * horizon
 end
 
@@ -94,7 +94,7 @@ end
 
 @test begin #sS policy
     horizon = 20
-    
+
     product = Product("product")
 
     customer = Customer("c")
@@ -102,7 +102,7 @@ end
     add_product!(storage, product; unit_holding_cost=0.1)
     storage2 = Storage("s2")
     add_product!(storage, product; initial_inventory=20 * horizon)
-    
+
     l = Lane(storage, customer; unit_cost=0)
     l2 = Lane(storage2, storage; unit_cost=0, time=2)
 
@@ -110,7 +110,7 @@ end
 
     n() = begin
         network = SupplyChain(horizon)
-        
+
         add_storage!(network, storage)
         add_storage!(network, storage2)
         add_customer!(network, customer)
@@ -127,7 +127,7 @@ end
     initial_states = [n() for i in 1:30]
 
     policies = Dict((l2, product) => policy2)
-    
+
     # Unlike the two exact-value tests above (which assert straight off
     # optimize!'s raw convergence), this one only asserts `true`, so the
     # record_history=false fast path is safe here.

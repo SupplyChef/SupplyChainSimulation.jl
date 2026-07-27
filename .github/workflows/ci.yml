@@ -1,8 +1,6 @@
 name: CI
 on:
   workflow_dispatch:
-    branches:
-      - master
   pull_request:
     branches:
       - master
@@ -20,8 +18,8 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - '1.12' # Replace this with the minimum Julia version that your package supports. E.g. if your package requires Julia 1.5 or higher, change this to '1.5'.
-          - '1' # Leave this line unchanged. '1' will automatically expand to the latest stable 1.x release of Julia.
+          - '1.12' # minimum Julia version supported (must match Project.toml's compat bound)
+          - '1' # latest stable 1.x release of Julia
         os:
           - ubuntu-latest
           - macos-latest
@@ -29,8 +27,8 @@ jobs:
         arch:
           - x64
     steps:
-      - uses: actions/checkout@v2
-      - uses: julia-actions/setup-julia@v1
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
@@ -40,18 +38,28 @@ jobs:
       # duplicate that, and when the two disagreed (this step pinned "main",
       # Project.toml pinned a feature branch) Pkg had to reconcile conflicting
       # pins on every job, which is expensive across the whole matrix.
+      #
+      # Manifest.toml is a checked-in snapshot, not something CI regenerates
+      # and commits back - so a direct-dependency change in Project.toml
+      # (e.g. adding a package) leaves it stale until someone resolves and
+      # commits a fresh one. julia-buildpkg's Pkg.build() calls instantiate()
+      # internally, which *hard errors* on a manifest missing a direct
+      # dependency (unlike a merely version-mismatched manifest, which it
+      # would resolve on its own) - so resolve explicitly first.
+      - run: julia --project=@. -e 'using Pkg; Pkg.Registry.add("General"); Pkg.resolve()'
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1
-      - uses: codecov/codecov-action@v3
+      - uses: codecov/codecov-action@v4
         with:
           file: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
   docs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: julia-actions/setup-julia@v1
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
         with:
           version: '1'
       - run: |
@@ -62,11 +70,9 @@ jobs:
       - run: |
           julia --project=docs -e '
             using Documenter: doctest
-            using SupplyChainSimulation   
-            doctest(SupplyChainSimulation)' 
+            using SupplyChainSimulation
+            doctest(SupplyChainSimulation)'
       - run: julia --project=docs docs/make.jl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
-      - uses: julia-actions/julia-processcoverage@v1
-      - uses: codecov/codecov-action@v3

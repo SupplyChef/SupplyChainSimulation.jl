@@ -6,7 +6,7 @@
 function get_total_demand(state)
     demand = 0.0
     for ol in filter(ol -> isa(ol.destination, Customer), collect(Base.Iterators.flatten(state.historical_orders)))
-        demand += ol.quantity * state.demand[(ol.destination, ol.product)].sales_price
+        demand += ol.quantity * state.demand[state.location_index[ol.destination], state.product_index[ol.product]].sales_price
     end
     return demand
 end
@@ -19,7 +19,7 @@ end
 function get_total_sales(state)
     sales = 0.0
     for ol in filter(ol -> isa(ol.destination, Customer), collect(Base.Iterators.flatten(state.historical_filled_orders)))
-        sales += ol.quantity * state.demand[(ol.destination, ol.product)].sales_price
+        sales += ol.quantity * state.demand[state.location_index[ol.destination], state.product_index[ol.product]].sales_price
     end
     return sales
 end
@@ -36,7 +36,7 @@ function get_total_lost_sales(state)
 
     lost_sales = 0.0
     for ol in unfulfilled_orders
-        lost_sales += ol.quantity * state.demand[(ol.destination, ol.product)].lost_sales_cost
+        lost_sales += ol.quantity * state.demand[state.location_index[ol.destination], state.product_index[ol.product]].lost_sales_cost
     end
     return lost_sales
 end
@@ -75,13 +75,13 @@ end
 
     Gets the total transportation fixed costs.
 """
-function get_total_trip_fixed_costs(state)
-    transportation_costs = 0
-    for trip in state.historical_transportation
-        transportation_costs += get_fixed_cost(trip.route)
-    end
-    return transportation_costs
-end
+# state.metrics.trip_fixed_costs (SimMetrics) already accumulates exactly
+# this total inline, at the same dedup granularity (see record_fill!'s
+# metrics.seen_trips check) - proven equal to the below by
+# assert_metrics_match_history (metrics-equivalence-tests.jl). Reading it
+# back is O(1) and needs no historical_transportation scan at all, unlike
+# every other get_total_* here that still has no metrics equivalent.
+get_total_trip_fixed_costs(state) = state.metrics.trip_fixed_costs
 
 """
     get_total_holding_costs(state)
@@ -100,6 +100,21 @@ end
 
 function get_shipments(state)
     state.historical_filled_orders
+end
+
+"""
+    get_used_lanes(state)
+
+Gets the distinct lanes actually shipped on during the run - useful for
+spotting lanes that were built into the network but never used, or for
+breaking transportation cost/volume down by route.
+
+Note: distinct *lanes*, not distinct *trips* - state.historical_transportation
+holds one entry per (lane, departure) actually shipped on, so a lane running
+every period of the horizon still collapses to a single entry here.
+"""
+function get_used_lanes(state)
+    return unique(trip.route for trip in state.historical_transportation)
 end
 
 """

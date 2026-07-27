@@ -98,7 +98,7 @@ function onhand_series(state, storage, product, horizon)
     return qty
 end
 
-demand_series(state, customer, product) = state.demand[(customer, product)].demand
+demand_series(state, customer, product) = state.demand[state.location_index[customer], state.product_index[product]].demand
 
 # bullwhip ratio for a lane = Var(orders placed on that lane) / Var(end
 # customer demand) for the same scenario - the standard definition from the

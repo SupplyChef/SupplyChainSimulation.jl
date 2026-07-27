@@ -25,7 +25,7 @@ function plot_inventory_onhand(states::Array{State, 1}, location::ConcreteNode, 
                    xaxis_title="Period",
                    yaxis_title="Unit")
 
-    plot([scatter(;x=1:length(state.historical_on_hand), 
+    plot([scatter(;x=1:length(state.historical_on_hand),
                    y=[historical_on_hand[location][product] for historical_on_hand in state.historical_on_hand],
                    line_color=:blue,
                    opacity=0.2) for state in states], layout)
@@ -41,8 +41,8 @@ function plot_inventory_onhand(state::State, locations::Array{L, 1}, product::Pr
     layout = Layout(title="Inventory on hand",
                    xaxis_title="Period",
                    yaxis_title="Unit")
-    
-    plot([scatter(;x=1:length(state.historical_on_hand), 
+
+    plot([scatter(;x=1:length(state.historical_on_hand),
                   y=[historical_on_hand[locations[i]][product] for historical_on_hand in state.historical_on_hand],
                   name=locations[i].name,
                   mode="lines") for i in 1:length(locations)],
@@ -54,7 +54,7 @@ end
 #                    xaxis_title="Period",
 #                    yaxis_title="Unit")
 
-#     plot([scatter(;x=1:length(state.historical_pending_outbound_order_lines), 
+#     plot([scatter(;x=1:length(state.historical_pending_outbound_order_lines),
 #                   y=[sum(ol -> (ol.order.due_date >= time) ? ol.quantity : 0, get(historical_pending_outbound_order_lines, (location, product), OrderLine[]); init=0) for (time, historical_pending_outbound_order_lines) in enumerate(state.historical_pending_outbound_order_lines)],
 #                   name=location.name,
 #                   mode="lines") for location in locations],
@@ -66,7 +66,7 @@ function plot_orders(state::State, locations::Array{L, 1}, product::Product) whe
                    xaxis_title="Period",
                    yaxis_title="Unit")
 
-    plot([scatter(;x=1:get_horizon(state), 
+    plot([scatter(;x=1:get_horizon(state),
                   y=[get_past_outbound_orders(state, location, product, t + 1, 1)[1] for t in 1:get_horizon(state)],
                   name=location.name,
                   mode="lines") for location in locations],

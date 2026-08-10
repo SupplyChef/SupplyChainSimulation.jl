@@ -16,5 +16,5 @@ using Pkg
 Pkg.activate(@__DIR__)
 Pkg.add(url="https://github.com/SupplyChef/SupplyChainModeling.jl", rev="main")
 Pkg.develop(path=joinpath(@__DIR__, "..", ".."))
-Pkg.add(["Distributions", "JSON3"])
+Pkg.add(["Distributions", "JSON3", "Plots"])
 Pkg.instantiate()

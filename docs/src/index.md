@@ -287,6 +287,25 @@ The optimizer will then run and return the best policies.
 
 If you run this code you will see that the policies do extremely well with no bullwhip effect. Inventory management solved? Not fully. Let's note that (1) the policies are tuned to a specific scenario (albeit stochastic) and (2) the optimizer optimizes across echelons (as if the whole supply chain is integrated). This is a best case scenario. Different setups can be tested. For example you can add more scenarios or you can change the policies to limit what they can see. Depending on the setup the bullwhip effect can be more or less strong. Being able to simulate these results is on key advantage of using SupplyChainSimulation.jl.
 
+**[Read the full beer game deep-dive →](https://github.com/SupplyChef/SupplyChainSimulation.jl/blob/master/examples/usecases/01-beer-game/post.md)** — the walkthrough above is the minimal model; the full write-up runs it end to end with real optimizer results, measures the bullwhip effect directly, and digs into who actually absorbs the volatility and whether the optimized policy would hold up in a real supply chain.
+
+## Use cases
+
+Deeper, narrative write-ups that run this package (and its sibling packages, SupplyChainModeling.jl and SupplyChainOptimization.jl) against a realistic scenario end to end — real code, run in CI, with the results and charts generated directly from the run rather than written by hand. Source and full runnable code for each is under [`examples/usecases/`](https://github.com/SupplyChef/SupplyChainSimulation.jl/tree/master/examples/usecases).
+
+| Use case | Status | What it covers |
+|---|---|---|
+| [The Beer Game](https://github.com/SupplyChef/SupplyChainSimulation.jl/blob/master/examples/usecases/01-beer-game/post.md) | ✅ Published | Naive vs. optimizer-tuned vs. published human-behavior ordering policies on a 4-echelon network; measures the bullwhip effect directly and asks who absorbs the volatility, and whether it's adoptable in the real world. |
+| Use of expedites | Planned | When a fast, expensive lane is worth triggering over a slow, cheap one - learning the threshold, then asking whether a standing air-freight lane is worth its fixed cost at network-design level. |
+| Differentiated service levels | Planned | Why a single blanket service-level target across every customer/product is provably wasteful, and what a tiered target buys you for the same total inventory dollars. |
+| Profit-driven new markets | Planned | Why cost-only network design can never recommend opening a facility, and what it takes for a profit-maximizing model to open one anyway. |
+| Post-boom network right-sizing | Planned | The mirror image of new-market expansion: when and how to close a facility as demand normalizes. |
+| Single- vs dual-source resilience | Planned | The cost premium of enforced supplier diversification, weighed against a simulated disruption. |
+| Tariff mitigation / model re-solving | Planned | Re-optimizing sourcing, footprint, and safety-stock placement after a tariff shock. |
+| Make vs. buy (vertical integration) | Planned | The production-volume breakeven between building a component in-house and buying it. |
+| Perishables and cold chain | Planned | The stockout-vs-spoilage tradeoff frontier for shelf-life-aware ordering policies. |
+| Digital-twin disruption war-gaming | Planned | Stress-testing an already-optimized network against a scripted disruption (a capstone that reuses earlier use cases' networks). |
+
 ## API
 
 ```@autodocs

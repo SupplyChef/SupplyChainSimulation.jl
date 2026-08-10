@@ -230,6 +230,10 @@ Fill rate got *worse* — $(fill_rate_change_pp) percentage points worse — not
 
 The optimized policy's order quantities swing with roughly **$(ratio(opt_bw["retailer_orders (l2)"])) to $(ratio(opt_bw["factory_orders (l4)"])) times the variance of actual customer demand** — an order of magnitude worse than the naive policy's already-textbook bullwhip, and, unlike the naive case, it's severe at *every* echelon rather than escalating upstream. For scenario 1 specifically (directly comparable to the repo's own `beer_game()` test, which asserts exactly `lost_sales == 103.0 && sales == 1828.0 && demand == 1931.0`): this run produced lost sales = $(fmt(s1.total_lost_sales)), sales = $(fmt(s1.total_sales)), demand = $(fmt(s1.total_demand)) — matching the known-good value, so this isn't a bug in this analysis; it's what that policy actually does.
 
+![Orders placed per echelon over the first 60 periods of scenario 1 - naive policy (top) vs. optimized policy (bottom), both on the same units-ordered scale](bullwhip_orders.png)
+
+Seeing the two on the same scale is more convincing than the ratios alone: the naive policy's oscillation is the textbook shape from six decades of beer-game literature — mild, and building gradually as it moves upstream from retailer to factory. The "optimized" policy's orders swing far more violently, and at every echelon from the very first cycle, not just the ones furthest from the customer.
+
 The tuned parameters `optimize!` found (`BackwardCoverageOrderingPolicy.cover`, applied per `Policy.jl` as: target net inventory = (last period's local demand) × (cover[1]+cover[2]) + cover[2] — "local demand" being what this node's own downstream customer ordered from it, via `get_past_outbound_orders`, not this node's own order history and not true end-customer demand):
 
 | Lane | Tuned `cover` | Implied rule |

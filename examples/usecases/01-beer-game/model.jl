@@ -19,6 +19,11 @@ using SupplyChainModeling, SupplyChainSimulation, Random, JSON3
 using Distributions: Poisson # `using Distributions` would also import Distributions.Product,
                               # which collides with SupplyChainModeling/SupplyChainSimulation's Product
 using Statistics: var, mean, std
+ENV["GKSwstype"] = "100" # headless CI has no display - forces Plots' GR
+                          # backend to render straight to a bitmap instead of
+                          # trying to open one, which otherwise errors/hangs.
+using Plots
+gr()
 
 const HORIZON = 200
 const SCENARIO_COUNT = 30
@@ -647,6 +652,52 @@ optimized_inventory_cv = inventory_cv(optimized_in_sample_states, STORAGES_NAMED
 optimized_costs = cost_breakdown(optimized_in_sample_states)
 optimized_backlog = backlog_summary(optimized_in_sample_states, BACKLOG_NODES_NAMED, product, HORIZON)
 optimized_classic = classic_score(optimized_in_sample_states, product, HORIZON)
+
+# --- Chart: the classic "bullwhip" visual - order quantities placed by each
+#     echelon over time, naive vs. optimized, scenario 1 only (a per-scenario
+#     trace, not an aggregate - the whole point is to show the oscillation
+#     shape, which aggregating across scenarios would average away). Both
+#     panels share one y-axis scale (computed from both series' actual max,
+#     not assumed) so the amplitude difference is directly visible instead of
+#     only implied by the bullwhip-ratio numbers above - a reader who has
+#     played the physical board game will recognize this shape immediately.
+#     First CHART_PERIODS periods only: enough to show several oscillation
+#     cycles given the 2/2/4-period lane lead times, without compressing 200
+#     periods of detail into an unreadable line.
+const CHART_PERIODS = 60
+const ECHELON_DISPLAY_NAMES = Dict(
+    "retailer_orders (l2)" => "Retailer",
+    "wholesaler_orders (l3)" => "Wholesaler",
+    "factory_orders (l4)" => "Factory",
+)
+
+function echelon_order_series(states, origin, destination)
+    return lane_order_series(states[1], origin, destination, product, HORIZON)[1:CHART_PERIODS]
+end
+
+function order_chart(states, title)
+    p = plot(title=title, xlabel="Period", ylabel="Units ordered",
+             legend=:topright, size=(900, 320), margin=5Plots.mm, titlefontsize=11)
+    for (name, origin, destination) in LANES_NAMED
+        plot!(p, 1:CHART_PERIODS, echelon_order_series(states, origin, destination);
+              label=ECHELON_DISPLAY_NAMES[name], linewidth=2)
+    end
+    return p
+end
+
+naive_order_chart = order_chart(naive_states, "Naive: orders placed per echelon (scenario 1)")
+optimized_order_chart = order_chart(optimized_in_sample_states, "Optimized: orders placed per echelon (scenario 1)")
+
+shared_ymax = maximum(
+    maximum(echelon_order_series(states, origin, destination))
+    for states in (naive_states, optimized_in_sample_states)
+    for (name, origin, destination) in LANES_NAMED
+) * 1.05
+ylims!(naive_order_chart, (0, shared_ymax))
+ylims!(optimized_order_chart, (0, shared_ymax))
+
+bullwhip_chart = plot(naive_order_chart, optimized_order_chart, layout=(2, 1), size=(900, 640))
+savefig(bullwhip_chart, joinpath(@__DIR__, "bullwhip_orders.png"))
 
 # --- Follow-up 1: tune NetUptoOrderingPolicy's own (single) parameter too,
 #     instead of comparing a *tuned* BackwardCoverageOrderingPolicy against

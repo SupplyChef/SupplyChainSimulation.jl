@@ -71,11 +71,13 @@ jobs:
           path: |
             ${{ matrix.dir }}/results.json
             ${{ matrix.dir }}/post.md
+            ${{ matrix.dir }}/*.png
       - name: Commit generated output
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add ${{ matrix.dir }}/results.json ${{ matrix.dir }}/post.md
+          shopt -s nullglob
+          git add ${{ matrix.dir }}/results.json ${{ matrix.dir }}/post.md ${{ matrix.dir }}/*.png
           git diff --cached --quiet && echo "No changes to commit" || git commit -m "Regenerate ${{ matrix.dir }} from CI run ${{ github.run_id }}"
           git pull --rebase origin ${{ github.ref_name }}
           git push origin HEAD:${{ github.ref_name }}

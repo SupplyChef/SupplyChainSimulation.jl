@@ -23,6 +23,13 @@ mutable struct SimMetrics
     orders::Float64
     demand::Float64
 
+    # Ad-valorem tariff cost accrued at fill time (see record_fill!,
+    # Simulation.jl) for a tariff-relevant product's shipment - a Supplier-
+    # origin lane priced statically, a Storage-origin lane priced against its
+    # on-hand cohort's country-of-origin breakdown (see TariffContext,
+    # State.jl). Always 0.0 for a supply chain with no Tariffs registered.
+    tariff_costs::Float64
+
     # Sum, across every period closed out so far, of every location's
     # currently-outstanding order-line quantity (see snapshot_state!, which
     # charges this the same way it charges holding_costs). Raw units, not
@@ -45,8 +52,8 @@ mutable struct SimMetrics
     # Completely avoids Set{Trip} allocation and hashing overhead on the hot path.
     seen_trips::Matrix{Bool}
 
-    SimMetrics() = new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Matrix{Bool}(undef, 0, 0))
-    SimMetrics(num_lanes::Int, horizon::Int) = new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, zeros(Bool, num_lanes, horizon))
+    SimMetrics() = new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Matrix{Bool}(undef, 0, 0))
+    SimMetrics(num_lanes::Int, horizon::Int) = new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, zeros(Bool, num_lanes, horizon))
 end
 
 function reset!(metrics::SimMetrics)
@@ -58,6 +65,7 @@ function reset!(metrics::SimMetrics)
     metrics.trip_fixed_costs = 0.0
     metrics.orders = 0.0
     metrics.demand = 0.0
+    metrics.tariff_costs = 0.0
     metrics.backlog = 0.0
     fill!(metrics.seen_trips, false)
     return metrics

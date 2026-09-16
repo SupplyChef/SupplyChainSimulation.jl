@@ -2,6 +2,98 @@ import Base.push!
 import Base.delete!
 
 """
+    _node_country(node)::Union{Nothing, String}
+
+A `ConcreteNode`'s `Location.country` (see `SupplyChainModeling.Location`), or
+`nothing` if the node has no `location` set (`Union{Location, Missing}`) or its
+`location` has no `country` set.
+"""
+@inline _node_country(node)::Union{Nothing, String} = ismissing(node.location) ? nothing : node.location.country
+
+"""
+Tariff bookkeeping shared by `State` and `Env`. Computed independently by each -
+`State` is constructed before `Env` (see `simulate(supplychain, policies)`), so
+there's nothing to cache one on the other - but it's cheap (O(products +
+suppliers)) and only non-trivial at all when the supply chain actually has
+tariffs (`needs_tracking` below): every consumer of `is_relevant` elsewhere
+checks it before doing any tariff-specific work, so an untariffed supply chain
+pays for one `Bool` per product and a 1-element `origin_countries` and nothing
+else.
+
+`origin_countries[1]` is always `nothing` - the "unknown provenance" bucket for
+initial inventory/arrivals and any Supplier without a country set (see
+`_build_tariff_context`) - mirroring the same convention in
+`SupplyChainOptimization.jl`'s re-export tariff handling. `get_tariff_rate`
+never charges a tariff against it (see its `isnothing` checks), so
+unknown-provenance inventory is simply never taxed on re-export.
+
+`declared_value_by_origin[product_index, origin_country_index]` is the average
+`unit_cost` for that product across every `Supplier` in that origin country -
+used only for a re-export (Storage-origin) shipment, where cohort tracking
+knows which country a unit came from but not which specific source (see
+`_remove_on_hand_origin!`). A Supplier-origin shipment instead uses that exact
+supplier's own `unit_cost` directly (see `_static_tariff_cost`, Simulation.jl) -
+there's no ambiguity about the source in that case. Plants are never a
+shipping origin in this simulator (see `get_locations`), so they never
+contribute here.
+"""
+struct TariffContext
+    needs_tracking::Bool
+    is_relevant::Vector{Bool}                                  # by product_index
+    origin_countries::Vector{Union{Nothing, String}}           # origin_countries[1] == nothing
+    origin_country_index::Dict{Union{Nothing, String}, Int64}
+    declared_value_by_origin::Matrix{Float64}                  # [product_index, origin_country_index]
+end
+
+function _build_tariff_context(supply_chain::SupplyChain, product_index::Dict{Product, Int64}, nproducts::Int64)::TariffContext
+    if isempty(supply_chain.tariffs)
+        empty_index = Dict{Union{Nothing, String}, Int64}(nothing => 1)
+        return TariffContext(false, fill(false, nproducts), Union{Nothing, String}[nothing], empty_index, zeros(Float64, nproducts, 1))
+    end
+
+    is_relevant = fill(false, nproducts)
+    if any(isnothing(t.product) for t in supply_chain.tariffs)
+        fill!(is_relevant, true)
+    else
+        for t in supply_chain.tariffs
+            if !isnothing(t.product)
+                is_relevant[product_index[t.product]] = true
+            end
+        end
+    end
+
+    origin_countries = Union{Nothing, String}[nothing]
+    for supplier in supply_chain.suppliers
+        country = _node_country(supplier)
+        isnothing(country) || push!(origin_countries, country)
+    end
+    unique!(origin_countries)
+    origin_country_index = Dict{Union{Nothing, String}, Int64}(c => i for (i, c) in enumerate(origin_countries))
+
+    sums = zeros(Float64, nproducts, length(origin_countries))
+    counts = zeros(Int64, nproducts, length(origin_countries))
+    for supplier in supply_chain.suppliers
+        country = _node_country(supplier)
+        isnothing(country) && continue
+        oci = origin_country_index[country]
+        for (product, unit_cost) in supplier.unit_cost
+            pi = get(product_index, product, 0)
+            (pi == 0 || !is_relevant[pi]) && continue
+            sums[pi, oci] += unit_cost
+            counts[pi, oci] += 1
+        end
+    end
+    declared_value_by_origin = zeros(Float64, nproducts, length(origin_countries))
+    for pi in 1:nproducts, oci in 1:length(origin_countries)
+        if counts[pi, oci] > 0
+            declared_value_by_origin[pi, oci] = sums[pi, oci] / counts[pi, oci]
+        end
+    end
+
+    return TariffContext(true, is_relevant, origin_countries, origin_country_index, declared_value_by_origin)
+end
+
+"""
 Contains information about the historical and current state of the simulation, including inventory positions and pending orders.
 """
 mutable struct State
@@ -78,6 +170,30 @@ mutable struct State
     # [storage_index, product_index] -> horizon-length array of overflow
     # quantity by period.
     overflow_inventory::Matrix{Vector{Int64}}
+
+    # Tariff bookkeeping - see TariffContext. Independent of Env (see its
+    # docstring for why), but exists on both.
+    tariff_context::TariffContext
+
+    # [storage_index, product_index] -> for a tariff-relevant product
+    # (tariff_context.is_relevant[pi]), a horizon-length Vector paralleling
+    # on_hand_inventory's own age buckets, each entry a Vector{Int64} indexed
+    # by tariff_context.origin_country_index giving that (storage, product,
+    # age)'s on-hand quantity broken down by origin country - the provenance
+    # overlay a Storage-origin shipment needs to price its re-export tariff
+    # (see _remove_on_hand_origin!/_cohort_tariff_cost, Simulation.jl). Empty
+    # (Vector{Vector{Int64}}()) for every product that isn't tariff-relevant,
+    # so on-hand bookkeeping for an untariffed product/network never touches
+    # this at all - on_hand_inventory/on_hand_totals above, which every other
+    # consumer reads, are completely unaffected by any of this.
+    on_hand_by_origin::Matrix{Vector{Vector{Int64}}}
+
+    # Same idea as on_hand_by_origin, but for in_transit_inventory: tags a
+    # shipment's provenance from the moment it's sent (send_inventory!) until
+    # it's received into on-hand (receive_inventory!, which folds it into
+    # on_hand_by_origin above) or delivered to a Customer (which needs no
+    # further tracking - see send_inventory!(..., ::Customer, ...)).
+    in_transit_by_origin::Matrix{Vector{Vector{Int64}}}
 
     # [location_index, product_index] -> pending order lines. Vector rather
     # than Set: avoids both Set{OrderLine} hashing overhead and the
@@ -171,6 +287,20 @@ mutable struct State
         lanes = lanes_indexed.items
         lane_index = lanes_indexed.index
 
+        tariff_context = _build_tariff_context(supply_chain, product_index, nproducts)
+        n_origin_countries = length(tariff_context.origin_countries)
+        # Full horizon-length age-bucket structure only for a tariff-relevant
+        # product; an empty outer Vector otherwise - see on_hand_by_origin's/
+        # in_transit_by_origin's field docs above.
+        on_hand_by_origin = Matrix{Vector{Vector{Int64}}}(undef, nstorages, nproducts)
+        for pi in 1:nproducts, si in 1:nstorages
+            on_hand_by_origin[si, pi] = tariff_context.is_relevant[pi] ? [zeros(Int64, n_origin_countries) for _ in 1:horizon] : Vector{Int64}[]
+        end
+        in_transit_by_origin = Matrix{Vector{Vector{Int64}}}(undef, nlocations, nproducts)
+        for pi in 1:nproducts, li in 1:nlocations
+            in_transit_by_origin[li, pi] = tariff_context.is_relevant[pi] ? [zeros(Int64, n_origin_countries) for _ in 1:horizon] : Vector{Int64}[]
+        end
+
         state = new(supply_chain,
                    demand,
                    storage_index,
@@ -186,6 +316,9 @@ mutable struct State
                    zeros(Int64, nstorages, nproducts),
                    [zeros(Int64, horizon) for _ in 1:nlocations, _ in 1:nproducts],
                    [zeros(Int64, horizon) for _ in 1:nstorages, _ in 1:nproducts],
+                   tariff_context,
+                   on_hand_by_origin,
+                   in_transit_by_origin,
                    [OrderLine[] for _ in 1:nlocations, _ in 1:nproducts],
                    [OrderLine[] for _ in 1:nlocations, _ in 1:nproducts],
                    OrderLine[],
@@ -239,6 +372,16 @@ function reset!(state::State)
     for i in eachindex(state.overflow_inventory)
         fill!(state.overflow_inventory[i], 0)
     end
+    for i in eachindex(state.on_hand_by_origin)
+        for v in state.on_hand_by_origin[i]
+            fill!(v, 0)
+        end
+    end
+    for i in eachindex(state.in_transit_by_origin)
+        for v in state.in_transit_by_origin[i]
+            fill!(v, 0)
+        end
+    end
     for i in eachindex(state.pending_outbound_order_lines)
         empty!(state.pending_outbound_order_lines[i])
         empty!(state.pending_inbound_order_lines[i])
@@ -266,9 +409,19 @@ function reset!(state::State)
     for lane in state.supply_chain.lanes
         if !isnothing(lane.initial_arrivals)
             for (product, arrivals) in lane.initial_arrivals
+                pi = state.product_index[product]
+                track_origin = state.tariff_context.is_relevant[pi]
+                unknown_index = track_origin ? state.tariff_context.origin_country_index[nothing] : 0
                 for i in 1:length(lane.destinations)
+                    li = state.location_index[lane.destinations[i]]
                     for j in 1:length(arrivals[i])
                         add_in_transit_inventory!(state, lane.destinations[i], product, j, arrivals[i][j])
+                        # Pre-seeded arrivals predate the simulation, same as
+                        # initial_inventory above - unknown provenance (see
+                        # TariffContext's docstring).
+                        if track_origin && arrivals[i][j] != 0
+                            state.in_transit_by_origin[li, pi][j][unknown_index] += arrivals[i][j]
+                        end
                     end
                 end
             end
@@ -350,6 +503,16 @@ function set_on_hand_inventory!(state::State, to::ConcreteNode, product::Product
     end
     ages[time] = Int(quantity)
     state.on_hand_totals[si, pi] += Int(quantity) - previous
+
+    if state.tariff_context.is_relevant[pi]
+        # Initial inventory predates the simulation - unknown provenance (see
+        # TariffContext's docstring). Only ever called once per (storage,
+        # product) at time == 1 (see this function's docstring), so `previous`
+        # is always 0 in practice - the delta form just mirrors on_hand_totals'
+        # own bookkeeping above.
+        unknown_index = state.tariff_context.origin_country_index[nothing]
+        state.on_hand_by_origin[si, pi][time][unknown_index] += Int(quantity) - previous
+    end
 end
 
 # Shared with receive_inventory! (Simulation.jl), which resolves si/li/pi
@@ -420,6 +583,104 @@ function remove_on_hand_inventory!(state::State, to::Storage, product::Product, 
     _remove_on_hand_by_index!(state, si, pi, quantity)
 end
 
+# Origin-country provenance overlay for tariff-relevant products (see
+# TariffContext). Every function below is only ever called from Simulation.jl
+# at a site that already checked state.tariff_context.is_relevant[pi] first -
+# an untariffed (storage, product) pair never reaches any of this.
+
+@inline function _add_on_hand_origin!(state::State, si::Int64, pi::Int64, time::Int64, by_origin::Vector{Int64})
+    bucket = state.on_hand_by_origin[si, pi][time]
+    @inbounds for i in eachindex(by_origin)
+        bucket[i] += by_origin[i]
+    end
+end
+
+"""
+    _remove_on_hand_origin!(state, si, pi, quantity)::Vector{Int64}
+
+Removes `quantity` units' worth of origin-country provenance from
+`on_hand_by_origin[si, pi]`, in lockstep with `_remove_on_hand_by_index!`'s own
+FIFO (oldest-age-first) walk - within an age, countries are consumed in a
+fixed order (`tariff_context.origin_country_index`'s ordering). Returns the
+breakdown of what was removed (sums to `quantity`, under the same
+`on_hand_totals[si, pi] >= quantity` precondition `_remove_on_hand_by_index!`
+already relies on) - this is what a Storage-origin shipment tags its in-transit
+addition with (see `send_inventory!`/`_cohort_tariff_cost`, Simulation.jl).
+
+Called separately from, but consuming the same ages as, the plain
+`_remove_on_hand_by_index!` - independent because they walk two separate
+arrays (on_hand_by_origin vs. on_hand_inventory/on_hand_totals), each fully
+self-consistent as long as nothing else mutates either between the two calls
+(true here: this code is single-threaded and sequential).
+"""
+function _remove_on_hand_origin!(state::State, si::Int64, pi::Int64, quantity::Int64)::Vector{Int64}
+    by_origin = state.on_hand_by_origin[si, pi]
+    removed = zeros(Int64, length(state.tariff_context.origin_countries))
+    remaining = quantity
+    for t in state.on_hand_ages_order[si, pi]
+        remaining <= 0 && break
+        bucket = by_origin[t]
+        @inbounds for oci in eachindex(bucket)
+            remaining <= 0 && break
+            take = min(remaining, bucket[oci])
+            take == 0 && continue
+            bucket[oci] -= take
+            removed[oci] += take
+            remaining -= take
+        end
+    end
+    return removed
+end
+
+@inline function _add_in_transit_origin!(state::State, li::Int64, pi::Int64, time::Int64, by_origin::Vector{Int64})
+    bucket = state.in_transit_by_origin[li, pi][time]
+    @inbounds for i in eachindex(by_origin)
+        bucket[i] += by_origin[i]
+    end
+end
+
+"""
+    _remove_in_transit_origin!(state, li, pi, time, quantity)::Vector{Int64}
+
+Removes `quantity` units' worth of origin-country provenance from
+`in_transit_by_origin[li, pi][time]`, consuming countries in a fixed
+(`origin_country_index`) order - there's no age/batch ordering to preserve
+here the way `_remove_on_hand_origin!` has (a single (location, product, time)
+in-transit bucket isn't itself split by arrival batch, see
+`in_transit_inventory`). Used by `receive_inventory!` to split a partially-
+accepted arrival (the rest overflows to next period, see
+`_record_overflow_by_index!`) into "accepted" and "still in transit"
+breakdowns. Returns the breakdown of what was removed.
+"""
+function _remove_in_transit_origin!(state::State, li::Int64, pi::Int64, time::Int64, quantity::Int64)::Vector{Int64}
+    bucket = state.in_transit_by_origin[li, pi][time]
+    removed = zeros(Int64, length(bucket))
+    remaining = quantity
+    @inbounds for oci in eachindex(bucket)
+        remaining <= 0 && break
+        take = min(remaining, bucket[oci])
+        take == 0 && continue
+        bucket[oci] -= take
+        removed[oci] += take
+        remaining -= take
+    end
+    return removed
+end
+
+"""
+    _static_origin_breakdown(state, country, quantity)::Vector{Int64}
+
+A one-hot origin-country breakdown: all `quantity` units attributed to
+`country` (or the unknown-provenance bucket if `country` is `nothing`). Used
+for a Supplier-origin shipment, where every unit ships from the same static
+country - no cohort tracking needed (see `TariffContext`'s docstring).
+"""
+function _static_origin_breakdown(state::State, country::Union{Nothing, String}, quantity::Int64)::Vector{Int64}
+    v = zeros(Int64, length(state.tariff_context.origin_countries))
+    oci = get(state.tariff_context.origin_country_index, country, state.tariff_context.origin_country_index[nothing])
+    v[oci] = quantity
+    return v
+end
 
 # Shared by get_on_hand_inventory and get_net_inventory - the latter used to
 # call get_on_hand_inventory/get_in_transit_inventories/get_inbound_orders/
@@ -451,6 +712,8 @@ end
 function expire_on_hand_inventory(state::State, to::Storage, product::Product, si::Int64, pi::Int64, time)
     max_age = get_maximum_age(to, product)
     ages = state.on_hand_inventory[si, pi]
+    track_origin = state.tariff_context.is_relevant[pi]
+    by_origin = track_origin ? state.on_hand_by_origin[si, pi] : nothing
     expired_total = 0
     for t in state.on_hand_ages_order[si, pi]
         if t <= time - max_age
@@ -458,6 +721,12 @@ function expire_on_hand_inventory(state::State, to::Storage, product::Product, s
             if on_hand > 0
                 ages[t] = 0
                 expired_total += on_hand
+                # Written off along with the plain quantity above - otherwise
+                # a future FIFO removal (_remove_on_hand_origin!) would still
+                # see "stock" at an age on_hand_inventory itself already
+                # considers empty, double-counting provenance that no longer
+                # physically exists.
+                track_origin && fill!(by_origin[t], 0)
             end
         else
             break

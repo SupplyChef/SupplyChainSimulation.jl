@@ -1,7 +1,7 @@
 name = "SupplyChainSimulation"
 uuid = "1febdd50-69ad-4f0a-8312-f316c31db602"
 authors = ["SupplyChef <47842426+SupplyChef@users.noreply.github.com>"]
-version = "0.4.4"
+version = "0.5.0"
 
 [deps]
 CMAEvolutionStrategy = "8d3b24bd-414e-49e0-94fb-163cc3a3e411"

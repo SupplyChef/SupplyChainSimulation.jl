@@ -14,10 +14,14 @@
 function receive_inventory!(state::State, env::Env, location::Storage, product, li::Int64, si::Int64, pi::Int64, time)
     quantity = _in_transit_by_index(state, li, pi, time)
     max_capacity = get_maximum_storage(location, product)
+    track_origin = quantity > 0 && state.tariff_context.is_relevant[pi]
 
     if isinf(max_capacity)
         _add_on_hand_by_index!(state, si, pi, quantity, time)
         _add_in_transit_by_index!(state, li, pi, time, -quantity)
+        if track_origin
+            _add_on_hand_origin!(state, si, pi, time, _remove_in_transit_origin!(state, li, pi, time, quantity))
+        end
         return
     end
 
@@ -28,11 +32,23 @@ function receive_inventory!(state::State, env::Env, location::Storage, product, 
     _add_on_hand_by_index!(state, si, pi, accepted, time)
     _add_in_transit_by_index!(state, li, pi, time, -quantity)
 
+    if track_origin
+        _add_on_hand_origin!(state, si, pi, time, _remove_in_transit_origin!(state, li, pi, time, accepted))
+    end
+
     if overflow > 0
         _record_overflow_by_index!(state, si, pi, location, product, time, overflow)
         if time < get_horizon(state)
             # excess is delayed, not lost: it waits and is retried the next period
             _add_in_transit_by_index!(state, li, pi, time + 1, overflow)
+            if track_origin
+                # Whatever's left in this period's bucket after accepted's
+                # breakdown was removed above is exactly overflow's breakdown
+                # (the bucket summed to quantity before either removal).
+                remaining = state.in_transit_by_origin[li, pi][time]
+                _add_in_transit_origin!(state, li, pi, time + 1, remaining)
+                fill!(remaining, 0)
+            end
         end
     end
 end
@@ -50,20 +66,26 @@ function receive_inventory!(state::State, env::Env, location::Supplier, product,
 end
 
 # Send inventory (detailed)
-function send_inventory!(state::State, env::Env, trip::Trip, destination, product, quantity, time)
+function send_inventory!(state::State, env::Env, trip::Trip, destination, product, quantity, time; by_origin::Union{Nothing, Vector{Int64}}=nothing)
     if time + get_leadtime(trip.route, destination) > get_horizon(state)
         return
     end
-    add_in_transit_inventory!(state, destination, product, time + get_leadtime(trip.route, destination), quantity)
+    arrival = time + get_leadtime(trip.route, destination)
+    add_in_transit_inventory!(state, destination, product, arrival, quantity)
+    if !isnothing(by_origin)
+        li = state.location_index[destination]
+        pi = state.product_index[product]
+        _add_in_transit_origin!(state, li, pi, arrival, by_origin)
+    end
 end
 
-function send_inventory!(state::State, env::Env, trip::Trip, destination::Customer, product, quantity, time)
+function send_inventory!(state::State, env::Env, trip::Trip, destination::Customer, product, quantity, time; by_origin::Union{Nothing, Vector{Int64}}=nothing)
     #no-op
 end
 
 # Metrics: fill/drop sites
 """
-    record_fill!(state::State, env::Env, order_line::OrderLine, pi::Int64)
+    record_fill!(state::State, env::Env, order_line::OrderLine, pi::Int64, tariff_cost::Float64=0.0)
 
 Incrementally updates `state.metrics` for an `order_line` that has just been
 fulfilled (its trip has been assigned and the shipment sent), and, if
@@ -76,10 +98,18 @@ line passed to one `send_inventory!` call shares the same product).
 `order_line.destination` still varies per order line, so that half of
 `state.demand`'s index stays local to this function.
 
+`tariff_cost` is whatever the caller already computed (`_static_tariff_cost`
+for a Supplier-origin shipment, `_cohort_tariff_cost` for a Storage-origin
+one, or `0.0` for an untariffed product) - stashed onto `order_line.tariff_cost`
+too, not just `state.metrics.tariff_costs`, so `get_total_tariff_costs`
+(Reporting.jl) can independently scan `historical_filled_orders` afterward -
+unlike every other cost bucket here, a tariff's origin-country breakdown is a
+run-time-only fact with no static field to recompute it from.
+
 Must be called exactly once per fulfilled order line - matches the site of
 each `push!(state.filled_orders, order_line)` in `send_inventory!`.
 """
-function record_fill!(state::State, env::Env, order_line::OrderLine, pi::Int64)
+function record_fill!(state::State, env::Env, order_line::OrderLine, pi::Int64, tariff_cost::Float64=0.0)
     trip = order_line.trip
     metrics = state.metrics
 
@@ -91,10 +121,80 @@ function record_fill!(state::State, env::Env, order_line::OrderLine, pi::Int64)
     if order_line.destination isa Customer
         metrics.sales += order_line.quantity * state.demand[state.location_index[order_line.destination], pi].sales_price
     end
+    metrics.tariff_costs += tariff_cost
+    order_line.tariff_cost = tariff_cost
 
     if env.record_history
         push!(state.historical_transportation, trip)
     end
+end
+
+"""
+    _static_tariff_cost(state, origin, destination, product, quantity)::Float64
+
+Ad-valorem tariff cost for `quantity` units of `product` shipped directly from
+`origin` (a `Supplier`) to `destination`: `rate * declared_value * quantity`,
+where `declared_value` is `origin`'s own `unit_cost` for `product` - exact,
+since a Supplier-origin shipment has no ambiguity about which source the units
+came from (contrast `_cohort_tariff_cost`, for a Storage-origin shipment that
+can blend units from several countries). `0.0` whenever `origin`/`destination`
+has no country set, `origin` has no `unit_cost` for `product`, or no `Tariff`
+applies between the two countries for `product` - see `get_tariff_rate`.
+"""
+function _static_tariff_cost(state::State, origin::ConcreteNode, destination::ConcreteNode, product::Product, quantity::Int64)::Float64
+    origin_country = _node_country(origin)
+    isnothing(origin_country) && return 0.0
+    destination_country = _node_country(destination)
+    isnothing(destination_country) && return 0.0
+    declared_value = get(origin.unit_cost, product, 0.0)
+    declared_value <= 0.0 && return 0.0
+    rate = get_tariff_rate(state.supply_chain, origin_country, destination_country, product)
+    rate <= 0.0 && return 0.0
+    return rate * declared_value * quantity
+end
+
+"""
+    _cohort_tariff_cost(state, origin, destination, product, by_origin)::Float64
+
+Ad-valorem re-export tariff cost for a Storage-origin shipment, summed across
+`by_origin`'s origin-country breakdown of the units actually shipped (see
+`_remove_on_hand_origin!`): for each origin country with `units > 0`,
+`get_tariff_rate(...) * declared_value * units`, where `declared_value` is the
+average `unit_cost` for `product` across every Supplier in that origin country
+(`state.tariff_context.declared_value_by_origin` - see `TariffContext`, since
+cohort tracking only knows which country a unit came from, not which specific
+source). The unknown-provenance bucket (`nothing`) is always skipped - see
+`get_tariff_rate`.
+
+A lane whose destination is in the same country as `origin` (the storage
+itself, not any cohort's tag) never crosses a border, so it's never tariffed
+regardless of what any cohort is tagged with - otherwise goods that already
+paid duty entering `origin`'s country would pay it again on every purely
+domestic delivery out of that storage. Mirrors
+`SupplyChainOptimization.jl`'s identical guard on its re-export tariff
+handling.
+"""
+function _cohort_tariff_cost(state::State, origin::ConcreteNode, destination::ConcreteNode, product::Product, by_origin::Vector{Int64})::Float64
+    destination_country = _node_country(destination)
+    isnothing(destination_country) && return 0.0
+    storage_country = _node_country(origin)
+    destination_country == storage_country && return 0.0
+
+    tariff_context = state.tariff_context
+    pi = state.product_index[product]
+    cost = 0.0
+    @inbounds for oci in eachindex(by_origin)
+        units = by_origin[oci]
+        units == 0 && continue
+        origin_country = tariff_context.origin_countries[oci]
+        isnothing(origin_country) && continue
+        declared_value = tariff_context.declared_value_by_origin[pi, oci]
+        declared_value <= 0.0 && continue
+        rate = get_tariff_rate(state.supply_chain, origin_country, destination_country, product)
+        rate <= 0.0 && continue
+        cost += rate * declared_value * units
+    end
+    return cost
 end
 
 """
@@ -194,10 +294,19 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
 
             if trip !== NULL_TRIP
                 order_line.trip = trip
-                send_inventory!(state, env, order_line.trip, order_line.destination, order_line.product, order_line.quantity, time)
+
+                # Every unit ships from `location` (a Supplier) itself - a
+                # static, unambiguous origin, unlike a Storage's blended
+                # on-hand cohort below - see _static_tariff_cost/
+                # _static_origin_breakdown.
+                track_origin = state.tariff_context.is_relevant[pi]
+                by_origin = track_origin ? _static_origin_breakdown(state, _node_country(location), order_line.quantity) : nothing
+                tariff_cost = track_origin ? _static_tariff_cost(state, location, order_line.destination, order_line.product, order_line.quantity) : 0.0
+
+                send_inventory!(state, env, order_line.trip, order_line.destination, order_line.product, order_line.quantity, time; by_origin=by_origin)
 
                 _delete_inbound_order_line_by_index!(state, order_line, pi)
-                record_fill!(state, env, order_line, pi)
+                record_fill!(state, env, order_line, pi, tariff_cost)
                 push!(state.filled_orders, order_line)
                 removed = true
             end
@@ -255,12 +364,22 @@ function send_inventory!(state::State, env::Env, location::ConcreteNode, product
 
             if trip !== NULL_TRIP
                 order_line.trip = trip
-                send_inventory!(state, env, order_line.trip, order_line.destination, order_line.product, order_line.quantity, time)
+
+                # A Storage's on-hand inventory can blend units bought/produced
+                # in several countries, so - unlike the Supplier-origin method
+                # above - the shipment's origin breakdown has to be read off
+                # its cohort mix at removal time (see _remove_on_hand_origin!/
+                # _cohort_tariff_cost), not resolved statically.
+                track_origin = state.tariff_context.is_relevant[pi]
+                by_origin = track_origin ? _remove_on_hand_origin!(state, si, pi, order_line.quantity) : nothing
+                tariff_cost = isnothing(by_origin) ? 0.0 : _cohort_tariff_cost(state, location, order_line.destination, order_line.product, by_origin)
+
+                send_inventory!(state, env, order_line.trip, order_line.destination, order_line.product, order_line.quantity, time; by_origin=by_origin)
                 _remove_on_hand_by_index!(state, si, pi, order_line.quantity)
                 available -= order_line.quantity
 
                 _delete_inbound_order_line_by_index!(state, order_line, pi)
-                record_fill!(state, env, order_line, pi)
+                record_fill!(state, env, order_line, pi, tariff_cost)
                 push!(state.filled_orders, order_line)
                 removed = true
 

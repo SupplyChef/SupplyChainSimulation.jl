@@ -1,151 +1,42 @@
-using PlotlyJS
+# PlotlyJS is a weak dependency (see Project.toml's [weakdeps]/
+# [extensions]): pulling it in unconditionally made this package
+# unresolvable alongside anything depending on a modern JSON.jl (PlotlyJS
+# 0.18.x needs JSON 0.20-0.21; e.g. Oxygen.jl needs JSON 1.x - no version
+# satisfies both, so any consumer needing both would fail to resolve at
+# all, not just at plot time). Same fix, same reason, as
+# SupplyChainOptimization.jl's own PlotlyJS/Plots extension split.
+#
+# The actual implementations live in ext/SupplyChainSimulationPlotlyJSExt.jl,
+# which Julia loads automatically once PlotlyJS is `using`'d alongside this
+# package - no special syntax needed by the caller beyond having it loaded.
+# These are just stub declarations: they keep the names part of this
+# package's own export/API surface and documented, regardless of whether
+# the extension is active. Calling one before PlotlyJS is loaded raises a
+# plain `MethodError`.
 
 """
     plot_inventory_onhand(state::State, location::Location, product)
 
     Plots the inventory on hand of a product at a location over time.
-"""
-function plot_inventory_onhand(state::State, location::ConcreteNode, product::Product)
-    #historical_on_hand::Array{Dict{Storage, Dict{Product, Int64}}, 1}
-    layout = Layout(title="Inventory on hand",
-                   xaxis_title="Period",
-                   yaxis_title="Unit")
 
-    plot(1:length(state.historical_on_hand), [historical_on_hand[location][product] for historical_on_hand in state.historical_on_hand], layout)
-end
+Requires `PlotlyJS` to be loaded (see this file's top-of-file note).
+"""
+function plot_inventory_onhand end
 
 """
-    plot_inventory_onhand(state::Array{State, 1}, location::Location, product)
+    plot_orders(state::State, locations::Array{L, 1}, product) where L <: ConcreteNode
 
-    Plots the inventory on hand of a product at a location over time for multiple scenarios.
+    Plots outbound orders for a product across multiple locations over time.
+
+Requires `PlotlyJS` to be loaded (see this file's top-of-file note).
 """
-function plot_inventory_onhand(states::Array{State, 1}, location::ConcreteNode, product::Product)
-    #historical_on_hand::Array{Dict{Storage, Dict{Product, Int64}}, 1}
-    layout = Layout(title="Inventory on hand",
-                   xaxis_title="Period",
-                   yaxis_title="Unit")
-
-    plot([scatter(;x=1:length(state.historical_on_hand),
-                   y=[historical_on_hand[location][product] for historical_on_hand in state.historical_on_hand],
-                   line_color=:blue,
-                   opacity=0.2) for state in states], layout)
-end
-
-"""
-    plot_inventory_onhand(state::State, locations::::Array{L, 1}, product) where L <: Location
-
-    Plots the inventory on hand of a product over time for multiple locations.
-"""
-function plot_inventory_onhand(state::State, locations::Array{L, 1}, product::Product) where L <: ConcreteNode
-    #historical_on_hand::Array{Dict{Storage, Dict{Product, Int64}}, 1}
-    layout = Layout(title="Inventory on hand",
-                   xaxis_title="Period",
-                   yaxis_title="Unit")
-
-    plot([scatter(;x=1:length(state.historical_on_hand),
-                  y=[historical_on_hand[locations[i]][product] for historical_on_hand in state.historical_on_hand],
-                  name=locations[i].name,
-                  mode="lines") for i in 1:length(locations)],
-        layout)
-end
-
-# function plot_pending_outbound_order_lines(state::State, locations::Array{L, 1}, product::Product) where L <: ConcreteNode
-#     layout = Layout(title="Pending outbound order lines",
-#                    xaxis_title="Period",
-#                    yaxis_title="Unit")
-
-#     plot([scatter(;x=1:length(state.historical_pending_outbound_order_lines),
-#                   y=[sum(ol -> (ol.order.due_date >= time) ? ol.quantity : 0, get(historical_pending_outbound_order_lines, (location, product), OrderLine[]); init=0) for (time, historical_pending_outbound_order_lines) in enumerate(state.historical_pending_outbound_order_lines)],
-#                   name=location.name,
-#                   mode="lines") for location in locations],
-#         layout)
-# end
-
-function plot_orders(state::State, locations::Array{L, 1}, product::Product) where L <: ConcreteNode
-    layout = Layout(title="Orders",
-                   xaxis_title="Period",
-                   yaxis_title="Unit")
-
-    plot([scatter(;x=1:get_horizon(state),
-                  y=[get_past_outbound_orders(state, location, product, t + 1, 1)[1] for t in 1:get_horizon(state)],
-                  name=location.name,
-                  mode="lines") for location in locations],
-        layout)
-end
+function plot_orders end
 
 """
     plot_inventory_movement(state, product)
 
     Plots the inventory movement of a product through the supply chain through time.
+
+Requires `PlotlyJS` to be loaded (see this file's top-of-file note).
 """
-function plot_inventory_movement(state::State, product::Product)
-    labels = []
-    sources = []
-    targets = []
-    values = []
-
-    index = 0
-    mapping = Dict{String, Int}()
-
-    for i in 1:length(state.historical_filled_orders)
-        for ol in filter(ol -> ol.product == product, state.historical_filled_orders[i])
-            source = "$(ol.origin.name)@$i"
-            if !haskey(mapping, source)
-                mapping[source] = index
-                push!(labels, source)
-                index = index + 1
-            end
-
-            destination = "$(ol.destination.name)@$(i+get_leadtime(ol.trip.route, ol.destination))"
-            if !haskey(mapping, destination)
-                mapping[destination] = index
-                push!(labels, destination)
-                index = index + 1
-            end
-
-            push!(sources, mapping[source])
-            push!(targets, mapping[destination])
-            push!(values, ol.quantity)
-        end
-    end
-
-    for i in 1:length(state.historical_on_hand)-1
-        for location in keys(state.historical_on_hand[i])
-            if true #get(state.historical_on_hand[i][location], product, 0) > 0
-                source = "$(location[1].name)@$i"
-                if !haskey(mapping, source)
-                    mapping[source] = index
-                    push!(labels, source)
-                    index = index + 1
-                end
-
-                destination = "$(location[1].name)@$(i+1)"
-                if !haskey(mapping, destination)
-                    mapping[destination] = index
-                    push!(labels, destination)
-                    index = index + 1
-                end
-
-                push!(sources, mapping[source])
-                push!(targets, mapping[destination])
-                push!(values, state.historical_on_hand[i][(location[1], product)] + 0.01)
-            end
-        end
-    end
-
-    plot(sankey(
-        node = attr(
-        pad = 15,
-        thickness = 20,
-        line = attr(color = "black", width = 0.5),
-        label = labels,
-        color = "blue"
-        ),
-        link = attr(
-        source = sources, # indices correspond to labels, eg A1, A2, A1, B1, ...
-        target = targets,
-        value = values
-    )),
-    Layout(title_text="Inventory Movement", font_size=10)
-    )
-end
+function plot_inventory_movement end

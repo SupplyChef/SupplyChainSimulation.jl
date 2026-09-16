@@ -4,6 +4,10 @@ using Distributions: Poisson
 using Test
 
 using SupplyChainSimulation
+# Loads the SupplyChainSimulationPlotlyJSExt package extension - see
+# src/Visualization.jl's top-of-file note - so visualization-tests.jl's
+# plot_inventory_movement call below actually has a method to call.
+using PlotlyJS
 
 @testset "SupplyChain" begin
     @test begin

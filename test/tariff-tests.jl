@@ -139,8 +139,13 @@ using Random
                          (l_de, product) => QuantityOrderingPolicy([50]))
         final_state = simulate(network, policies)
 
-        @test get_total_tariff_costs(final_state) == 0.0
-        @test final_state.metrics.tariff_costs == 0.0
+        # The import legs (CN->US, DE->US) are genuine cross-border shipments
+        # and are correctly taxed; what this test actually checks is that the
+        # domestic re-export (storage(US) -> customer(US)) adds nothing on
+        # top of that - not that the whole run is tariff-free.
+        import_only = 0.15 * 8.0 * 100 + 0.10 * 12.0 * 50
+        @test get_total_tariff_costs(final_state) == import_only
+        @test final_state.metrics.tariff_costs == import_only
     end
 
     @testset "product-specific Tariff overrides the wildcard for that product only" begin
@@ -153,8 +158,14 @@ using Random
         storage = Storage("storage", Location(0.0, 0.0; country="US"))
         customer = Customer("customer")
 
-        lA = Lane(supplier, storage; unit_cost=0)
-        lB = Lane(supplier, storage; unit_cost=0)
+        # Distinct ids: Lane's equality/hash (SupplyChainModeling.jl) is
+        # content-based (origin/destinations/times) when no id is given, so
+        # two structurally-identical lanes without one collide into a single
+        # Lane key everywhere a Lane is used as a Dict/Set key (lane_policies,
+        # supply_chain.lanes_out, ...) - silently merging their per-lane
+        # policies and duplicating every order/trip built from them.
+        lA = Lane(supplier, storage; id="lane-A", unit_cost=0)
+        lB = Lane(supplier, storage; id="lane-B", unit_cost=0)
         l_outA = Lane(storage, customer; unit_cost=0)
 
         network = SupplyChain(1)

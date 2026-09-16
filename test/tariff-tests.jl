@@ -189,6 +189,148 @@ using Random
         @test get_total_tariff_costs(final_state) ≈ 0.20 * 10.0 * 100 + 0.05 * 10.0 * 100
     end
 
+    @testset "multi-period FIFO: oldest cohort is consumed first, including a shipment spanning two cohorts" begin
+        # CN arrives period 1 (age 1, 40 units), DE arrives period 2 (age 2,
+        # 40 units); nothing ships until period 3. A first, smaller shipment
+        # (25) must come entirely from the older CN batch (leaving 15 CN); a
+        # second, larger shipment (55) must then drain the CN remainder
+        # first before touching any DE - not draw from DE just because DE is
+        # the larger remaining pile, and not touch DE at all for the first
+        # shipment. CN and DE carry deliberately very different rates so any
+        # wrong consumption order shows up as a large, unmistakable
+        # discrepancy rather than a rounding-sized one.
+        product = Product("product")
+
+        supplier_cn = Supplier("supplier_cn", Location(0.0, 0.0; country="CN"))
+        add_product!(supplier_cn, product; unit_cost=10.0)
+        supplier_de = Supplier("supplier_de", Location(0.0, 0.0; country="DE"))
+        add_product!(supplier_de, product; unit_cost=20.0)
+        storage = Storage("storage", Location(0.0, 0.0; country="US"))
+        customer = Customer("customer", Location(0.0, 0.0; country="MX"))
+
+        l_cn = Lane(supplier_cn, storage; unit_cost=0)
+        l_de = Lane(supplier_de, storage; unit_cost=0)
+        l_out = Lane(storage, customer; unit_cost=0)
+
+        horizon = 4
+        network = SupplyChain(horizon)
+        add_supplier!(network, supplier_cn)
+        add_supplier!(network, supplier_de)
+        add_storage!(network, storage)
+        add_customer!(network, customer)
+        add_product!(network, product)
+        add_lane!(network, l_cn)
+        add_lane!(network, l_de)
+        add_lane!(network, l_out)
+        add_demand!(network, customer, product, [0.0, 0.0, 25.0, 55.0]; sales_price=1.0, lost_sales_cost=1.0)
+        add_tariff!(network, Tariff("CN", "MX", 0.10))
+        add_tariff!(network, Tariff("DE", "MX", 0.30))
+
+        policies = Dict((l_cn, product) => QuantityOrderingPolicy([40, 0, 0, 0]),
+                         (l_de, product) => QuantityOrderingPolicy([0, 40, 0, 0]))
+        final_state = simulate(network, policies)
+
+        # Period 3 (25 units): entirely CN (only 25 of CN's 40 - never
+        # touches DE). Period 4 (55 units): CN's remaining 15 first, then 40
+        # of DE to make up the rest.
+        expected = (0.10 * 10.0 * 25) + (0.10 * 10.0 * 15 + 0.30 * 20.0 * 40)
+        @test get_total_tariff_costs(final_state) ≈ expected
+        @test final_state.metrics.tariff_costs ≈ expected
+
+        si = final_state.storage_index[storage]
+        pi = final_state.product_index[product]
+        @test final_state.on_hand_totals[si, pi] == 0
+    end
+
+    @testset "overflow: a batch deferred across periods by capacity keeps its origin tag intact" begin
+        # 100 units ordered from a single CN supplier in period 1, but the
+        # storage can only hold 60 at once: 60 accepted immediately, 40
+        # deferred to period 2 - where it's deferred *again* (period 2's
+        # receive runs before that period's own shipment frees up space) -
+        # and only actually lands in period 3. Every unit that was ever
+        # shipped from the supplier must still show up as CN-origin by the
+        # time it's finally re-exported, however many periods it spent
+        # waiting on capacity: total tariff must equal rate * unit_cost *
+        # every unit shipped (100), not less (units silently dropped from
+        # the origin breakdown while deferred) or more (double-tagged).
+        product = Product("product")
+
+        supplier = Supplier("supplier", Location(0.0, 0.0; country="CN"))
+        add_product!(supplier, product; unit_cost=5.0)
+        storage = Storage("storage", Location(0.0, 0.0; country="US"))
+        add_product!(storage, product; maximum_units=60)
+        customer = Customer("customer", Location(0.0, 0.0; country="MX"))
+
+        l1 = Lane(supplier, storage; unit_cost=0)
+        l2 = Lane(storage, customer; unit_cost=0)
+
+        horizon = 3
+        network = SupplyChain(horizon)
+        add_supplier!(network, supplier)
+        add_storage!(network, storage)
+        add_customer!(network, customer)
+        add_product!(network, product)
+        add_lane!(network, l1)
+        add_lane!(network, l2)
+        add_demand!(network, customer, product, [0.0, 60.0, 40.0]; sales_price=1.0, lost_sales_cost=1.0)
+        add_tariff!(network, Tariff("CN", "MX", 0.20))
+
+        policies = Dict((l1, product) => QuantityOrderingPolicy([100, 0, 0]))
+        final_state = simulate(network, policies)
+
+        expected = 0.20 * 5.0 * 100
+        @test get_total_tariff_costs(final_state) ≈ expected
+        @test final_state.metrics.tariff_costs ≈ expected
+        assert_metrics_match_history(final_state)
+    end
+
+    @testset "expiry clears the origin-provenance bucket, not just the plain quantity" begin
+        # CN arrives period 1 and is never shipped; with maximum_age=1 it
+        # expires (written off) at the end of period 2, before DE arrives
+        # that same period. Period 3 then ships exactly DE's quantity. If
+        # on_hand_by_origin weren't cleared in lockstep with on_hand_inventory
+        # at expiry, the FIFO walk would still see (already-nonexistent) CN
+        # units sitting at the expired age and wrongly attribute the period 3
+        # shipment to CN's tariff rate instead of DE's - CN's rate here is
+        # deliberately 10x DE's, so that failure mode is unmistakable rather
+        # than a rounding-sized discrepancy.
+        product = Product("product")
+
+        supplier_cn = Supplier("supplier_cn", Location(0.0, 0.0; country="CN"))
+        add_product!(supplier_cn, product; unit_cost=7.0)
+        supplier_de = Supplier("supplier_de", Location(0.0, 0.0; country="DE"))
+        add_product!(supplier_de, product; unit_cost=9.0)
+        storage = Storage("storage", Location(0.0, 0.0; country="US"))
+        add_product!(storage, product; maximum_age=1)
+        customer = Customer("customer", Location(0.0, 0.0; country="MX"))
+
+        l_cn = Lane(supplier_cn, storage; unit_cost=0)
+        l_de = Lane(supplier_de, storage; unit_cost=0)
+        l_out = Lane(storage, customer; unit_cost=0)
+
+        horizon = 3
+        network = SupplyChain(horizon)
+        add_supplier!(network, supplier_cn)
+        add_supplier!(network, supplier_de)
+        add_storage!(network, storage)
+        add_customer!(network, customer)
+        add_product!(network, product)
+        add_lane!(network, l_cn)
+        add_lane!(network, l_de)
+        add_lane!(network, l_out)
+        add_demand!(network, customer, product, [0.0, 0.0, 20.0]; sales_price=1.0, lost_sales_cost=1.0)
+        add_tariff!(network, Tariff("CN", "MX", 0.50))
+        add_tariff!(network, Tariff("DE", "MX", 0.05))
+
+        policies = Dict((l_cn, product) => QuantityOrderingPolicy([30, 0, 0]),
+                         (l_de, product) => QuantityOrderingPolicy([0, 20, 0]))
+        final_state = simulate(network, policies)
+
+        expected = 0.05 * 9.0 * 20
+        @test get_total_tariff_costs(final_state) ≈ expected
+        @test final_state.metrics.tariff_costs ≈ expected
+    end
+
     @testset "SimMetrics vs history-scan equivalence, with tariffs, across horizons and policies" begin
         Random.seed!(101)
         for horizon in [1, 2, 8]

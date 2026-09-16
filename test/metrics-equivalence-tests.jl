@@ -18,6 +18,7 @@ function assert_metrics_match_history(final_state)
     @test metrics.trip_fixed_costs ≈ get_total_trip_fixed_costs(final_state)
     @test metrics.orders ≈ get_total_orders(final_state)
     @test metrics.demand ≈ get_total_demand(final_state)
+    @test metrics.tariff_costs ≈ get_total_tariff_costs(final_state)
 end
 
 @testset "SimMetrics vs history-scan equivalence" begin

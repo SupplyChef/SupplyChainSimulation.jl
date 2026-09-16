@@ -45,10 +45,15 @@ export get_total_sales
 export get_total_lost_sales
 export get_total_holding_costs
 export get_total_overflow_costs
+export get_total_tariff_costs
 export get_on_hand_inventory
 export get_overflow_inventory
 export remove_on_hand_inventory!
 export get_used_lanes
+
+export Tariff
+export add_tariff!
+export get_tariff_rate
 
 export get_trips
 

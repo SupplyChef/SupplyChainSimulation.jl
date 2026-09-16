@@ -21,6 +21,23 @@ mutable struct OrderLine
     due_date::Int64 # when
 
     trip::Union{Missing, Trip} # how (filled when shipping)
+
+    # Ad-valorem tariff cost charged against this order line at fill time (see
+    # record_fill!, Simulation.jl) - 0.0 unless the line's product is tariff-
+    # relevant. Defaulted so every existing 7-arg call site is unaffected;
+    # exists (rather than reading state.metrics.tariff_costs alone) so
+    # get_total_tariff_costs (Reporting.jl) can independently scan
+    # historical_filled_orders and cross-check state.metrics.tariff_costs, the
+    # same way every other cost bucket is cross-checked - see
+    # metrics-equivalence-tests.jl. Unlike trip_unit_cost (derivable purely
+    # from trip.route.unit_cost * quantity, static Lane data), a tariff's
+    # origin-country breakdown is a run-time-only fact - there's no static
+    # field to recompute it from after the fact - so it has to be captured here
+    # instead.
+    tariff_cost::Float64
+
+    OrderLine(creation_time, origin, destination, product, quantity, due_date, trip, tariff_cost=0.0) =
+        new(creation_time, origin, destination, product, quantity, due_date, trip, tariff_cost)
 end
 
 function get_inbound_trips(env, location, time)

@@ -118,6 +118,21 @@ function get_used_lanes(state)
 end
 
 """
+    get_total_tariff_costs(state)
+
+Gets the total ad-valorem tariff cost charged across every filled order line
+(see `record_fill!`/`_static_tariff_cost`/`_cohort_tariff_cost`, Simulation.jl).
+`0.0` for a supply chain with no `Tariff`s registered.
+"""
+function get_total_tariff_costs(state)
+    tariff_costs = 0.0
+    for filled_orders in state.historical_filled_orders
+        tariff_costs += sum(order_line.tariff_cost for order_line in filled_orders; init=0.0)
+    end
+    return tariff_costs
+end
+
+"""
     get_total_overflow_costs(state)
 
 Gets the total cost of inventory that exceeded a storage's maximum_units and had to be

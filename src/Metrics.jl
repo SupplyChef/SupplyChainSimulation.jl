@@ -38,14 +38,15 @@ mutable struct SimMetrics
     # Storage/Supplier, so a cost_function applies whatever backlog weight
     # fits its own convention, the same way metrics_cost_function applies its
     # own 0.001 weight to `orders` below.
-    # Customer-destined order lines are excluded unless Env.customer_backlog
-    # is true: with the default false, a customer order that can't be filled
-    # the same period it's created is dropped as a lost sale next period (see
-    # record_drop!/place_orders(..., ::Customer, ...)), never a genuine
-    # backlog, so counting it here even for the one snapshot before that drop
-    # fires would double up with lost_sales for no reason. When
-    # customer_backlog is true, customer orders queue like any other node's
-    # and are counted the same way (see snapshot_state!).
+    # Customer-destined order lines are excluded unless genuinely queued for
+    # stock (Env.customer_backlog=true, or a per-pair ResponseProfile
+    # sampling :wait - see snapshot_state!): otherwise a customer order that
+    # can't be filled the same period it's created is dropped as a lost sale
+    # next period (see record_drop!/place_orders(..., ::Customer, ...)),
+    # never a genuine backlog, so counting it here even for the one snapshot
+    # before that drop fires would double up with lost_sales for no reason.
+    # Once genuinely queued, customer orders count the same way as any other
+    # node's (see snapshot_state!).
     backlog::Float64
 
     # Boolean matrix indexed by [lane_index, departure_time] to track seen trips.

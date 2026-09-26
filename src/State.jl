@@ -109,6 +109,19 @@ mutable struct State
     # etc. via this same flat-indexing trick, just never applied here.
     demand::Matrix{Union{Nothing, Demand}}
 
+    # [location_index, product_index] -> whether this (customer, product)
+    # pair has permanently "defected" (see ResponseProfile's `defect_share`
+    # and `simulate`'s `response_profiles` keyword): once true,
+    # place_orders(..., ::Customer, ...) stops generating any further
+    # demand for it for the remainder of the run. False for every pair
+    # regardless of whether response_profiles is even in use - a plain
+    # Bool matrix (like every other flat-indexed field here) is cheap
+    # enough that it isn't worth gating on that. Reset to all-false by
+    # reset! along with every other mutable container here, so reusing a
+    # State across repeated simulate() calls (as optimize! does) never
+    # leaks a defection from one run into the next.
+    defected::Matrix{Bool}
+
     # Dense integer indices for every storage/product in supply_chain,
     # fixed for the lifetime of a State. Lets the on_hand_* fields below be
     # flat Matrix/Vector-of-Vector containers instead of Dicts keyed by
@@ -303,6 +316,7 @@ mutable struct State
 
         state = new(supply_chain,
                    demand,
+                   fill(false, nlocations, nproducts),
                    storage_index,
                    product_index,
                    storages,
@@ -361,6 +375,7 @@ Any order lines passed via the `pending_outbound_order_lines` keyword at
 construction time are a one-time seed and are not restored by `reset!`.
 """
 function reset!(state::State)
+    fill!(state.defected, false)
     for i in eachindex(state.on_hand_inventory)
         fill!(state.on_hand_inventory[i], 0)
         empty!(state.on_hand_ages_order[i])
@@ -842,7 +857,7 @@ function get_horizon(state::State)
 end
 
 """
-    snapshot_state!(state::State, time, record_history::Bool, customer_backlog::Bool)
+    snapshot_state!(state::State, time, record_history::Bool)
 
 Closes out period `time`: charges holding cost for everything currently on
 hand and backlog cost (raw units, see `SimMetrics.backlog`) for everything
@@ -857,15 +872,20 @@ on-hand inventory and the per-period Set handoffs - is skipped entirely, and
 `state.filled_orders`/`state.placed_orders` are just cleared in place for the
 next period instead of being swapped for fresh, permanently-retained Sets.
 
-`customer_backlog` must be passed the same value as the `Env` this state is
-being simulated under (see `Env.customer_backlog`): when `false` (the
-default), a Customer order still pending here is one period away from being
-dropped as a lost sale (see `place_orders(..., ::Customer, ...)`), not a
-genuine backlog, and is excluded from `SimMetrics.backlog` accordingly; when
-`true`, Customer orders queue like any other node's and are counted the same
-way.
+A Customer order line only counts toward `SimMetrics.backlog` once it's
+genuinely queued for stock rather than merely pending same-period
+fulfillment - i.e. `due_date != creation_time` (see `place_orders(...,
+::Customer, ...)`/`_resolve_unfilled_customer_order!`): under
+`Env.customer_backlog=true` that's every Customer order line from the
+moment it's created (`due_date` is `typemax(Int64)` from the start), and
+for a pair with a `ResponseProfile` sampling `:wait` it becomes true from
+the period that outcome is sampled onward. Every other still-pending
+Customer order line is one period away from becoming a lost sale, not a
+genuine backlog, and is excluded accordingly. Non-Customer order lines
+(internal replenishment) always count - they're never subject to any of
+this, see `place_orders(..., ::ConcreteNode, ...)`.
 """
-function snapshot_state!(state::State, time, record_history::Bool, customer_backlog::Bool)
+function snapshot_state!(state::State, time, record_history::Bool)
     # A fresh Dict is needed every period regardless of sizing (it's handed
     # to historical_on_hand below and must outlive this call, so it can't be
     # a buffer that's cleared and reused in place period over period). Not
@@ -916,13 +936,13 @@ function snapshot_state!(state::State, time, record_history::Bool, customer_back
     # still sitting there when a period closes out is exactly what's
     # genuinely still owed, no history needed. Always charged, regardless of
     # record_history, same as holding_costs above - see SimMetrics.backlog.
-    # Customer-destined order lines only count when customer_backlog is true
-    # (see this function's docstring and Env.customer_backlog) - otherwise a
-    # still-pending Customer order here is one period away from becoming a
-    # lost sale, not a genuine backlog.
+    # Customer-destined order lines only count once genuinely queued rather
+    # than merely pending same-period fulfillment (see this function's
+    # docstring) - otherwise a still-pending Customer order here is one
+    # period away from becoming a lost sale, not a genuine backlog.
     for pi in 1:size(state.pending_outbound_order_lines, 2), li in 1:size(state.pending_outbound_order_lines, 1)
         for ol in state.pending_outbound_order_lines[li, pi]
-            if customer_backlog || !isa(ol.destination, Customer)
+            if !isa(ol.destination, Customer) || ol.due_date != ol.creation_time
                 state.metrics.backlog += ol.quantity
             end
         end

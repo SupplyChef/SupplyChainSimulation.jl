@@ -40,6 +40,63 @@ mutable struct OrderLine
         new(creation_time, origin, destination, product, quantity, due_date, trip, tariff_cost)
 end
 
+"""
+    ResponseProfile(wait_share, substitute_share, buy_elsewhere_share, defect_share)
+
+Describes how a specific (customer, product) pair actually behaves when an
+order for that pair isn't filled the period it's created, replacing the
+network-wide `Env.customer_backlog` flag for just that pair (see
+`simulate`'s `response_profiles` keyword):
+
+  - `wait_share`: the order backlogs and waits for stock - the exact same
+    mechanism `customer_backlog=true` already uses (`due_date` extended to
+    `typemax(Int64)`), just applied per-pair instead of network-wide.
+  - `substitute_share` / `buy_elsewhere_share`: the order is lost this
+    period, identical to the default (`customer_backlog=false`) behavior.
+    This package has no product-substitution mapping anywhere in its data
+    model, so "substitute" and "buy elsewhere" are mechanically
+    indistinguishable here - both are simply a lost sale.
+  - `defect_share`: the order is lost this period, *and* this (customer,
+    product) pair's demand is permanently zeroed for the remainder of the
+    simulation run (no more orders are ever placed for it again).
+
+The outcome for a given unfilled order line is sampled from these shares
+exactly once, at the moment that line is first confirmed unfulfilled (see
+`Simulation.jl`). The four shares must be non-negative and sum to 1 (within
+`1e-6`).
+"""
+struct ResponseProfile
+    wait_share::Float64
+    substitute_share::Float64
+    buy_elsewhere_share::Float64
+    defect_share::Float64
+
+    function ResponseProfile(wait_share, substitute_share, buy_elsewhere_share, defect_share)
+        shares = (wait_share, substitute_share, buy_elsewhere_share, defect_share)
+        any(s -> s < 0, shares) && throw(ArgumentError("ResponseProfile shares must be non-negative, got $(shares)"))
+        isapprox(sum(shares), 1.0; atol=1e-6) || throw(ArgumentError("ResponseProfile shares must sum to 1, got $(sum(shares))"))
+        return new(wait_share, substitute_share, buy_elsewhere_share, defect_share)
+    end
+end
+
+"""
+    _sample_outcome(profile::ResponseProfile)::Symbol
+
+Samples one of `:wait`, `:substitute`, `:buy_elsewhere`, `:defect` from
+`profile`'s four shares. Falls through to `:defect` once every prior share
+has been consumed, so floating-point rounding of a sum that's only
+guaranteed to be `1 ± 1e-6` can never leave a probability gap unresolved.
+"""
+@inline function _sample_outcome(profile::ResponseProfile)::Symbol
+    r = rand()
+    r < profile.wait_share && return :wait
+    r -= profile.wait_share
+    r < profile.substitute_share && return :substitute
+    r -= profile.substitute_share
+    r < profile.buy_elsewhere_share && return :buy_elsewhere
+    return :defect
+end
+
 function get_inbound_trips(env, location, time)
     return env.departures[location][time]
 end

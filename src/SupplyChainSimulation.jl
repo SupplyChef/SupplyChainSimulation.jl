@@ -2,6 +2,7 @@ module SupplyChainSimulation
 
 export Product
 export OrderLine
+export ResponseProfile
 
 export State
 export reset!

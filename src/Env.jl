@@ -81,10 +81,23 @@ struct Env
     # at a per-period cost until it's eventually filled, never a permanent
     # miss. Defaults to false so every existing caller/test - which asserts
     # exact lost-sale counts under the same-day-expiry convention - is
-    # unaffected.
+    # unaffected. Only applies to a (customer, product) pair with no entry in
+    # response_profiles below - a pair with one has its own fate decided
+    # per-order instead, regardless of this flag.
     customer_backlog::Bool
 
-    function Env(supplychain::SupplyChain, initial_states, policies; record_history::Bool=true, customer_backlog::Bool=false)
+    # Per-(customer, product) override of customer_backlog above (see
+    # ResponseProfile/simulate's response_profiles keyword): a pair with an
+    # entry here has its unfilled orders resolved by sampling this profile
+    # instead of following customer_backlog, regardless of customer_backlog's
+    # value. A pair absent from this Dict (including every pair when this
+    # whole Dict is empty, its default) falls back to customer_backlog
+    # exactly as before - so an existing caller that never passes
+    # response_profiles gets byte-for-byte the same behavior as today, just
+    # like customer_backlog's own default of false.
+    response_profiles::Dict{Tuple{Customer, Product}, ResponseProfile}
+
+    function Env(supplychain::SupplyChain, initial_states, policies; record_history::Bool=true, customer_backlog::Bool=false, response_profiles::Dict{Tuple{Customer, Product}, ResponseProfile}=Dict{Tuple{Customer, Product}, ResponseProfile}())
         trips = get_trips(supplychain, policies)
         locations = get_locations(supplychain)
 
@@ -203,7 +216,8 @@ struct Env
                    record_history,
                    any(p -> required_lookback(p) > 0, values(policies)),
                    past_orders_buffers,
-                   customer_backlog)
+                   customer_backlog,
+                   response_profiles)
     end
 end
 

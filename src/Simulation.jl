@@ -251,6 +251,49 @@ function record_placement!(state::State, env::Env, order_line::OrderLine, pi::In
     end
 end
 
+"""
+    _resolve_unfilled_customer_order!(state, env, order_line, pi)
+
+Called exactly once for a Customer-destined `order_line` at the moment it's
+first confirmed unfulfilled (`order_line.due_date < time`, about to be
+dropped as a lost sale) - see the two `send_inventory!` methods below. If
+`order_line`'s (customer, product) pair has a `ResponseProfile` (see
+`Env.response_profiles`), samples its outcome and applies it:
+
+  - `:wait` - extends `order_line.due_date` to `typemax(Int64)`, the exact
+    same mechanism `customer_backlog=true` already uses, so the caller's
+    subsequent `due_date < time` re-check (done immediately after this call
+    returns) sees it as no longer due and gives it this same period's
+    fulfillment attempt instead of dropping it - matching how a genuinely
+    network-wide-backlogged order is treated from its very first period.
+  - `:defect` - marks the pair permanently defected in `state.defected` (see
+    its field doc) - `place_orders(..., ::Customer, ...)` stops generating
+    demand for it from here on - and leaves `due_date` untouched, so the
+    caller still drops this order line as a lost sale.
+  - `:substitute`/`:buy_elsewhere` - leaves `due_date` untouched: mechanically
+    identical to the no-profile default (this package has no
+    product-substitution mapping to act on - see `ResponseProfile`'s
+    docstring).
+
+A no-op (returns immediately) for a non-Customer destination or a pair with
+no profile - `order_line.due_date` decides the outcome exactly as before in
+either case, since it was set following `Env.customer_backlog` alone at
+`place_orders` time.
+"""
+@inline function _resolve_unfilled_customer_order!(state::State, env::Env, order_line::OrderLine, pi::Int64)
+    order_line.destination isa Customer || return
+    profile = get(env.response_profiles, (order_line.destination::Customer, order_line.product), nothing)
+    isnothing(profile) && return
+
+    outcome = _sample_outcome(profile)
+    if outcome === :wait
+        order_line.due_date = typemax(Int64)
+    elseif outcome === :defect
+        state.defected[state.location_index[order_line.destination], pi] = true
+    end
+    return
+end
+
 # Send inventory
 #
 # Both top-level send_inventory! methods below (Supplier and ConcreteNode)
@@ -282,6 +325,10 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
     write_idx = 0
     for order_line in order_lines
         removed = false
+
+        if order_line.due_date < time
+            _resolve_unfilled_customer_order!(state, env, order_line, pi)
+        end
 
         if order_line.due_date < time
             record_drop!(state, order_line, pi)
@@ -352,6 +399,10 @@ function send_inventory!(state::State, env::Env, location::ConcreteNode, product
         order_line = order_lines[i]
         removed = false
         should_break = false
+
+        if order_line.due_date < time
+            _resolve_unfilled_customer_order!(state, env, order_line, pi)
+        end
 
         if order_line.due_date < time
             record_drop!(state, order_line, pi)
@@ -427,6 +478,13 @@ end
 # state.demand, since location *is* the demand's customer in this method.
 function place_orders(state::State, env::Env, location::Customer, product::Product, li::Int64, si::Int64, pi::Int64, time::Int64, orders::Array{OrderLine, 1})
     empty!(orders)
+    # A defected pair (see ResponseProfile's defect_share) never places
+    # another order for the remainder of the run - state.defected starts
+    # all-false and this branch is never taken when response_profiles is
+    # empty (its default), so an existing caller is unaffected.
+    if state.defected[li, pi]
+        return
+    end
     demand = state.demand[li, pi]
     quantity = floor(Int64, demand.demand[time])
     if quantity > 0
@@ -436,8 +494,12 @@ function place_orders(state::State, env::Env, location::Customer, product::Produ
             # opts into letting them queue like every other node's
             # replenishment orders (due_date = typemax(Int64)) instead of
             # being dropped as a lost sale the same period - see
-            # Env.customer_backlog's docstring.
-            due_date = env.customer_backlog ? typemax(Int64) : time
+            # Env.customer_backlog's docstring. A pair with a response
+            # profile always starts due immediately regardless of
+            # customer_backlog: its actual fate (wait/lost/defect) is
+            # decided later, once the order is confirmed unfilled - see
+            # _resolve_unfilled_customer_order! below.
+            due_date = haskey(env.response_profiles, (location, product)) ? time : (env.customer_backlog ? typemax(Int64) : time)
             order = OrderLine(time, trip.route.origin, location, product, quantity, due_date, missing)
             #@debug "Ordered at $time, $location, $product, $quantity"
             push!(orders, order)
@@ -527,9 +589,20 @@ function receive_order!(state::State, env::Env, order::OrderLine)
 end
 
 # Simulate
-function simulate(supplychain::SupplyChain, policies::Dict{Tuple{Lane, Product}, <:InventoryOrderingPolicy}; customer_backlog::Bool=false)
+"""
+    simulate(supplychain, policies; customer_backlog=false, response_profiles=Dict())
+
+`response_profiles` maps a `(Customer, Product)` pair to a `ResponseProfile`
+describing what that specific pair actually does when its order can't be
+filled the period it's created - see `ResponseProfile`'s docstring. A pair
+with no entry here behaves exactly as `customer_backlog` alone dictates,
+unaffected by `response_profiles` being passed at all; this defaults to an
+empty `Dict`, so an existing call with just `customer_backlog` (or neither
+keyword) is completely unaffected by this argument's existence.
+"""
+function simulate(supplychain::SupplyChain, policies::Dict{Tuple{Lane, Product}, <:InventoryOrderingPolicy}; customer_backlog::Bool=false, response_profiles::Dict{Tuple{Customer, Product}, ResponseProfile}=Dict{Tuple{Customer, Product}, ResponseProfile}())
     initial_state = State(supplychain)
-    return simulate(Env(supplychain, [initial_state], policies; customer_backlog=customer_backlog), policies, initial_state)
+    return simulate(Env(supplychain, [initial_state], policies; customer_backlog=customer_backlog, response_profiles=response_profiles), policies, initial_state)
 end
 
 """
@@ -548,7 +621,7 @@ function simulate(env::Env, policies, initial_state)
     orders = OrderLine[]
 
     state = initial_state
-    snapshot_state!(state, 0, env.record_history, env.customer_backlog)
+    snapshot_state!(state, 0, env.record_history)
 
     # env.sorted_locations never changes across periods, so reverse it once
     # instead of allocating a fresh reversed copy every period.
@@ -660,7 +733,7 @@ function simulate(env::Env, policies, initial_state)
             end
         end
 
-        snapshot_state!(state, time, env.record_history, env.customer_backlog)
+        snapshot_state!(state, time, env.record_history)
     end
 
     flush_pending_as_lost!(state)

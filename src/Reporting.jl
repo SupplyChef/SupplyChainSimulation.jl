@@ -133,6 +133,24 @@ function get_total_tariff_costs(state)
 end
 
 """
+    get_total_purchase_costs(state)
+
+Gets the total purchase cost of every order placed: quantity times the origin
+`Supplier`'s (or `Plant`'s) `unit_cost` for the product (see `record_purchase!`,
+Simulation.jl). Accrued at order placement, so it includes stock not yet
+received or sold at the horizon's end.
+"""
+function get_total_purchase_costs(state)
+    purchase_costs = 0.0
+    for o in Base.Iterators.flatten(state.historical_orders)
+        if o.origin isa Supplier || o.origin isa Plant
+            purchase_costs += o.quantity * get(o.origin.unit_cost, o.product, 0.0)
+        end
+    end
+    return purchase_costs
+end
+
+"""
     get_total_overflow_costs(state)
 
 Gets the total cost of inventory that exceeded a storage's maximum_units and had to be

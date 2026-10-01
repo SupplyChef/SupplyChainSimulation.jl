@@ -24,6 +24,22 @@ against a pre-existing baseline.
 """
 metrics_cost_function(s) = -s.metrics.sales + s.metrics.lost_sales + s.metrics.holding_costs + s.metrics.trip_fixed_costs + s.metrics.trip_unit_costs + s.metrics.tariff_costs + 0.001 * s.metrics.orders
 
+"""
+    profit_cost_function(s::State)
+
+Opt-in alternative to `metrics_cost_function` that also charges purchase cost
+(`s.metrics.purchase_costs`, accrued at order placement). `metrics_cost_function`
+and `optimize!`'s default leave it out - buying stock is then free apart from
+freight and holding cost - and stay unchanged so existing results are reproducible.
+
+Caveats: purchases are charged when ordered, but stock still on hand or in transit
+at the horizon's end earns no revenue, so this over-penalizes late ordering (a
+terminal-inventory credit is not included); and `lost_sales` is kept as a penalty
+term, which double-counts forgone revenue if it is already a margin. This is a
+cost-based objective, not a cash measure.
+"""
+profit_cost_function(s) = metrics_cost_function(s) + s.metrics.purchase_costs
+
 function minimize!(lane_policies, policies, envs::Array{Env, 1}, initial_states::Array{State, 1}, x::AbstractVector{Float64}; cost_function)
     i = 1
     for policy in policies

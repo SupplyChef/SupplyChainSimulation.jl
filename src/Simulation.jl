@@ -251,6 +251,23 @@ function record_placement!(state::State, env::Env, order_line::OrderLine, pi::In
     end
 end
 
+"""
+    record_purchase!(state::State, order_line::OrderLine)
+
+Accrues `order_line`'s purchase cost into `state.metrics.purchase_costs`:
+`quantity` times the origin's own `unit_cost` for the product (a `Supplier`'s
+purchase cost or a `Plant`'s production cost - the same figure tariffs use as
+declared value). Origins with no `unit_cost` for the product (e.g. a `Storage`)
+accrue nothing. Must be called exactly once per order line, at the
+`push!(state.placed_orders, order)` site of `place_orders(..., ::ConcreteNode, ...)`.
+"""
+function record_purchase!(state::State, order_line::OrderLine)
+    origin = order_line.origin
+    if origin isa Supplier || origin isa Plant
+        state.metrics.purchase_costs += order_line.quantity * get(origin.unit_cost, order_line.product, 0.0)
+    end
+end
+
 # Send inventory
 #
 # Both top-level send_inventory! methods below (Supplier and ConcreteNode)
@@ -504,6 +521,7 @@ function place_orders(state::State, env::Env, location::ConcreteNode, product::P
                 push!(orders, order)
                 push!(state.placed_orders, order)
                 record_placement!(state, env, order, pi)
+                record_purchase!(state, order)
                 state.metrics.orders += quantity
             end
         end

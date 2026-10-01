@@ -29,6 +29,7 @@ export simulate
 export optimize!
 export sensitivity_analysis
 export metrics_cost_function
+export profit_cost_function
 
 export get_sorted_locations
 export get_inbound_orders
@@ -46,6 +47,7 @@ export get_total_lost_sales
 export get_total_holding_costs
 export get_total_overflow_costs
 export get_total_tariff_costs
+export get_total_purchase_costs
 export get_on_hand_inventory
 export get_overflow_inventory
 export remove_on_hand_inventory!

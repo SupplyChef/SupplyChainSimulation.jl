@@ -30,6 +30,14 @@ mutable struct SimMetrics
     # State.jl). Always 0.0 for a supply chain with no Tariffs registered.
     tariff_costs::Float64
 
+    # Purchase/production cost accrued at order placement (see
+    # record_purchase!, Simulation.jl): quantity * the order's origin
+    # Supplier/Plant `unit_cost` for the product. Accrued when the order is
+    # placed, not when it is received or sold, so it also charges stock
+    # still on hand or in transit at the horizon's end. Not part of
+    # metrics_cost_function (see profit_cost_function).
+    purchase_costs::Float64
+
     # Sum, across every period closed out so far, of every location's
     # currently-outstanding order-line quantity (see snapshot_state!, which
     # charges this the same way it charges holding_costs). Raw units, not
@@ -52,8 +60,8 @@ mutable struct SimMetrics
     # Completely avoids Set{Trip} allocation and hashing overhead on the hot path.
     seen_trips::Matrix{Bool}
 
-    SimMetrics() = new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Matrix{Bool}(undef, 0, 0))
-    SimMetrics(num_lanes::Int, horizon::Int) = new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, zeros(Bool, num_lanes, horizon))
+    SimMetrics() = new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Matrix{Bool}(undef, 0, 0))
+    SimMetrics(num_lanes::Int, horizon::Int) = new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, zeros(Bool, num_lanes, horizon))
 end
 
 function reset!(metrics::SimMetrics)
@@ -66,6 +74,7 @@ function reset!(metrics::SimMetrics)
     metrics.orders = 0.0
     metrics.demand = 0.0
     metrics.tariff_costs = 0.0
+    metrics.purchase_costs = 0.0
     metrics.backlog = 0.0
     fill!(metrics.seen_trips, false)
     return metrics

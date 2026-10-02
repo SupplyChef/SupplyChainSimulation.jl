@@ -26,6 +26,7 @@ export set_parameters!
 export get_parameters
 export get_downstream_customers
 export simulate
+export recommend_orders
 export optimize!
 export sensitivity_analysis
 export metrics_cost_function
@@ -86,6 +87,7 @@ include("Policy.jl")
 include("Optimization.jl")
 include("Reporting.jl")
 include("Simulation.jl")
+include("Recommend.jl")
 include("Visualization.jl")
 
 # EOQ

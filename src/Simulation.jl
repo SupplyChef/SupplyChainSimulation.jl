@@ -512,9 +512,27 @@ function place_orders(state::State, env::Env, location::ConcreteNode, product::P
                 Int(get_order(policy, state, env, location, trip.route, product, li, si, pi, time))
             end
             if quantity > 0
+                # Ordering constraints: the lane's minimum_quantity applies to
+                # every product; a Supplier origin can add a per-product
+                # minimum_order_quantity (the larger of the two binds) and an
+                # order_multiple (case pack). Round up to the multiple first,
+                # then lift to the minimum - itself rounded up to the multiple,
+                # so the result satisfies both.
                 minimum_quantity = trip.route.minimum_quantity
+                multiple = 1
+                origin = trip.route.origin
+                if origin isa Supplier
+                    minimum_quantity = max(minimum_quantity, get_minimum_order_quantity(origin::Supplier, product))
+                    multiple = Int(get_order_multiple(origin::Supplier, product))
+                end
+                if multiple > 1
+                    quantity = cld(quantity, multiple) * multiple
+                end
                 if minimum_quantity > 0 && quantity < minimum_quantity
                     quantity = Int(ceil(minimum_quantity))
+                    if multiple > 1
+                        quantity = cld(quantity, multiple) * multiple
+                    end
                 end
                 order = OrderLine(time, trip.route.origin, location, product, quantity, typemax(Int64), trip)
 

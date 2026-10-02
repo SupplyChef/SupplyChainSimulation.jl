@@ -99,4 +99,37 @@
         placed = collect(Base.Iterators.flatten(final_state.historical_orders))
         length(placed) == 0
     end
+    # Per-product MOQ and order multiple on a Supplier's add_product!.
+    # `policy_order` is what the policy asks for (on-hand starts at 0).
+    function supplier_order_quantity(policy_order; lane_moq=0, moq=0, multiple=1)
+        product = Product("product")
+        customer = Customer("c")
+        storage = Storage("s")
+        add_product!(storage, product)
+        supplier = Supplier("supplier")
+        add_product!(supplier, product; unit_cost=0, minimum_order_quantity=moq, order_multiple=multiple)
+        l = Lane(storage, customer; unit_cost=0)
+        l2 = Lane(supplier, storage; unit_cost=0, minimum_quantity=lane_moq)
+        network = SupplyChain(1)
+        add_supplier!(network, supplier)
+        add_storage!(network, storage)
+        add_customer!(network, customer)
+        add_product!(network, product)
+        add_lane!(network, l)
+        add_lane!(network, l2)
+        add_demand!(network, customer, product, [0.0]; sales_price=1.0, lost_sales_cost=1.0)
+        final_state = simulate(network, Dict((l2, product) => OnHandUptoOrderingPolicy(policy_order)))
+        placed = collect(Base.Iterators.flatten(final_state.historical_orders))
+        isempty(placed) ? 0 : only(placed).quantity
+    end
+
+    @test supplier_order_quantity(5; moq=20) == 20                 # SKU MOQ lifts a small order
+    @test supplier_order_quantity(30; moq=20) == 30                # above MOQ: untouched
+    @test supplier_order_quantity(30; multiple=12) == 36           # case pack rounds up
+    @test supplier_order_quantity(36; multiple=12) == 36           # already a multiple
+    @test supplier_order_quantity(5; moq=25, multiple=12) == 36    # MOQ itself rounded up to a multiple
+    @test supplier_order_quantity(5; lane_moq=20, moq=30) == 30    # larger of lane and SKU MOQ binds
+    @test supplier_order_quantity(5; lane_moq=40, moq=30) == 40
+    @test supplier_order_quantity(5; lane_moq=20, multiple=12) == 24
+    @test supplier_order_quantity(0; moq=20, multiple=12) == 0     # zero stays zero
 end

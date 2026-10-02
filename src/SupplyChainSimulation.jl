@@ -7,6 +7,10 @@ export State
 export reset!
 
 export Env
+export TopUpRule
+export ProportionalTopUp
+export LargestOrderTopUp
+export top_up!
 
 export SimMetrics
 export get_metrics
@@ -79,6 +83,7 @@ using SupplyChainModeling
 abstract type InventoryOrderingPolicy end
 
 include("Model.jl")
+include("TopUp.jl")
 include("Metrics.jl")
 include("State.jl")
 include("Env.jl")

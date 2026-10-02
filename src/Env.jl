@@ -84,7 +84,12 @@ struct Env
     # unaffected.
     customer_backlog::Bool
 
-    function Env(supplychain::SupplyChain, initial_states, policies; record_history::Bool=true, customer_backlog::Bool=false)
+    # How a lane's total minimum_quantity is reached when the products
+    # ordered on it fall short (see TopUpRule). Only consulted on lanes
+    # with a minimum, so its abstract type costs nothing elsewhere.
+    top_up_rule::TopUpRule
+
+    function Env(supplychain::SupplyChain, initial_states, policies; record_history::Bool=true, customer_backlog::Bool=false, top_up_rule::TopUpRule=ProportionalTopUp())
         trips = get_trips(supplychain, policies)
         locations = get_locations(supplychain)
 
@@ -203,7 +208,8 @@ struct Env
                    record_history,
                    any(p -> required_lookback(p) > 0, values(policies)),
                    past_orders_buffers,
-                   customer_backlog)
+                   customer_backlog,
+                   top_up_rule)
     end
 end
 

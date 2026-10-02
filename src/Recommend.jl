@@ -1,5 +1,5 @@
 """
-    recommend_orders(supplychain::SupplyChain, policies; time::Int=1, customer_backlog::Bool=false)
+    recommend_orders(supplychain::SupplyChain, policies; time::Int=1, customer_backlog::Bool=false, top_up_rule::TopUpRule=ProportionalTopUp())
 
 What to order now: the quantities `policies` place on each `(lane, product)` at
 period `time` of `supplychain`, as a `Dict{Tuple{Lane, Product}, Int64}` (only
@@ -30,7 +30,7 @@ Policies that read past orders (`required_lookback(policy) > 0`, e.g.
 no real order history to feed them, so their recommendation would be wrong.
 `supplychain` and `policies` are not modified.
 """
-function recommend_orders(supplychain::SupplyChain, policies::Dict{Tuple{Lane, Product}, <:InventoryOrderingPolicy}; time::Int=1, customer_backlog::Bool=false)
+function recommend_orders(supplychain::SupplyChain, policies::Dict{Tuple{Lane, Product}, <:InventoryOrderingPolicy}; time::Int=1, customer_backlog::Bool=false, top_up_rule::TopUpRule=ProportionalTopUp())
     if time < 1 || time > supplychain.horizon
         throw(ArgumentError("time must be between 1 and the supply chain's horizon ($(supplychain.horizon)), got $time"))
     end
@@ -40,7 +40,7 @@ function recommend_orders(supplychain::SupplyChain, policies::Dict{Tuple{Lane, P
         end
     end
 
-    final_state = simulate(supplychain, policies; customer_backlog=customer_backlog)
+    final_state = simulate(supplychain, policies; customer_backlog=customer_backlog, top_up_rule=top_up_rule)
 
     recommended = Dict{Tuple{Lane, Product}, Int64}()
     for order in Base.Iterators.flatten(final_state.historical_orders)

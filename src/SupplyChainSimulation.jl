@@ -38,6 +38,7 @@ export optimize!
 export sensitivity_analysis
 export metrics_cost_function
 export profit_cost_function
+export cash_cost_function
 
 export get_sorted_locations
 export get_inbound_orders
@@ -56,11 +57,18 @@ export get_total_holding_costs
 export get_total_overflow_costs
 export get_total_tariff_costs
 export get_total_purchase_costs
+export get_total_capital_costs
+export get_peak_cash_outlay
+export get_cash_out
+export get_cash_in
 export get_on_hand_inventory
 export get_overflow_inventory
 export remove_on_hand_inventory!
 export get_used_lanes
 
+export PaymentTerms
+export get_payment_terms
+export set_payment_terms!
 export Tariff
 export add_tariff!
 export get_tariff_rate

@@ -89,7 +89,7 @@ end
 
 # Metrics: fill/drop sites
 """
-    record_fill!(state::State, env::Env, order_line::OrderLine, pi::Int64, tariff_cost::Float64=0.0)
+    record_fill!(state::State, env::Env, order_line::OrderLine, pi::Int64, tariff_cost::Float64, time::Int)
 
 Incrementally updates `state.metrics` for an `order_line` that has just been
 fulfilled (its trip has been assigned and the shipment sent), and, if
@@ -113,19 +113,28 @@ run-time-only fact with no static field to recompute it from.
 Must be called exactly once per fulfilled order line - matches the site of
 each `push!(state.filled_orders, order_line)` in `send_inventory!`.
 """
-function record_fill!(state::State, env::Env, order_line::OrderLine, pi::Int64, tariff_cost::Float64=0.0)
+function record_fill!(state::State, env::Env, order_line::OrderLine, pi::Int64, tariff_cost::Float64, time::Int)
     trip = order_line.trip
     metrics = state.metrics
 
-    metrics.trip_unit_costs += trip.route.unit_cost * order_line.quantity
+    freight = trip.route.unit_cost * order_line.quantity
+    metrics.trip_unit_costs += freight
     if !metrics.seen_trips[trip.lane_index, trip.departure]
         metrics.seen_trips[trip.lane_index, trip.departure] = true
-        metrics.trip_fixed_costs += get_fixed_cost(trip.route)
+        fixed = get_fixed_cost(trip.route)
+        metrics.trip_fixed_costs += fixed
+        freight += fixed
     end
+    sales = 0.0
     if order_line.destination isa Customer
-        metrics.sales += order_line.quantity * state.demand[state.location_index[order_line.destination], pi].sales_price
+        sales = order_line.quantity * state.demand[state.location_index[order_line.destination], pi].sales_price
+        metrics.sales += sales
     end
     metrics.tariff_costs += tariff_cost
+    # Freight and tariffs are paid, and sales received, at shipment; a supplier's
+    # balance falls due relative to it (see record_purchase!).
+    _add_cash!(metrics, time, freight + tariff_cost, sales)
+    record_balance_payment!(state, order_line, time)
     order_line.tariff_cost = tariff_cost
 
     if env.record_history
@@ -268,7 +277,32 @@ accrue nothing. Must be called exactly once per order line, at the
 function record_purchase!(state::State, order_line::OrderLine)
     origin = order_line.origin
     if origin isa Supplier || origin isa Plant
-        state.metrics.purchase_costs += order_line.quantity * get(origin.unit_cost, order_line.product, 0.0)
+        value = order_line.quantity * get(origin.unit_cost, order_line.product, 0.0)
+        state.metrics.purchase_costs += value
+        # Cash: a Supplier is paid its deposit now and its balance at shipment (see
+        # record_balance_payment!); a Plant is paid in full now.
+        deposit_share = origin isa Supplier ? get_payment_terms(origin).deposit_share : 1.0
+        _add_cash!(state.metrics, Int(order_line.creation_time), deposit_share * value)
+    end
+end
+
+"""
+    record_balance_payment!(state::State, order_line::OrderLine, time::Int)
+
+Records the cash paid for the balance (the part of the order's value not paid as the deposit, see
+`PaymentTerms`) of an `order_line` shipped from its `Supplier` at `time`. It is dated `balance_offset`
+periods from `time`, but never before the order was placed. A balance that falls due after the horizon is
+not part of the cash curve. A no-op for any other origin: a `Plant`'s order was paid in full when placed.
+Called once per fulfilled order line, by `record_fill!`.
+"""
+function record_balance_payment!(state::State, order_line::OrderLine, time::Int)
+    origin = order_line.origin
+    if origin isa Supplier
+        terms = get_payment_terms(origin)
+        if terms.deposit_share < 1.0
+            balance = (1.0 - terms.deposit_share) * order_line.quantity * get(origin.unit_cost, order_line.product, 0.0)
+            _add_cash!(state.metrics, max(time + terms.balance_offset, Int(order_line.creation_time)), balance)
+        end
     end
 end
 
@@ -327,7 +361,7 @@ function send_inventory!(state::State, env::Env, location::Supplier, product::Pr
                 send_inventory!(state, env, order_line.trip, order_line.destination, order_line.product, order_line.quantity, time; by_origin=by_origin)
 
                 _delete_inbound_order_line_by_index!(state, order_line, pi)
-                record_fill!(state, env, order_line, pi, tariff_cost)
+                record_fill!(state, env, order_line, pi, tariff_cost, time)
                 push!(state.filled_orders, order_line)
                 removed = true
             end
@@ -400,7 +434,7 @@ function send_inventory!(state::State, env::Env, location::ConcreteNode, product
                 available -= order_line.quantity
 
                 _delete_inbound_order_line_by_index!(state, order_line, pi)
-                record_fill!(state, env, order_line, pi, tariff_cost)
+                record_fill!(state, env, order_line, pi, tariff_cost, time)
                 push!(state.filled_orders, order_line)
                 removed = true
 
@@ -746,6 +780,7 @@ function simulate(env::Env, policies, initial_state)
     end
 
     flush_pending_as_lost!(state)
+    finalize_cash!(state.metrics, env.supplychain.cost_of_capital)
 
     return state
 end

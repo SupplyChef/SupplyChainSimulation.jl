@@ -40,6 +40,32 @@ cost-based objective, not a cash measure.
 """
 profit_cost_function(s) = metrics_cost_function(s) + s.metrics.purchase_costs
 
+"""
+    cash_cost_function(; budget=nothing, penalty=1.0)
+
+Builds a cost function (to pass as `cost_function`) that adds cash to `profit_cost_function`:
+
+    profit_cost_function(s) + s.metrics.capital_costs + penalty * max(0, s.metrics.peak_cash_outlay - budget)
+
+ - `capital_costs` is the cost of financing the net cash position, from `SupplyChain.cost_of_capital`;
+   0 when that is 0.
+ - `peak_cash_outlay` is the highest cumulative *net* cash out in any period: purchases (paid per each
+   supplier's `PaymentTerms`), freight and tariffs paid out, minus sales received. Holding and overflow
+   costs are not cash. See `SimMetrics`.
+ - `budget` is the most cash that may be tied up; each unit of cash above it costs `penalty`. It defaults to
+   the supply chain's own `cash_budget` (`Inf`, no budget term, unless set), the same limit the optimization
+   model enforces.
+
+The penalty is applied to every simulated scenario, so across scenarios it limits the average excess, not
+the chance of exceeding the budget. Reads `state.metrics` only, so it works with `record_history=false`.
+"""
+function cash_cost_function(; budget::Union{Nothing, Real}=nothing, penalty::Real=1.0)
+    return function (s)
+        limit = isnothing(budget) ? s.supply_chain.cash_budget : budget
+        return profit_cost_function(s) + s.metrics.capital_costs + penalty * max(0.0, s.metrics.peak_cash_outlay - limit)
+    end
+end
+
 function minimize!(lane_policies, policies, envs::Array{Env, 1}, initial_states::Array{State, 1}, x::AbstractVector{Float64}; cost_function)
     i = 1
     for policy in policies

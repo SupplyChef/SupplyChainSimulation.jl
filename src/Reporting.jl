@@ -163,3 +163,32 @@ function get_total_overflow_costs(state)
     end
     return overflow_costs
 end
+
+"""
+    get_total_capital_costs(state)
+
+Gets the cost of capital of the run: `SupplyChain.cost_of_capital` times the money tied up, summed over
+periods (see `SimMetrics.capital_costs`).
+"""
+get_total_capital_costs(state) = state.metrics.capital_costs
+
+"""
+    get_peak_cash_outlay(state)
+
+Gets the highest cumulative net cash out reached in any period of the run (see `SimMetrics.peak_cash_outlay`).
+"""
+get_peak_cash_outlay(state) = state.metrics.peak_cash_outlay
+
+"""
+    get_cash_out(state)::Vector{Float64}
+
+Gets the cash paid out in each period: purchases per the suppliers' payment terms, plus freight and tariffs.
+"""
+get_cash_out(state) = copy(state.metrics.cash_out)
+
+"""
+    get_cash_in(state)::Vector{Float64}
+
+Gets the cash received in each period: sales, at shipment to the customer.
+"""
+get_cash_in(state) = copy(state.metrics.cash_in)

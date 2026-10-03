@@ -31,6 +31,9 @@ export get_parameters
 export get_downstream_customers
 export simulate
 export recommend_orders
+export sample_scenarios
+export iid_lead_times
+export constant_lead_time
 export optimize!
 export sensitivity_analysis
 export metrics_cost_function
@@ -77,6 +80,7 @@ import CMAEvolutionStrategy
 import Distributions
 import LinearAlgebra
 import Optim
+import Random
 import Surrogates
 using SupplyChainModeling
 
@@ -93,6 +97,7 @@ include("Optimization.jl")
 include("Reporting.jl")
 include("Simulation.jl")
 include("Recommend.jl")
+include("Scenarios.jl")
 include("Visualization.jl")
 
 # EOQ

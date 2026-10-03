@@ -67,10 +67,14 @@ end
 
 # Send inventory (detailed)
 function send_inventory!(state::State, env::Env, trip::Trip, destination, product, quantity, time; by_origin::Union{Nothing, Vector{Int64}}=nothing)
-    if time + get_leadtime(trip.route, destination) > get_horizon(state)
+    # The lead time of a shipment departing now: the lane's realized
+    # lead_times entry for this period if it has any, else its nominal time
+    # (see Lane.lead_times).
+    leadtime = get_leadtime(trip.route, destination, Int64(time))
+    if time + leadtime > get_horizon(state)
         return
     end
-    arrival = time + get_leadtime(trip.route, destination)
+    arrival = time + leadtime
     add_in_transit_inventory!(state, destination, product, arrival, quantity)
     if !isnothing(by_origin)
         li = state.location_index[destination]

@@ -7,6 +7,10 @@ export State
 export reset!
 
 export Env
+export TopUpRule
+export ProportionalTopUp
+export LargestOrderTopUp
+export top_up!
 
 export SimMetrics
 export get_metrics
@@ -27,6 +31,9 @@ export get_parameters
 export get_downstream_customers
 export simulate
 export recommend_orders
+export sample_scenarios
+export iid_lead_times
+export constant_lead_time
 export optimize!
 export sensitivity_analysis
 export metrics_cost_function
@@ -73,12 +80,14 @@ import CMAEvolutionStrategy
 import Distributions
 import LinearAlgebra
 import Optim
+import Random
 import Surrogates
 using SupplyChainModeling
 
 abstract type InventoryOrderingPolicy end
 
 include("Model.jl")
+include("TopUp.jl")
 include("Metrics.jl")
 include("State.jl")
 include("Env.jl")
@@ -88,6 +97,7 @@ include("Optimization.jl")
 include("Reporting.jl")
 include("Simulation.jl")
 include("Recommend.jl")
+include("Scenarios.jl")
 include("Visualization.jl")
 
 # EOQ

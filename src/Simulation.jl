@@ -67,10 +67,14 @@ end
 
 # Send inventory (detailed)
 function send_inventory!(state::State, env::Env, trip::Trip, destination, product, quantity, time; by_origin::Union{Nothing, Vector{Int64}}=nothing)
-    if time + get_leadtime(trip.route, destination) > get_horizon(state)
+    # The lead time of a shipment departing now: the lane's realized
+    # lead_times entry for this period if it has any, else its nominal time
+    # (see Lane.lead_times).
+    leadtime = get_leadtime(trip.route, destination, Int64(time))
+    if time + leadtime > get_horizon(state)
         return
     end
-    arrival = time + get_leadtime(trip.route, destination)
+    arrival = time + leadtime
     add_in_transit_inventory!(state, destination, product, arrival, quantity)
     if !isnothing(by_origin)
         li = state.location_index[destination]
@@ -471,7 +475,7 @@ function place_orders(state::State, env::Env, location::Customer, product::Produ
     end
 end
 
-function place_orders(state::State, env::Env, location::ConcreteNode, product::Product, li::Int64, si::Int64, pi::Int64, time::Int, orders::Array{OrderLine, 1})
+function place_orders(state::State, env::Env, location::ConcreteNode, product::Product, li::Int64, si::Int64, pi::Int64, time::Int, orders::Array{OrderLine, 1}, pending::Vector{PendingOrder})
     empty!(orders)
     for trip in get_inbound_trips(env, location, time)
         policy = get(trip.policies, product, nothing)
@@ -512,9 +516,32 @@ function place_orders(state::State, env::Env, location::ConcreteNode, product::P
                 Int(get_order(policy, state, env, location, trip.route, product, li, si, pi, time))
             end
             if quantity > 0
-                minimum_quantity = trip.route.minimum_quantity
-                if minimum_quantity > 0 && quantity < minimum_quantity
-                    quantity = Int(ceil(minimum_quantity))
+                # Per-product ordering constraints from a Supplier origin: its
+                # minimum_order_quantity, and its order_multiple (case pack).
+                # Round up to the multiple first, then lift to the minimum -
+                # itself rounded up to the multiple, so the result satisfies
+                # both.
+                multiple = 1
+                origin = trip.route.origin
+                if origin isa Supplier
+                    minimum_order_quantity = get_minimum_order_quantity(origin::Supplier, product)
+                    multiple = Int(get_order_multiple(origin::Supplier, product))
+                    if multiple > 1
+                        quantity = cld(quantity, multiple) * multiple
+                    end
+                    if minimum_order_quantity > 0 && quantity < minimum_order_quantity
+                        quantity = Int(ceil(minimum_order_quantity))
+                        if multiple > 1
+                            quantity = cld(quantity, multiple) * multiple
+                        end
+                    end
+                end
+                # The lane's minimum_quantity is a total across all products,
+                # which only becomes known once every product here has been
+                # evaluated: hold the order back (see flush_pending_orders!).
+                if trip.route.minimum_quantity > 0
+                    push!(pending, PendingOrder(trip, product, pi, quantity, multiple))
+                    continue
                 end
                 order = OrderLine(time, trip.route.origin, location, product, quantity, typemax(Int64), trip)
 
@@ -526,6 +553,40 @@ function place_orders(state::State, env::Env, location::ConcreteNode, product::P
             end
         end
     end
+end
+
+"""
+    flush_pending_orders!(state, env, location, time, pending, orders)
+
+Places the orders `place_orders` held back for `location` because their lane has a total
+`minimum_quantity`: per lane, if the products' quantities add up to less than the minimum, the
+shortfall is added by `env.top_up_rule`. Lanes whose products already reach the minimum are
+untouched, and a product that ordered nothing is never created.
+"""
+function flush_pending_orders!(state::State, env::Env, location::ConcreteNode, time::Int, pending::Vector{PendingOrder}, orders::Array{OrderLine, 1})
+    empty!(orders)
+    for trip in get_inbound_trips(env, location, time)
+        entries = [e for e in pending if e.trip === trip]
+        isempty(entries) && continue
+        quantities = Int[e.quantity for e in entries]
+        multiples = Int[e.multiple for e in entries]
+        minimum_quantity = Int(ceil(trip.route.minimum_quantity))
+        if sum(quantities) < minimum_quantity
+            top_up!(env.top_up_rule, quantities, multiples, minimum_quantity - sum(quantities))
+            sum(quantities) >= minimum_quantity || error("$(typeof(env.top_up_rule)) did not reach the lane minimum of $minimum_quantity")
+        end
+        for (e, quantity) in zip(entries, quantities)
+            order = OrderLine(time, trip.route.origin, location, e.product, quantity, typemax(Int64), trip)
+            push!(orders, order)
+            push!(state.placed_orders, order)
+            record_placement!(state, env, order, e.pi)
+            record_purchase!(state, order)
+            state.metrics.orders += quantity
+        end
+    end
+    empty!(pending)
+    receive_orders!(state, env, orders)
+    return nothing
 end
 
 # Receive orders
@@ -545,9 +606,9 @@ function receive_order!(state::State, env::Env, order::OrderLine)
 end
 
 # Simulate
-function simulate(supplychain::SupplyChain, policies::Dict{Tuple{Lane, Product}, <:InventoryOrderingPolicy}; customer_backlog::Bool=false)
+function simulate(supplychain::SupplyChain, policies::Dict{Tuple{Lane, Product}, <:InventoryOrderingPolicy}; customer_backlog::Bool=false, top_up_rule::TopUpRule=ProportionalTopUp())
     initial_state = State(supplychain)
-    return simulate(Env(supplychain, [initial_state], policies; customer_backlog=customer_backlog), policies, initial_state)
+    return simulate(Env(supplychain, [initial_state], policies; customer_backlog=customer_backlog, top_up_rule=top_up_rule), policies, initial_state)
 end
 
 """
@@ -564,6 +625,7 @@ end
 """
 function simulate(env::Env, policies, initial_state)
     orders = OrderLine[]
+    pending = PendingOrder[]
 
     state = initial_state
     snapshot_state!(state, 0, env.record_history, env.customer_backlog)
@@ -637,14 +699,16 @@ function simulate(env::Env, policies, initial_state)
                 end
             elseif location isa Storage
                 for (pi, product) in enumerate(env.sorted_products)
-                    place_orders(state, env, location::Storage, product, li, si, pi, time, orders)
+                    place_orders(state, env, location::Storage, product, li, si, pi, time, orders, pending)
                     receive_orders!(state, env, orders)
                 end
+                isempty(pending) || flush_pending_orders!(state, env, location::Storage, time, pending, orders)
             else
                 for (pi, product) in enumerate(env.sorted_products)
-                    place_orders(state, env, location::Supplier, product, li, si, pi, time, orders)
+                    place_orders(state, env, location::Supplier, product, li, si, pi, time, orders, pending)
                     receive_orders!(state, env, orders)
                 end
+                isempty(pending) || flush_pending_orders!(state, env, location::Supplier, time, pending, orders)
             end
         end
 

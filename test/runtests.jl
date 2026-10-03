@@ -337,6 +337,7 @@ end
 
 include("docs.jl")
 include("constraint-enforcement-tests.jl")
+include("scenario-tests.jl")
 include("metrics-equivalence-tests.jl")
 include("tariff-tests.jl")
 include("recommend-orders-tests.jl")

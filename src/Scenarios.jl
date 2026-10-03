@@ -32,7 +32,8 @@ Builds `n` scenarios of `base`: ordinary supply chains, identical to `base` exce
 lead times of the lanes named in `lead_times`, which map a lane's `id` to a sampler. A sampler
 is any function `(rng, horizon, nominal) -> Vector{Int}` returning one lead time per departure
 period, where `nominal` is the lane's `times` entry; [`iid_lead_times`](@ref) and
-[`constant_lead_time`](@ref) cover the common cases. For a lane with several destinations the
+[`constant_lead_time`](@ref) cover the common cases. Lanes into a customer cannot be named, since
+nothing is shipped to customers in the simulation. For a lane with several destinations the
 sampler is called once per destination.
 
 Scenarios are reproducible: scenario `i` depends only on `seed` and `i`, so asking for more
@@ -46,6 +47,11 @@ function sample_scenarios(base::SupplyChain, n::Integer; seed::Integer=1, lead_t
     known_ids = Set(lane.id for lane in base.lanes if !ismissing(lane.id))
     for id in keys(lead_times)
         id in known_ids || throw(ArgumentError("no lane with id \"$id\" in the supply chain, so its lead times cannot be sampled"))
+    end
+    for lane in base.lanes
+        if !ismissing(lane.id) && haskey(lead_times, lane.id) && any(d -> d isa Customer, lane.destinations)
+            throw(ArgumentError("lane \"$(lane.id)\" delivers to a customer; lead times to customers are not simulated, so they cannot be sampled"))
+        end
     end
 
     return map(1:n) do i

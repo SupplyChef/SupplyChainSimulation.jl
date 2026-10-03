@@ -80,5 +80,6 @@ using Distributions: DiscreteUniform
     # Errors.
     @test_throws ArgumentError sample_scenarios(base, 2; lead_times=Dict("nope" => iid_lead_times(DiscreteUniform(1, 4))))
     @test_throws ArgumentError sample_scenarios(base, 0; lead_times=spec)
+    @test_throws ArgumentError sample_scenarios(base, 1; lead_times=Dict("lc" => iid_lead_times(DiscreteUniform(1, 4))))   # lane into a customer
     @test_throws ArgumentError sample_scenarios(base, 1; lead_times=Dict("ls" => (rng, horizon, nominal) -> [1, 2]))
 end

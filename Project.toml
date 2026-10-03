@@ -51,5 +51,11 @@ julia = "1.8, 1.9, 1.10, 1.11, 1.12"
 # depends on) that the actually-registered version doesn't have yet. Remove
 # this section and bump the SupplyChainModeling compat bound once a new
 # version is registered.
+#
+# ALSO TEMPORARY, on this branch only: it needs SupplyChainModeling changes
+# (per-product supplier MOQ/order multiple, Lane.lead_times, modified_copy)
+# that are on that repo's claude/exciting-faraday-m3kfks branch but not yet on
+# its `main`, so CI points at the branch. Switch rev back to "main" as soon as
+# that branch is merged - the branch is deleted on merge ("Did not find rev").
 [sources]
-SupplyChainModeling = {url = "https://github.com/SupplyChef/SupplyChainModeling.jl", rev = "main"}
+SupplyChainModeling = {url = "https://github.com/SupplyChef/SupplyChainModeling.jl", rev = "claude/exciting-faraday-m3kfks"}

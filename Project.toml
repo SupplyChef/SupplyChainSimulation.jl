@@ -52,4 +52,4 @@ julia = "1.8, 1.9, 1.10, 1.11, 1.12"
 # this section and bump the SupplyChainModeling compat bound once a new
 # version is registered.
 [sources]
-SupplyChainModeling = {url = "https://github.com/SupplyChef/SupplyChainModeling.jl", rev = "claude/eloquent-einstein-tspy6a"}
+SupplyChainModeling = {url = "https://github.com/SupplyChef/SupplyChainModeling.jl", rev = "main"}

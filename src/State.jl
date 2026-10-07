@@ -412,15 +412,21 @@ function reset!(state::State)
                 pi = state.product_index[product]
                 track_origin = state.tariff_context.is_relevant[pi]
                 unknown_index = track_origin ? state.tariff_context.origin_country_index[nothing] : 0
-                for i in 1:length(lane.destinations)
-                    li = state.location_index[lane.destinations[i]]
-                    for j in 1:length(arrivals[i])
-                        add_in_transit_inventory!(state, lane.destinations[i], product, j, arrivals[i][j])
+                # `arrivals` is [time][destination] - the shape SupplyChainModeling.Lane
+                # stores and documents ("for each time, for each destination the amount
+                # arriving"). It used to be read as [destination][time], which only
+                # coincides for period 1: a shipment due later was silently dropped, and
+                # on a multi-destination lane each destination got another's shipments.
+                for j in 1:length(arrivals)
+                    for i in 1:length(lane.destinations)
+                        quantity = arrivals[j][i]
+                        li = state.location_index[lane.destinations[i]]
+                        add_in_transit_inventory!(state, lane.destinations[i], product, j, quantity)
                         # Pre-seeded arrivals predate the simulation, same as
                         # initial_inventory above - unknown provenance (see
                         # TariffContext's docstring).
-                        if track_origin && arrivals[i][j] != 0
-                            state.in_transit_by_origin[li, pi][j][unknown_index] += arrivals[i][j]
+                        if track_origin && quantity != 0
+                            state.in_transit_by_origin[li, pi][j][unknown_index] += quantity
                         end
                     end
                 end

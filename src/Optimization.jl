@@ -198,6 +198,17 @@ end
       Default `0` (disabled) - every existing caller sees byte-for-byte
       identical behavior, since this option didn't exist before.
 
+    `decompose` (default `:none`, the original single search over every parameter):
+    - `:product` runs one small search per product instead (block-coordinate search, see
+      `_optimize_by_product`): each round, each product's policies are searched with every other
+      product held fixed, and the result is kept only if it lowers the total cost. Products that
+      share a policy object are searched together (see `product_groups`). Every evaluation still
+      simulates the whole network, so products that interact (shared capacity, trips, a cash budget
+      in `cost_function`) are still costed together. The method's evaluation budget is split evenly
+      across products and `rounds` (default `2`), at least 100 per search, unless
+      `group_maxfevals` sets each search's budget directly. With many products this is what makes
+      the search work at all: one joint search over dozens of parameters tends to stall or drift.
+
     `nelder_mead_options` (only used when `method === :nelder_mead`) accepts:
     - `:lower`, `:upper`: box constraints, same shape/defaults as `cma_es_options`.
       Plain Nelder-Mead is unconstrained, so out-of-box candidates are clamped back
@@ -215,7 +226,8 @@ end
     - `:restart_scale`: restart perturbation size, as a fraction of `:upper - :lower`
       in each dimension. Default `0.2`.
 """
-function optimize!(lane_policies, supplychains...; params::Dict{Symbol}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s), record_history::Bool=true, customer_backlog::Bool=false, method::Symbol=:custom, cma_es_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), nelder_mead_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), bayesopt_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), custom_options::Dict{Symbol, Any}=Dict{Symbol, Any}())
+function optimize!(lane_policies, supplychains...; params::Dict{Symbol}=Dict{Symbol, Float64}(), cost_function=s->-get_total_sales(s) + get_total_lost_sales(s) + get_total_holding_costs(s) + get_total_trip_fixed_costs(s) + get_total_trip_unit_costs(s) + 0.001 * get_total_orders(s), record_history::Bool=true, customer_backlog::Bool=false, method::Symbol=:custom, cma_es_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), nelder_mead_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), bayesopt_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), custom_options::Dict{Symbol, Any}=Dict{Symbol, Any}(), decompose::Symbol=:none, rounds::Int=2, group_maxfevals::Union{Nothing, Int}=nothing)
+    decompose in (:none, :product) || error("optimize!: unknown decompose $(repr(decompose)); supported are :none and :product")
     initial_states = State.(supplychains)
     envs = [Env(supplychain, initial_states, lane_policies; record_history=record_history, customer_backlog=customer_backlog) for supplychain in supplychains]
 
@@ -235,40 +247,53 @@ function optimize!(lane_policies, supplychains...; params::Dict{Symbol}=Dict{Sym
 
     f = x -> minimize!(lane_policies, policies, collect(envs), collect(initial_states), x; cost_function=cost_function)
 
-    if method === :custom
-        custom_params = merge(Dict(:MaxFuncEvals => 15000,
-                             :MaxStepsWithoutProgress => 1500,
-                             :SearchRange => (-0.0, 5000.0),
-                             :NumDimensions => length(x0)), params)
-
-        # Disabled (0) unless a caller explicitly opts in via custom_options -
-        # every existing caller (this option didn't exist before) sees
-        # seed_candidates stay `nothing`, i.e. byte-for-byte identical
-        # behavior to before this option existed. See
-        # quadratic_surrogate_optimum's docstring for what this buys: one
-        # gradient-informed population member instead of purely random ones,
-        # validated like any other candidate (never trusted blindly).
-        surrogate_seed_samples = get(custom_options, :surrogate_seed_samples, 0)
-        seed_candidates = nothing
-        if surrogate_seed_samples > 0
-            lower, upper = custom_params[:SearchRange]
-            seed = quadratic_surrogate_optimum(f, fill(convert(Float64, lower), length(x0)), fill(convert(Float64, upper), length(x0)); samples=surrogate_seed_samples)
-            seed_candidates = [seed]
-            # Comes out of the same :MaxFuncEvals budget, not on top of it -
-            # a fair comparison against plain :custom at the same total
-            # evaluation count, not an unadvertised extra allowance.
-            custom_params[:MaxFuncEvals] = max(1, custom_params[:MaxFuncEvals] - surrogate_seed_samples)
+    # One search, over whatever parameter vector `x0` it is given: the whole problem, or one product
+    # group's slice of it (see `decompose` below). `budget`/`dims` override the evaluation budget and
+    # pick which entries of any per-parameter bounds apply; `nothing` keeps the caller's options as given.
+    search = function (f, x0, dims, budget)
+        method in (:custom, :cma_es, :nelder_mead, :bayesopt) || error("optimize!: unknown method $(repr(method)); supported methods are :custom, :cma_es, :nelder_mead, and :bayesopt")
+        sliced(opts) = begin
+            o = copy(opts)
+            for k in (:lower, :upper)
+                haskey(o, k) && o[k] isa AbstractVector && dims !== nothing && (o[k] = o[k][dims])
+            end
+            budget === nothing || (o[:maxfevals] = budget)
+            o
         end
+        if method === :custom
+            custom_params = merge(Dict(:MaxFuncEvals => 15000,
+                                 :MaxStepsWithoutProgress => 1500,
+                                 :SearchRange => (-0.0, 5000.0),
+                                 :NumDimensions => length(x0)), params)
+            dims === nothing || (custom_params[:NumDimensions] = length(x0))
+            dims !== nothing && custom_params[:SearchRange] isa AbstractVector && (custom_params[:SearchRange] = custom_params[:SearchRange][dims])
+            budget === nothing || (custom_params[:MaxFuncEvals] = budget)
+            surrogate_seed_samples = get(custom_options, :surrogate_seed_samples, 0)
+            seed_candidates = nothing
+            if surrogate_seed_samples > 0
+                lower, upper = custom_params[:SearchRange] isa AbstractVector ? (first.(custom_params[:SearchRange]), last.(custom_params[:SearchRange])) : custom_params[:SearchRange]
+                lo_v = lower isa AbstractVector ? convert(Array{Float64, 1}, lower) : fill(convert(Float64, lower), length(x0))
+                hi_v = upper isa AbstractVector ? convert(Array{Float64, 1}, upper) : fill(convert(Float64, upper), length(x0))
+                seed = quadratic_surrogate_optimum(f, lo_v, hi_v; samples=surrogate_seed_samples)
+                seed_candidates = [seed]
+                custom_params[:MaxFuncEvals] = max(1, custom_params[:MaxFuncEvals] - surrogate_seed_samples)
+            end
+            return SupplyChainSimulation.bboptimize(f, x0, custom_params; seed_candidates=seed_candidates, verbose=get(custom_options, :verbose, false))
+        elseif method === :cma_es
+            return cma_es_optimize(f, x0, sliced(cma_es_options))
+        elseif method === :nelder_mead
+            return nelder_mead_optimize(f, x0, sliced(nelder_mead_options))
+        else
+            return bayesopt_optimize(f, x0, sliced(bayesopt_options))
+        end
+    end
 
-        best = SupplyChainSimulation.bboptimize(f, x0, custom_params; seed_candidates=seed_candidates, verbose=get(custom_options, :verbose, false))
-    elseif method === :cma_es
-        best = cma_es_optimize(f, x0, cma_es_options)
-    elseif method === :nelder_mead
-        best = nelder_mead_optimize(f, x0, nelder_mead_options)
-    elseif method === :bayesopt
-        best = bayesopt_optimize(f, x0, bayesopt_options)
+    if decompose === :none
+        best = search(f, x0, nothing, nothing)
     else
-        error("optimize!: unknown method $(repr(method)); supported methods are :custom, :cma_es, :nelder_mead, and :bayesopt")
+        best = _optimize_by_product(f, x0, sorted_keys, lane_policies, policies, search;
+                                    rounds=rounds, group_maxfevals=group_maxfevals,
+                                    total_budget=_default_budget(method, params, cma_es_options, nelder_mead_options, bayesopt_options))
     end
 
     i = 1
@@ -276,6 +301,81 @@ function optimize!(lane_policies, supplychains...; params::Dict{Symbol}=Dict{Sym
         set_parameters!(policy, best[i:i+length(get_parameters(policy))-1])
         i = i + length(get_parameters(policy))
     end
+end
+
+# The evaluation budget `optimize!` would give one joint search, for splitting across product groups.
+function _default_budget(method, params, cma_es_options, nelder_mead_options, bayesopt_options)
+    method === :custom && return Int(get(params, :MaxFuncEvals, 15000))
+    method === :cma_es && return Int(get(cma_es_options, :maxfevals, 15000))
+    method === :nelder_mead && return Int(get(nelder_mead_options, :maxfevals, 15000))
+    return Int(get(bayesopt_options, :maxfevals, 200))
+end
+
+"""
+    product_groups(sorted_keys, lane_policies, policies) -> Vector{Vector{Int}}
+
+Indices into `policies`, grouped by product: every policy that orders a given product is in that
+product's group, and two products end up in one group when a single policy object serves both
+(it can't be tuned for one without moving the other). Groups come out in the order their first
+policy appears in `policies`, so the split is reproducible.
+"""
+function product_groups(sorted_keys, lane_policies, policies)
+    pidx = Dict(p => i for (i, p) in enumerate(policies))   # policy object -> position (`policies` is unique)
+    owner = Dict{Any, Int}()                                 # product -> group id
+    parent = collect(1:length(policies))                     # union-find over policies
+    findroot(i) = (while parent[i] != i; parent[i] = parent[parent[i]]; i = parent[i]; end; i)
+    for k in sorted_keys
+        i = pidx[lane_policies[k]]
+        prod = k[2]
+        if haskey(owner, prod)
+            a, b = findroot(i), findroot(owner[prod])
+            a != b && (parent[max(a, b)] = min(a, b))
+        else
+            owner[prod] = i
+        end
+    end
+    groups = Dict{Int, Vector{Int}}()
+    order = Int[]
+    for i in eachindex(policies)
+        r = findroot(i)
+        haskey(groups, r) || (groups[r] = Int[]; push!(order, r))
+        push!(groups[r], i)
+    end
+    return [groups[r] for r in order]
+end
+
+"""
+    _optimize_by_product(f, x0, sorted_keys, lane_policies, policies, search; rounds, group_maxfevals, total_budget)
+
+Block-coordinate search: each round, one small search per product group over only that group's
+parameters, with every other product held at its current values. Every evaluation still simulates
+the whole network, so interactions between products (shared capacity, trips, cash) are seen; when
+products are independent this finds each product's own optimum, which one joint search over every
+parameter at once cannot do reliably once there are more than a handful of products. A group's
+result is kept only if it does not raise the total cost.
+"""
+function _optimize_by_product(f, x0, sorted_keys, lane_policies, policies, search; rounds::Int, group_maxfevals, total_budget::Int)
+    groups = product_groups(sorted_keys, lane_policies, policies)
+    lens = [length(get_parameters(p)) for p in policies]
+    offs = cumsum([0; lens])
+    dims_of(g) = vcat([collect((offs[i] + 1):offs[i + 1]) for i in g]...)
+    budget = group_maxfevals === nothing ? max(100, total_budget ÷ max(1, length(groups) * rounds)) : group_maxfevals
+    x = copy(x0)
+    fx = f(x)
+    for _ in 1:max(1, rounds)
+        for g in groups
+            d = dims_of(g)
+            isempty(d) && continue
+            fg = xg -> (y = copy(x); y[d] = xg; f(y))
+            xg = search(fg, x[d], d, budget)
+            y = copy(x); y[d] = xg
+            fy = f(y)
+            if fy <= fx
+                x, fx = y, fy
+            end
+        end
+    end
+    return x
 end
 
 """

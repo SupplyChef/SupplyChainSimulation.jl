@@ -358,3 +358,63 @@ end
         true
     end
 end
+
+using Random
+
+@testset "optimize! decompose=:product" begin
+    # Several independent products, each stocked at one storage: the per-product search should end at
+    # least as good as one joint search with the same total evaluation budget, and its groups should
+    # be one per product.
+    Random.seed!(11)
+    horizon = 20
+    nprod = 6
+    products = [Product("p$i") for i in 1:nprod]
+    supplier = Supplier("supplier")
+    storage = Storage("storage")
+    for p in products
+        add_product!(storage, p; unit_holding_cost=0.2)
+    end
+    customer = Customer("customer")
+    l1 = Lane(storage, customer)
+    l2 = Lane(supplier, storage; time=2)
+    means = [5.0, 10.0, 20.0, 40.0, 80.0, 160.0]
+    demands = [[rand(Poisson(means[i]), horizon) * 1.0 for i in 1:nprod] for _ in 1:5]
+    n(s) = begin
+        network = SupplyChain(horizon)
+        add_supplier!(network, supplier); add_storage!(network, storage); add_customer!(network, customer)
+        for p in products
+            add_product!(network, p)
+        end
+        add_lane!(network, l1); add_lane!(network, l2)
+        for (i, p) in enumerate(products)
+            add_demand!(network, customer, p, demands[s][i]; sales_price=1.0, lost_sales_cost=1.0)
+        end
+        network
+    end
+    make_policies() = Dict((l2, p) => OnHandUptoOrderingPolicy(0) for p in products)
+    cost(pol) = sum(metrics_cost_function(simulate(n(s), pol)) for s in 1:5)
+
+    pol_joint = make_policies()
+    optimize!(pol_joint, [n(s) for s in 1:5]...; method=:nelder_mead,
+              nelder_mead_options=Dict{Symbol, Any}(:lower => 0.0, :upper => 1000.0, :maxfevals => 1200),
+              cost_function=metrics_cost_function, record_history=false)
+    pol_split = make_policies()
+    optimize!(pol_split, [n(s) for s in 1:5]...; method=:nelder_mead, decompose=:product,
+              nelder_mead_options=Dict{Symbol, Any}(:lower => 0.0, :upper => 1000.0, :maxfevals => 1200),
+              cost_function=metrics_cost_function, record_history=false)
+    @test cost(pol_split) <= cost(pol_joint) + 1e-6
+
+    keys_sorted = sort(collect(keys(pol_split)); by = k -> (string(k[1]), k[2].name))
+    pols = unique([pol_split[k] for k in keys_sorted])
+    @test length(SupplyChainSimulation.product_groups(keys_sorted, pol_split, pols)) == nprod
+
+    # one policy object shared by two products puts them in one group
+    shared = OnHandUptoOrderingPolicy(0)
+    pol_shared = Dict{Any, Any}((l2, p) => OnHandUptoOrderingPolicy(0) for p in products[3:end])
+    pol_shared[(l2, products[1])] = shared
+    pol_shared[(l2, products[2])] = shared
+    ks = sort(collect(keys(pol_shared)); by = k -> (string(k[1]), k[2].name))
+    @test length(SupplyChainSimulation.product_groups(ks, pol_shared, unique([pol_shared[k] for k in ks]))) == nprod - 1
+
+    @test_throws ErrorException optimize!(make_policies(), n(1); decompose=:sku)
+end
